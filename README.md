@@ -1,2 +1,2 @@
-# ion
-A language and virtual machime for scripting anything
+# io
+Interface between application software and the real world.
