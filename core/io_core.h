@@ -162,10 +162,11 @@ extern io_alarm_t s_null_io_alarm;
  *
  */
 #define IO_PIPE_STRUCT_MEMBERS \
-	int16_t		size_of_ring;\
-	int16_t		overrun;\
-	int16_t		write_index;\
-	int16_t		read_index;
+	io_event_t ev;\
+	int16_t size_of_ring;\
+	int16_t overrun;\
+	int16_t write_index;\
+	int16_t read_index;
 
 typedef struct PACK_STRUCTURE io_pipe {
 	IO_PIPE_STRUCT_MEMBERS
@@ -176,9 +177,6 @@ typedef struct PACK_STRUCTURE io_pipe {
 typedef struct PACK_STRUCTURE io_byte_pipe {
 	IO_PIPE_STRUCT_MEMBERS
 	uint8_t *byte_ring;
-	#ifndef NO_EV
-	io_event_t ev;
-	#endif
 } io_byte_pipe_t;
 
 io_byte_pipe_t* mk_io_byte_pipe (io_byte_memory_t*,uint16_t);
@@ -900,6 +898,7 @@ typedef bool (*io_socket_iterator_t) (io_socket_t*,void*);
 	io_t*	(*get_io) (io_socket_t*); \
 	bool (*binds) (io_socket_t*,io_event_t*);\
 	void (*bindc) (io_socket_t*);\
+	io_pipe_t* (*get_inward_pipe) (io_socket_t*);\
 	io_encoding_t*	(*new_message) (io_socket_t*); \
 	bool (*send_message) (io_socket_t*,io_encoding_t*);\
 	bool (*iterate_inner_sockets) (io_socket_t*,io_socket_iterator_t,void*);\
@@ -955,6 +954,11 @@ io_socket_send_message (io_socket_t *socket,io_encoding_t *m) {
 INLINE_FUNCTION bool
 io_socket_binds (io_socket_t *socket,io_event_t *ev) {
 	return socket->implementation->binds (socket,ev);
+}
+
+INLINE_FUNCTION io_pipe_t*
+io_socket_get_inward_pipe (io_socket_t *socket) {
+	return socket->implementation->get_inward_pipe (socket);
 }
 
 //
@@ -1732,6 +1736,7 @@ mk_io_byte_pipe (io_byte_memory_t *bm,uint16_t length) {
 	io_byte_pipe_t *this = io_byte_memory_allocate (bm,sizeof(io_byte_pipe_t));
 	
 	if (this) {
+		initialise_io_event (&this->ev,NULL,NULL);
 		this->write_index = this->read_index = 0;
 		this->size_of_ring = length;
 		this->overrun = 0;

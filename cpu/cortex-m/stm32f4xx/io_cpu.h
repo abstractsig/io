@@ -800,6 +800,12 @@ stm32f4_uart_binds (io_socket_t *socket,io_event_t *rx) {
 	}
 }
 
+static io_pipe_t*
+stm32f4_uart_get_inward_pipe (io_socket_t *socket) {
+	stm32f4_uart_t *this = (stm32f4_uart_t*) socket;
+	return (io_pipe_t*) this->rx_pipe;
+}
+
 EVENT_DATA io_socket_implementation_t stm32f4_uart_implementation = {
 	.specialisation_of = NULL,
 	.initialise = stm32f4_uart_initialise,
@@ -808,6 +814,7 @@ EVENT_DATA io_socket_implementation_t stm32f4_uart_implementation = {
 	.open = stm32f4_uart_open,
 	.close = stm32f4_uart_close,
 	.binds = stm32f4_uart_binds,
+	.get_inward_pipe = stm32f4_uart_get_inward_pipe,
 	.new_message = stm32f4_uart_new_message,
 	.send_message = stm32f4_uart_send_message_blocking,
 	.iterate_inner_sockets = NULL,
