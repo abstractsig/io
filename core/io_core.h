@@ -952,6 +952,12 @@ io_socket_send_message (io_socket_t *socket,io_encoding_t *m) {
 	return socket->implementation->send_message (socket,m);
 }
 
+
+INLINE_FUNCTION bool
+io_socket_binds (io_socket_t *socket,io_event_t *ev) {
+	return socket->implementation->binds (socket,ev);
+}
+
 //
 // cpu io pins
 //
