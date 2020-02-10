@@ -218,7 +218,6 @@ typedef struct PACK_STRUCTURE interrupt_handler {
 } io_cpu_interrupt_t;
 
 void	unhandled_cpu_interrupt (void*);
-void	handle_io_cpu_interrupt (void);
 
 #ifndef nmi_cpu_interrupt
 # define nmi_cpu_interrupt	unhandled_cpu_interrupt
@@ -1021,13 +1020,19 @@ tune_stm32f4_cpu (void) {
 
 }
 
-static io_interrupt_handler_t cpu_interrupts[NUMBER_OF_INTERRUPT_VECTORS];
-__attribute__ ((section(".ram_vector_table")))
-uint32_t interrupt_vector_table[NUMBER_OF_INTERRUPT_VECTORS];
-
 static void
 null_interrupt_handler (void *w) {
 	while(1);
+}
+
+static io_interrupt_handler_t cpu_interrupts[NUMBER_OF_INTERRUPT_VECTORS];
+
+static void
+handle_io_cpu_interrupt (void) {
+	io_interrupt_handler_t const *interrupt = &cpu_interrupts[
+		SCB->ICSR & SCB_ICSR_VECTACTIVE_Msk
+	];
+	interrupt->action(interrupt->user_value);
 }
 
 static void	
@@ -1039,16 +1044,8 @@ register_interrupt_handler (
 	);
 	i->action = handler;
 	i->user_value = user_value;
-
-	//
-	// arm vextors are carried over for the original flash table
-	//
-	if (number < 0) {
-		interrupt_vector_table[number + NUMBER_OF_ARM_INTERRUPT_VECTORS] = (
-			(uint32_t) handle_io_cpu_interrupt
-		);
-	}
 }
+
 static io_byte_memory_t heap_byte_memory;
 static io_byte_memory_t umm_value_memory;
 static umm_io_value_memory_t stm;
@@ -1075,6 +1072,11 @@ static io_implementation_t io_i = {
 	.get_socket = io_device_get_null_socket,
 };
 
+static void
+event_thread (void *io) {
+	while (next_io_event (io));
+}
+
 /*
  *-----------------------------------------------------------------------------
  *
@@ -1088,7 +1090,6 @@ initialise_cpu_io (stm32f4xx_io_t *cpu) {
 
 	// tune cpu ...
 	NVIC_SetPriorityGrouping(0);
-	SCB->VTOR = FLASH_BASE;
 
 	io_device_add_io_methods (&io_i);
 	
@@ -1105,42 +1106,23 @@ initialise_cpu_io (stm32f4xx_io_t *cpu) {
 	initialise_io_byte_memory (io,&heap_byte_memory);
 	initialise_io_byte_memory (io,&umm_value_memory);
 
-	return io;
-}
+	NVIC_SetPriority (EVENT_THREAD_INTERRUPT,EVENT_PRIORITY);
+	register_io_interrupt_handler (
+		io,EVENT_THREAD_INTERRUPT,event_thread,io
+	);
 
-void
-handle_io_cpu_interrupt (void) {
-	io_interrupt_handler_t const *interrupt = &cpu_interrupts[
-		SCB->ICSR & SCB_ICSR_VECTACTIVE_Msk
-	];
-	interrupt->action(interrupt->user_value);
+	return io;
 }
 
 static void
 make_ram_interrupt_vectors (void) {
-	extern const void* s_flash_vector_table[NUMBER_OF_ARM_INTERRUPT_VECTORS];
-
-	uint32_t *dest = interrupt_vector_table;
-	uint32_t *end = dest + NUMBER_OF_ARM_INTERRUPT_VECTORS;
-	uint32_t *src = (uint32_t*) s_flash_vector_table;
-	
-	while (dest < end) *dest++ = *src++;
-
-	// fill remaining vectors with default handler
-	end += NUMBER_OF_STM32F4_INTERRUPT_VECTORS;
-	while (dest < end) *dest++ = (uint32_t) handle_io_cpu_interrupt;
-
-	{
-		io_interrupt_handler_t *i = cpu_interrupts;
-		io_interrupt_handler_t *e = i + NUMBER_OF_INTERRUPT_VECTORS;
-		while (i < e) {
-			i->action = null_interrupt_handler;
-			i->user_value = NULL;
-			i++;
-		}
+	io_interrupt_handler_t *i = cpu_interrupts;
+	io_interrupt_handler_t *e = i + NUMBER_OF_INTERRUPT_VECTORS;
+	while (i < e) {
+		i->action = null_interrupt_handler;
+		i->user_value = NULL;
+		i++;
 	}
-
-	SCB->VTOR = (unsigned int) interrupt_vector_table;
 }
 
 static void
@@ -1163,6 +1145,7 @@ initialise_c_runtime (void) {
 		*dest++ = 0xdeadc0de;
 	}
 	
+	SCB->VTOR = FLASH_BASE;
 	make_ram_interrupt_vectors ();
 }
 
@@ -1183,9 +1166,28 @@ unhandled_cpu_interrupt (void *user_value) {
 	while (1);
 }
 
+static uint32_t g_us_delay;
+static void
+SysTick_Handler (void) {
+	if (g_us_delay) {
+		g_us_delay--;
+	} else {
+		SysTick->CTRL &= ~SysTick_CTRL_TICKINT_Msk;
+	}
+}
+
+//  will block for at least us microseconds
+void
+microsecond_delay (uint32_t us) {
+	g_us_delay = us + 1;
+	SysTick->CTRL |= SysTick_CTRL_TICKINT_Msk;
+	while (SysTick->CTRL & SysTick_CTRL_TICKINT_Msk) {
+	}
+}
+
 extern uint32_t ld_top_of_c_stack;
 __attribute__ ((section(".isr_vector")))
-const void* s_flash_vector_table[/* 16 + 89 */] = {
+const void* s_flash_vector_table[NUMBER_OF_INTERRUPT_VECTORS] = {
 	&ld_top_of_c_stack,
 	stm32f4_core_reset,	//
 	handle_io_cpu_interrupt,
@@ -1201,7 +1203,7 @@ const void* s_flash_vector_table[/* 16 + 89 */] = {
 	handle_io_cpu_interrupt,
 	handle_io_cpu_interrupt,
 	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
+	SysTick_Handler,
 
 	handle_io_cpu_interrupt,				// Window Watchdog interrupt
 	handle_io_cpu_interrupt,				// PVD through EXTI line detection interrupt
@@ -1285,50 +1287,7 @@ const void* s_flash_vector_table[/* 16 + 89 */] = {
 	handle_io_cpu_interrupt,				// CRYP crypto global interrupt
 	handle_io_cpu_interrupt,				// Hash and Rng global interrupt
 	handle_io_cpu_interrupt,				// Floating point interrupt
-	handle_io_cpu_interrupt,				// Reserved
-	handle_io_cpu_interrupt,				// Reserved
-	handle_io_cpu_interrupt,				// Reserved
-	handle_io_cpu_interrupt,				// Reserved
-	handle_io_cpu_interrupt,				// Reserved
-	handle_io_cpu_interrupt,				// Reserved
-	handle_io_cpu_interrupt,				// LTDC global interrupt
-	handle_io_cpu_interrupt,				// LTDC global error interrupt
 };
-
-static uint32_t g_us_delay;
-
-/*
- *-----------------------------------------------------------------------------
- *
- * SysTick_Handler --
- *
- *-----------------------------------------------------------------------------
- */
-void
-SysTick_Handler (void) {
-	if (g_us_delay) {
-		g_us_delay--;
-	} else {
-		SysTick->CTRL &= ~SysTick_CTRL_TICKINT_Msk;
-	}
-}
-
-/*
- *-----------------------------------------------------------------------------
- *
- * microsecond_delay --
- *
- * will block for at least us microseconds
- *
- *-----------------------------------------------------------------------------
- */
-void
-microsecond_delay (uint32_t us) {
-	g_us_delay = us + 1;
-	SysTick->CTRL |= SysTick_CTRL_TICKINT_Msk;
-	while (SysTick->CTRL & SysTick_CTRL_TICKINT_Msk) {
-	}
-}
 
 static uint8_t ALLOCATE_ALIGN(8) UMM_SECTION_DESCRIPTOR
 heap_byte_memory_bytes[UMM_GLOBAL_HEAP_SIZE];
