@@ -785,9 +785,6 @@ stm32f4_uart_mtu (io_socket_t const *socket) {
 	return 1024;	//???
 }
 
-#define io_event_is_valid(ev) 	((ev)->handler != NULL)
-#define io_event_is_active(ev) 	((ev)->next_event != NULL)
-
 bool
 stm32f4_uart_binds (io_socket_t *socket,io_event_t *rx) {
 	stm32f4_uart_t *this = (stm32f4_uart_t*) socket;
