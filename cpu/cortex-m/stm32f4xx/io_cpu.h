@@ -125,7 +125,6 @@ typedef struct PACK_STRUCTURE stm32f4_uart {
 	io_encoding_implementation_t const *encoding;
 	
 	io_byte_pipe_t *rx_pipe;
-	io_event_t *signal_inward_rx_data_available;
 	
 	io_cpu_clock_pointer_t peripheral_bus_clock;
 	USART_TypeDef* uart_registers;
@@ -673,9 +672,7 @@ stm32f4_uart_interrupt_handler (void *user_value) {
 	volatile uint16_t data = this->uart_registers->DR;
 
 	if (io_pipe_put_byte (this->rx_pipe,data)) {
-		if (this->signal_inward_rx_data_available) {
-			io_enqueue_event (this->io,this->signal_inward_rx_data_available);
-		}
+		io_enqueue_event (this->io,&this->rx_pipe->ev);
 	}
 }
 
@@ -685,7 +682,6 @@ stm32f4_uart_initialise (io_socket_t *socket,io_t *io) {
 	this->io = io;
 
 	this->rx_pipe = mk_io_byte_pipe (io_get_byte_memory(io),512);
-	this->signal_inward_rx_data_available = NULL;
 
 	register_io_interrupt_handler (
 		io,this->interrupt_number,stm32f4_uart_interrupt_handler,this
@@ -789,11 +785,14 @@ stm32f4_uart_mtu (io_socket_t const *socket) {
 	return 1024;	//???
 }
 
+#define io_event_is_valid(ev) 	((ev)->handler != NULL)
+#define io_event_is_active(ev) 	((ev)->next_event != NULL)
+
 bool
 stm32f4_uart_binds (io_socket_t *socket,io_event_t *rx) {
 	stm32f4_uart_t *this = (stm32f4_uart_t*) socket;
-	if (this->signal_inward_rx_data_available == NULL) {
-		this->signal_inward_rx_data_available = rx;
+	if (this->rx_pipe->ev.next_event == NULL) {
+		this->rx_pipe->ev = *rx;
 		return true;
 	} else {
 		return false;

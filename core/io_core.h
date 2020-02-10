@@ -135,6 +135,9 @@ struct PACK_STRUCTURE io_event {
 		.next_event = NULL, \
 	}
 
+#define io_event_is_valid(ev) 	((ev)->handler != NULL)
+#define io_event_is_active(ev) 	((ev)->next_event != NULL)
+
 INLINE_FUNCTION io_event_t*
 initialise_io_event (io_event_t *ev,io_event_handler_t fn,void* user_value) {
 	ev->handler = fn;
