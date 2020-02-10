@@ -202,8 +202,8 @@ typedef enum {
 // STM32F4 interrupts
 //
 
-#define ENABLE_INTERRUPTS			__enable_irq()
-#define DISABLE_INTERRUPTS			__disable_irq()
+#define ENABLE_INTERRUPTS			do {__DSB(); __enable_irq();} while (0);
+#define DISABLE_INTERRUPTS			do {__disable_irq(); __DSB();} while (0);
 #define EVENT_PRIORITY				((1 << __NVIC_PRIO_BITS) - 1)
 #define EVENT_THREAD_INTERRUPT	PendSV_IRQn
 
@@ -1108,6 +1108,14 @@ initialise_cpu_io (stm32f4xx_io_t *cpu) {
 	return io;
 }
 
+void
+handle_io_cpu_interrupt (void) {
+	io_interrupt_handler_t const *interrupt = &cpu_interrupts[
+		SCB->ICSR & SCB_ICSR_VECTACTIVE_Msk
+	];
+	interrupt->action(interrupt->user_value);
+}
+
 static void
 make_ram_interrupt_vectors (void) {
 	extern const void* s_flash_vector_table[NUMBER_OF_ARM_INTERRUPT_VECTORS];
@@ -1132,9 +1140,7 @@ make_ram_interrupt_vectors (void) {
 		}
 	}
 
-	#ifdef NO_EV
 	SCB->VTOR = (unsigned int) interrupt_vector_table;
-	#endif
 }
 
 static void

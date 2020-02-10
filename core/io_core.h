@@ -73,9 +73,10 @@ typedef struct memory_info {
 #define UMM_BEST_FIT
 #undef  UMM_FIRST_FIT
 
-// needs <cpu.h>
-#define UMM_CRITICAL_ENTRY()
-#define UMM_CRITICAL_EXIT()
+#define UMM_CRITICAL_ENTRY(bm)	{\
+												bool __h = enter_io_critical_section(bm->io);
+#define UMM_CRITICAL_EXIT(bm)			exit_io_critical_section(bm->io,__h);\
+											}
 
 typedef struct PACK_STRUCTURE umm_ptr_t {
 	unsigned short int next;
@@ -1743,7 +1744,7 @@ mk_io_byte_pipe (io_byte_memory_t *bm,uint16_t length) {
 		this->write_index = this->read_index = 0;
 		this->size_of_ring = length;
 		this->overrun = 0;
-		this->byte_ring = io_byte_memory_allocate (bm,sizeof(io_byte_pipe_t));
+		this->byte_ring = io_byte_memory_allocate (bm,sizeof(uint8_t) * length);
 		if (this->byte_ring == NULL) {
 			io_byte_memory_free (bm,this);
 			this = NULL;
@@ -3803,11 +3804,11 @@ void umm_free(io_byte_memory_t *mem,void *ptr) {
 
   /* Free the memory withing a protected critical section */
 
-  UMM_CRITICAL_ENTRY();
+  UMM_CRITICAL_ENTRY(mem);
 
   umm_free_core(mem,ptr);
 
-  UMM_CRITICAL_EXIT();
+  UMM_CRITICAL_EXIT(mem);
 }
 
 /* ------------------------------------------------------------------------
@@ -3938,11 +3939,11 @@ void *umm_malloc(io_byte_memory_t *mem,size_t size) {
 
   /* Allocate the memory withing a protected critical section */
 
-  UMM_CRITICAL_ENTRY();
+  UMM_CRITICAL_ENTRY(mem);
 
   ptr = umm_malloc_core(mem,size);
 
-  UMM_CRITICAL_EXIT();
+  UMM_CRITICAL_EXIT(mem);
 
   return( ptr );
 }
@@ -4012,7 +4013,7 @@ void *umm_realloc(io_byte_memory_t *mem,void *ptr, size_t size) {
   curSize   = (blockSize*sizeof(umm_block_t))-(sizeof(((umm_block_t *)0)->header));
 
   /* Protect the critical section... */
-  UMM_CRITICAL_ENTRY();
+  UMM_CRITICAL_ENTRY(mem);
 
   /* Now figure out if the previous and/or next blocks are free as well as
    * their sizes - this will help us to minimize special code later when we
@@ -4106,7 +4107,7 @@ void *umm_realloc(io_byte_memory_t *mem,void *ptr, size_t size) {
     }
 
     /* Release the critical section... */
-    UMM_CRITICAL_EXIT();
+    UMM_CRITICAL_EXIT(mem);
 
     return( ptr );
 }
