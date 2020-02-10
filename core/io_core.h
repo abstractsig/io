@@ -175,7 +175,7 @@ typedef struct PACK_STRUCTURE io_pipe {
 	IO_PIPE_STRUCT_MEMBERS
 } io_pipe_t;
 
-//#define NO_EV
+#define NO_EV
 
 typedef struct PACK_STRUCTURE io_byte_pipe {
 	IO_PIPE_STRUCT_MEMBERS
