@@ -47,7 +47,7 @@ ion_shell_source_decoder_state_number (io_source_decoder_t *this,io_character_t 
 	) {
 		io_encoding_append_byte(this->buffer,c);
 	} else {
-		io_value_memory_t *vm = io_get_stm (this->io);
+		io_value_memory_t *vm = io_get_short_term_value_memory (this->io);
 		vref_t r_value;
 
 		r_value = io_encoding_decode_to_io_value (
@@ -116,7 +116,7 @@ ion_shell_source_decoder_state_text (io_source_decoder_t *this,io_character_t c)
 	if (c != '"') {
 		io_encoding_append_byte(this->buffer,c);
 	} else {
-		io_value_memory_t *vm = io_get_stm (this->io);
+		io_value_memory_t *vm = io_get_short_term_value_memory (this->io);
 		vref_t r_value;
 
 		r_value = io_encoding_decode_to_io_value (
@@ -321,7 +321,7 @@ TEST_END
 
 TEST_BEGIN(test_shell_decoder_2) {
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
-	io_value_memory_t *vm = io_get_stm (TEST_IO);
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
 	memory_info_t vm_begin,vm_end;
 	memory_info_t bm_begin,bm_end;
 	io_source_decoder_t *decoder;
@@ -398,7 +398,7 @@ TEST_END
 
 TEST_BEGIN(test_shell_decoder_3) {
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
-	io_value_memory_t *vm = io_get_stm (TEST_IO);
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
 	memory_info_t vm_begin,vm_end;
 	memory_info_t bm_begin,bm_end;
 	io_source_decoder_t *decoder;
