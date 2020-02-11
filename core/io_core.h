@@ -185,6 +185,7 @@ io_byte_pipe_t* mk_io_byte_pipe (io_byte_memory_t*,uint16_t);
 void free_io_byte_pipe (io_byte_pipe_t*,io_byte_memory_t*);
 bool		io_pipe_get_byte (io_byte_pipe_t*,uint8_t*);
 bool		io_pipe_put_byte (io_byte_pipe_t*,uint8_t);
+uint32_t	io_pipe_put_bytes (io_byte_pipe_t*,uint8_t const*,uint32_t);
 
 // depreciate
 io_byte_pipe_t* initialise_io_pipe (io_byte_pipe_t*,int16_t,uint8_t*);
@@ -993,6 +994,7 @@ typedef struct PACK_STRUCTURE io_implementation {
 	//
 	io_byte_memory_t* (*get_byte_memory) (io_t*);
 	io_value_memory_t* (*get_short_term_value_memory) (io_t*);
+	io_value_memory_t* (*get_long_term_value_memory) (io_t*);
 	void (*do_gc) (io_t*,int32_t);
 	io_cpu_clock_pointer_t (*get_core_clock) (io_t*);
 	//
@@ -1067,6 +1069,11 @@ io_get_byte_memory (io_t *io) {
 INLINE_FUNCTION io_value_memory_t*
 io_get_short_term_value_memory (io_t *io) {
 	return io->implementation->get_short_term_value_memory(io);
+}
+
+INLINE_FUNCTION io_value_memory_t*
+io_get_long_term_value_memory (io_t *io) {
+	return io->implementation->get_long_term_value_memory(io);
 }
 
 INLINE_FUNCTION uint32_t
@@ -1256,17 +1263,33 @@ typedef struct PACK_STRUCTURE {
  */
 #ifdef IMPLEMENT_IO_CORE
 
+static io_socket_t*
+io_core_get_null_socket (io_t *io,int32_t h) {
+	return NULL;
+}
+
+static io_byte_memory_t*
+io_core_get_null_byte_memory (io_t *io) {
+	return NULL;
+}
+
+static io_value_memory_t*
+io_core_get_null_value_memory (io_t *io) {
+	return NULL;
+}
+
 void 
 add_io_implementation_core_methods (io_implementation_t *io_i) {
-	io_i->get_byte_memory = NULL;
-	io_i->get_short_term_value_memory = NULL;
+	io_i->get_byte_memory = io_core_get_null_byte_memory;
+	io_i->get_short_term_value_memory = io_core_get_null_value_memory;
+	io_i->get_long_term_value_memory = io_core_get_null_value_memory;
 	io_i->do_gc = NULL;
 	io_i->get_core_clock = NULL;
 	io_i->get_random_u32 = NULL;
-	io_i->get_socket = NULL;
-	io_i->dequeue_event = NULL;
-	io_i->enqueue_event = NULL;
-	io_i->next_event = NULL;
+	io_i->get_socket = io_core_get_null_socket;
+	io_i->dequeue_event = dequeue_io_event;
+	io_i->enqueue_event = enqueue_io_event;
+	io_i->next_event = do_next_io_event;
 	io_i->in_event_thread = NULL;
 	io_i->signal_event_pending = NULL;
 	io_i->wait_for_event = NULL;
@@ -1830,6 +1853,16 @@ io_pipe_put_byte (io_byte_pipe_t *this,uint8_t byte) {
 	} else {
 		return false;
 	}
+}
+
+uint32_t
+io_pipe_put_bytes (io_byte_pipe_t *this,uint8_t const *byte,uint32_t length) {
+	uint8_t const *end = byte + length;
+	bool ok = true;
+	while (byte < end && ok) {
+		ok = io_pipe_put_byte (this,*byte++);
+	}
+	return length - (end - byte);
 }
 
 //

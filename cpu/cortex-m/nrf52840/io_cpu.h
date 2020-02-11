@@ -7,9 +7,7 @@
 #define io_cpu_H_
 #include <io_core.h>
 #include <nrf52840.h>
-#include <nrf52_to_nrf52840.h>
 #include <nrf52840_bitfields.h>
-#include <nrf52840_peripherals.h>
 
 #define NRF52840_IO_CPU_STRUCT_MEMBERS \
 	IO_STRUCT_MEMBERS				\
@@ -45,14 +43,350 @@ void initialise_cpu_io (io_t*);
 #define EVENT_THREAD_INTERRUPT		SWI0_EGU0_IRQn
 #define SET_EVENT_PENDING				NVIC_SetPendingIRQ (EVENT_THREAD_INTERRUPT)
 
+typedef struct PACK_STRUCTURE nrf52_oscillator {
+	IO_CPU_CLOCK_SOURCE_STRUCT_MEMBERS
+} nrf52_oscillator_t;
 
+typedef struct nrf52_core_clock {
+	IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
+} nrf52_core_clock_t;
+
+extern EVENT_DATA io_cpu_clock_implementation_t nrf52_on_chip_oscillator_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t nrf52_crystal_oscillator_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t nrf52_core_clock_implementation;
+
+//
+// pins
+//
+#define NRF_GPIO_PIN_MAP_PORT(map)	((map) >> 5)
+#define NRF_GPIO_PIN_MAP_PIN(map)	((map) & 0x1F)
+#define NRF_GPIO_PIN_MAP(port,pin)	(((port) << 5) | ((pin) & 0x1F))
+
+#define NRF_GPIO_ACTIVE_LEVEL_LOW		0
+#define NRF_GPIO_ACTIVE_LEVEL_HIGH		1
+
+#define NRF_IO_PIN_ACTIVE_LOW				0
+#define NRF_IO_PIN_ACTIVE_HIGH			1
+
+#define GPIO_PIN_INACTIVE					0
+#define GPIO_PIN_ACTIVE						1
+
+typedef enum {
+	NRF_GPIO_PIN_NOPULL   = GPIO_PIN_CNF_PULL_Disabled, ///<  Pin pull-up resistor disabled.
+	NRF_GPIO_PIN_PULLDOWN = GPIO_PIN_CNF_PULL_Pulldown, ///<  Pin pull-down resistor enabled.
+	NRF_GPIO_PIN_PULLUP   = GPIO_PIN_CNF_PULL_Pullup,   ///<  Pin pull-up resistor enabled.
+} nrf_gpio_pin_pull_t;
+
+
+typedef union PACK_STRUCTURE {
+	io_pin_t io;
+	uint32_t u32;
+	struct PACK_STRUCTURE {
+		uint32_t	pin_map:7;
+		uint32_t active_level:1;
+		uint32_t initial_state:1;
+		uint32_t pull_mode:3;
+		uint32_t gpiote_channel:3;
+		uint32_t event_sense:2;				// GPIOTE_CONFIG_POLARITY_xxx
+		uint32_t drive_level:3;
+		uint32_t :12;
+	} nrf;
+} nrf_io_pin_t;
+
+#define nrf_gpio_pin_map(pin)								(pin).nrf.pin_map
+#define nrf_gpio_pin_active_level(pin)					(pin).nrf.active_level
+#define nrf_gpio_pin_drive_level(pin)					(pin).nrf.drive_level
+#define nrf_gpio_pin_pull_mode(pin)						(pin).nrf.pull_mode
+#define nrf_gpio_pin_initial_state(pin)				(pin).nrf.initial_state
+#define nrf_gpio_pin_event_channel_number(pin)		(pin).nrf.gpiote_channel
+#define nrf_gpio_pin_event_sense(pin)					(pin).nrf.event_sense
+
+#define nrf_io_pin_is_null(pin)	(nrf_gpio_pin_map(pin) == NRF_GPIO_PIN_MAP(2,0))
+#define nrf_io_pin_is_valid(pin)	(!nrf_io_pin_is_null(pin))
+
+#define def_nrf_gpio_null_pin() (nrf_io_pin_t) {\
+		.nrf.pin_map = NRF_GPIO_PIN_MAP(2,0),\
+	}
+
+#define def_nrf_gpio_alternate_pin(port,pin_number) (nrf_io_pin_t) {\
+		.nrf.pin_map = NRF_GPIO_PIN_MAP(port,pin_number),\
+		.nrf.active_level = 0,\
+		.nrf.drive_level = 0,\
+		.nrf.initial_state = GPIO_PIN_INACTIVE,\
+		.nrf.pull_mode = NRF_GPIO_PIN_NOPULL,\
+		.nrf.gpiote_channel = 0,\
+		.nrf.event_sense = GPIOTE_CONFIG_POLARITY_None,\
+	}
+
+//
+// sockets
+//
+
+typedef struct PACK_STRUCTURE nrf52_uart {
+	IO_SOCKET_STRUCT_MEMBERS
+	
+	io_t *io;
+	io_encoding_implementation_t const *encoding;
+	
+	io_byte_pipe_t *rx_pipe;
+	uint8_t* rx_buffer[2];
+	uint8_t* active_rx_buffer;
+	uint8_t* next_rx_buffer;
+	
+	nrf_io_pin_t tx_pin;
+	nrf_io_pin_t rx_pin;
+	nrf_io_pin_t rts_pin;
+	nrf_io_pin_t cts_pin;
+
+	NRF_UARTE_Type *uart_registers;
+	IRQn_Type interrupt_number;
+	uint32_t baud_rate;
+	uint32_t rx_buffer_size;
+
+} nrf52_uart_t;
+
+extern EVENT_DATA io_socket_implementation_t nrf52_uart_implementation;
+
+#ifdef IMPLEMENT_IO_CPU
 //-----------------------------------------------------------------------------
 //
 // nrf52840 Implementtaion
 //
 //-----------------------------------------------------------------------------
-#ifdef IMPLEMENT_IO_CPU
+#include <nrf52_to_nrf52840.h>
+#include <nrf52840_peripherals.h>
 
+//
+// Clocke
+//
+
+static float64_t
+nrf52_crystal_oscillator_get_frequency (io_cpu_clock_pointer_t this) {
+	return 64000000.0;
+}
+
+static bool
+nrf52_crystal_oscillator_start (io_cpu_clock_pointer_t this) {
+	if (NRF_CLOCK->EVENTS_HFCLKSTARTED == 0) {
+		NRF_CLOCK->EVENTS_HFCLKSTARTED = 0;
+		NRF_CLOCK->TASKS_HFCLKSTART    = 1;
+		while (NRF_CLOCK->EVENTS_HFCLKSTARTED == 0);
+	}
+	return true;
+}
+
+EVENT_DATA io_cpu_clock_implementation_t nrf52_crystal_oscillator_implementation = {
+	.specialisation_of = &io_cpu_clock_implementation,
+	.get_frequency = nrf52_crystal_oscillator_get_frequency,
+	.link_input_to_output = NULL,
+	.link_output_to_input = NULL,
+	.start = nrf52_crystal_oscillator_start,
+	.stop = NULL,
+};
+
+static float64_t
+nrf52_on_chip_oscillator_get_frequency (io_cpu_clock_pointer_t this) {
+	return 64000000.0;
+}
+
+static bool
+nrf52_on_chip_oscillator_start (io_cpu_clock_pointer_t this) {
+	return true;
+}
+
+EVENT_DATA io_cpu_clock_implementation_t nrf52_on_chip_oscillator_implementation = {
+	.specialisation_of = &io_cpu_clock_implementation,
+	.get_frequency = nrf52_on_chip_oscillator_get_frequency,
+	.link_input_to_output = NULL,
+	.link_output_to_input = NULL,
+	.start = nrf52_on_chip_oscillator_start,
+	.stop = NULL,
+};
+
+static float64_t
+nrf52_core_clock_get_frequency (io_cpu_clock_pointer_t clock) {
+	nrf52_core_clock_t const *this = (nrf52_core_clock_t const*) (
+		io_cpu_clock_ro_pointer (clock)
+	);
+	return io_cpu_clock_get_frequency (this->input);
+}
+
+static bool
+nrf52_core_clock_start (io_cpu_clock_pointer_t clock) {
+	if (io_cpu_dependant_clock_start_input (clock)) {
+		return true;
+	} else {
+		return false;
+	}
+}
+
+EVENT_DATA io_cpu_clock_implementation_t nrf52_core_clock_implementation = {
+	.specialisation_of = &io_cpu_clock_implementation,
+	.get_frequency = nrf52_core_clock_get_frequency,
+	.link_input_to_output = NULL,
+	.link_output_to_input = NULL,
+	.start = nrf52_core_clock_start,
+	.stop = NULL,
+};
+
+//
+// Sockets
+//
+static void	nrf52_uart_interrupt (void*);
+
+static void
+nrf52_uart_initialise (io_socket_t *socket,io_t *io) {
+	nrf52_uart_t *this = (nrf52_uart_t*) socket;
+	this->io = io;
+	this->rx_pipe = mk_io_byte_pipe (io_get_byte_memory(io),512);
+
+	register_io_interrupt_handler (
+		io,this->interrupt_number,nrf52_uart_interrupt,this
+	);
+}
+
+static bool
+nrf52_uart_open (io_socket_t *socket) {
+	return false;
+}
+
+static void
+nrf52_uart_close (io_socket_t *socket) {
+	// and then ....
+}
+
+static io_t*
+nrf52_uart_get_io (io_socket_t *socket) {
+	nrf52_uart_t *this = (nrf52_uart_t*) socket;
+	return this->io;
+}
+
+bool
+nrf52_uart_binds (io_socket_t *socket,io_event_t *rx) {
+	nrf52_uart_t *this = (nrf52_uart_t*) socket;
+	if (io_event_is_active(&this->rx_pipe->ev)) {
+		this->rx_pipe->ev = *rx;
+		return true;
+	} else {
+		return false;
+	}
+}
+
+static io_pipe_t*
+nrf52_uart_get_inward_pipe (io_socket_t *socket) {
+	nrf52_uart_t *this = (nrf52_uart_t*) socket;
+	return (io_pipe_t*) this->rx_pipe;
+}
+
+static io_encoding_t*
+nrf52_uart_new_message (io_socket_t *socket) {
+	nrf52_uart_t *this = (nrf52_uart_t*) socket;
+	return new_io_encoding (this->encoding,io_get_byte_memory(this->io));
+}
+
+static bool
+nrf52_uart_send_message_blocking (io_socket_t *socket,io_encoding_t *encoding) {
+	if (is_io_binary_encoding (encoding)) {
+//		nrf52_uart_t *this = (nrf52_uart_t*) socket;
+		const uint8_t *b,*e;
+
+		io_encoding_get_ro_bytes (encoding,&b,&e);
+/*
+		while (b < e) {
+			while (!(this->uart_registers->SR & USART_SR_TXE));
+			this->uart_registers->DR = *b++;
+		}
+*/		
+		io_encoding_free(encoding);
+		return true;
+	} else {
+		return false;
+	}
+}
+
+void
+nrf52_uart_interrupt (void *user_value) {
+	nrf52_uart_t *this = user_value;
+
+	if (this->uart_registers->EVENTS_ERROR) {
+		//io_panic(this->io,PANIC_DEVICE_ERROR);
+		this->uart_registers->EVENTS_ERROR = 0;
+		this->uart_registers->EVENTS_RXTO = 0;
+		this->uart_registers->EVENTS_ENDRX = 0;
+		this->uart_registers->EVENTS_RXSTARTED = 0;
+	}
+
+	if (this->uart_registers->EVENTS_RXTO) {
+		//
+		// this is a stopped event, need a flush ...
+		//
+		if (this->uart_registers->RXD.AMOUNT > 0) {
+			//io_enqueue_event (this->io,this->receive_data_available);
+		}
+		this->uart_registers->EVENTS_RXTO = 0;
+	}
+
+	if (this->uart_registers->EVENTS_ENDTX) {
+		// io_enqueue_event (this->io,&this->transmit_complete);
+		this->uart_registers->EVENTS_ENDTX = 0;
+	}
+
+	if (this->uart_registers->EVENTS_RXDRDY) {
+		// occurs once for each received byte
+		this->uart_registers->EVENTS_RXDRDY = 0;
+	}
+	
+	//
+	// rx drops bytes in console if compiled with -O0
+	//
+	if (this->uart_registers->EVENTS_ENDRX) {
+		if (this->uart_registers->RXD.AMOUNT > 0) {
+			io_pipe_put_bytes (
+				this->rx_pipe,
+				this->active_rx_buffer,
+				this->uart_registers->RXD.AMOUNT
+			);
+			{
+				// swap buffers
+				uint8_t *temp = this->next_rx_buffer;
+				this->next_rx_buffer = this->active_rx_buffer;
+				this->active_rx_buffer = temp;
+			}
+			io_enqueue_event (this->io,&this->rx_pipe->ev);
+		}
+		this->uart_registers->EVENTS_ENDRX = 0;
+	}
+
+	if (this->uart_registers->EVENTS_RXSTARTED) {
+		this->uart_registers->RXD.PTR = (uint32_t) this->next_rx_buffer;
+		this->uart_registers->EVENTS_RXSTARTED = 0;
+	}
+}
+
+static size_t
+nrf52_uart_mtu (io_socket_t const *socket) {
+	return 1024;
+}
+
+EVENT_DATA io_socket_implementation_t nrf52_uart_implementation = {
+	.specialisation_of = NULL,
+	.initialise = nrf52_uart_initialise,
+	.free = NULL,
+	.get_io = nrf52_uart_get_io,
+	.open = nrf52_uart_open,
+	.close = nrf52_uart_close,
+	.binds = nrf52_uart_binds,
+	.get_inward_pipe = nrf52_uart_get_inward_pipe,
+	.new_message = nrf52_uart_new_message,
+	.send_message = nrf52_uart_send_message_blocking,
+	.iterate_inner_sockets = NULL,
+	.iterate_outer_sockets = NULL,
+	.mtu = nrf52_uart_mtu,
+};
+
+//
+// Io
+//
 static io_byte_memory_t*
 nrf52_io_get_byte_memory (io_t *io) {
 	nrf52840_io_t *this = (nrf52840_io_t*) io;
@@ -60,9 +394,135 @@ nrf52_io_get_byte_memory (io_t *io) {
 }
 
 static io_value_memory_t*
-nrf52_io_get_stm (io_t *io) {
+nrf52_io_get_stvm (io_t *io) {
 	nrf52840_io_t *this = (nrf52840_io_t*) io;
 	return this->vm;
+}
+
+static void
+nrf52_do_gc (io_t *io,int32_t count) {
+	io_value_memory_do_gc (io_get_short_term_value_memory (io),count);
+}
+
+static void
+nrf52_signal_event_pending (io_t *io) {
+	SET_EVENT_PENDING;
+}
+
+static void
+nrf52_panic (io_t *io,int code) {
+	DISABLE_INTERRUPTS;
+	while (1);
+}
+
+static bool
+nrf52_enter_critical_section (io_t *env) {
+	uint32_t interrupts_are_enabled = !(__get_PRIMASK() & 0x1);
+	DISABLE_INTERRUPTS;
+	return interrupts_are_enabled;
+}
+
+void
+nrf52_exit_critical_section (io_t *env,bool were_enabled) {
+	if (were_enabled) {
+		ENABLE_INTERRUPTS;
+	}
+}
+
+static uint32_t
+nrf52840_get_random_u8 (void) {	
+	NRF_RNG->EVENTS_VALRDY = 0;
+	while (NRF_RNG->EVENTS_VALRDY == 0);	
+	return NRF_RNG->VALUE;
+}
+
+uint32_t
+nrf52840_get_random_u32 (void) {
+	uint32_t r = nrf52840_get_random_u8();
+	r <<= 8;
+	r += nrf52840_get_random_u8();
+	r <<= 8;
+	r += nrf52840_get_random_u8();
+	r <<= 8;
+	r += nrf52840_get_random_u8();
+	return r;
+}
+
+static uint32_t
+nrf52_get_random_u32 (io_t *io) {
+	uint32_t r;
+	
+	bool h = enter_io_critical_section (io);
+	
+	r = nrf52840_get_random_u32 ();
+
+	exit_io_critical_section (io,h);
+
+	return r;
+}
+
+static void
+wait_for_all_events (io_t *io) {
+	io_event_t *event;
+	io_alarm_t *alarm;
+	do {
+		ENTER_CRITICAL_SECTION(io);
+		event = io->events;
+		alarm = io->alarms;
+		EXIT_CRITICAL_SECTION(io);
+	} while (
+			event != &s_null_io_event
+		&&	alarm != &s_null_io_alarm
+	);
+}
+
+static void
+nrf52_log (io_t *io,char const *fmt,va_list va) {
+
+}
+
+static bool
+nrf52_is_in_event_thread (io_t *io) {
+	return ((nrf52840_io_t*) io)->in_event_thread;
+}
+
+static void
+nrf52_wait_for_event (io_t *io) {
+	__WFI();
+}
+
+static io_interrupt_handler_t cpu_interrupts[NUMBER_OF_INTERRUPT_VECTORS];
+
+static void
+null_interrupt_handler (void *w) {
+	while(1);
+}
+
+static void	
+nrf52_register_interrupt_handler (
+	io_t *io,int32_t number,io_interrupt_action_t handler,void *user_value
+) {
+	io_interrupt_handler_t *i = (
+		cpu_interrupts + number + NUMBER_OF_ARM_INTERRUPT_VECTORS
+	);
+	i->action = handler;
+	i->user_value = user_value;
+}
+
+static bool	
+nrf52_unregister_interrupt_handler (
+	io_t *io,int32_t number,io_interrupt_action_t handler
+) {
+	io_interrupt_handler_t *i = (
+		cpu_interrupts + number + NUMBER_OF_ARM_INTERRUPT_VECTORS
+	);
+	if (i->action == handler) {
+		i->action = null_interrupt_handler;
+		i->user_value = io;
+		return true;
+	} else {
+		return false;
+	}
 }
 
 void
@@ -70,53 +530,28 @@ add_io_implementation_cpu_methods (io_implementation_t *io_i) {
 	add_io_implementation_core_methods (io_i);
 
 	io_i->get_byte_memory = nrf52_io_get_byte_memory;
-	io_i->get_short_term_value_memory = nrf52_io_get_stm;
+	io_i->get_short_term_value_memory = nrf52_io_get_stvm;
+	io_i->do_gc = nrf52_do_gc;
+	io_i->get_random_u32 = nrf52_get_random_u32;
+	io_i->signal_event_pending = nrf52_signal_event_pending;
+	io_i->enter_critical_section = nrf52_enter_critical_section;
+	io_i->exit_critical_section = nrf52_exit_critical_section;
+	io_i->in_event_thread = nrf52_is_in_event_thread;
+	io_i->wait_for_event = nrf52_wait_for_event;
+	io_i->register_interrupt_handler = nrf52_register_interrupt_handler;
+	io_i->unregister_interrupt_handler = nrf52_unregister_interrupt_handler;
+	io_i->wait_for_all_events = wait_for_all_events;
 
-/*
-	io_i->do_gc = NULL;
-	io_i->get_core_clock = NULL;
-	io_i->get_random_u32 = NULL;
-	io_i->get_socket = NULL;
-	io_i->dequeue_event = NULL;
-	io_i->enqueue_event = NULL;
-	io_i->next_event = NULL;
-	io_i->in_event_thread = NULL;
-	io_i->signal_event_pending = NULL;
-	io_i->wait_for_event = NULL;
-	io_i->wait_for_all_events = NULL;
-	io_i->enter_critical_section = NULL;
-	io_i->exit_critical_section = NULL;
-	io_i->register_interrupt_handler = NULL;
-	io_i->unregister_interrupt_handler = NULL;
-	io_i->log = NULL;
-	io_i->panic = NULL;
-*/
+	io_i->log = nrf52_log;
+	io_i->panic = nrf52_panic;
 }
-
-static io_byte_memory_t heap_byte_memory;
-static io_byte_memory_t umm_value_memory;
-static umm_io_value_memory_t short_term_values;
 
 void
 initialise_cpu_io (io_t *io) {
-	nrf52840_io_t *this = (nrf52840_io_t*) io;
-
-	this->bm = &heap_byte_memory;
-	this->vm = (io_value_memory_t*) &short_term_values;
-
-	short_term_values.io = io;
-	initialise_io_byte_memory (io,&heap_byte_memory);
-	initialise_io_byte_memory (io,&umm_value_memory);
-
+	((nrf52840_io_t*) io)->in_event_thread = false;
 }
 
 static void apply_nrf_cpu_errata (void);
-static io_interrupt_handler_t cpu_interrupts[NUMBER_OF_INTERRUPT_VECTORS];
-
-static void
-null_interrupt_handler (void *w) {
-	while(1);
-}
 
 static void
 initialise_ram_interrupt_vectors (void) {
@@ -171,6 +606,10 @@ nrf52_core_reset (void) {
 			(3UL << 10*2)	// set CP10 Full Access
 		|	(3UL << 11*2)	// set CP11 Full Access 
 	);
+	
+	NRF_NVMC->ICACHECNF = NVMC_ICACHECNF_CACHEEN_Msk;
+	NRF_RNG->TASKS_START = 1;
+	NVIC_SetPriorityGrouping(0);
 
 	main ();
 	while (1);
