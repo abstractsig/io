@@ -582,6 +582,8 @@ TEST_BEGIN(test_io_byte_pipe_1) {
 		VERIFY (io_byte_pipe_count_occupied_slots (pipe) == 1,NULL);
 		VERIFY (io_pipe_get_byte (pipe,&data) && data == 42,NULL);
 		VERIFY (io_byte_pipe_count_occupied_slots (pipe) == 0,NULL);
+		
+		VERIFY (is_io_byte_pipe_event (io_pipe_event (pipe)),NULL);
 		free_io_byte_pipe (pipe,bm);
 	}
 	io_byte_memory_get_info (bm,&bm_end);

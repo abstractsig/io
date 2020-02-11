@@ -122,32 +122,59 @@ typedef struct io_value_memory io_value_memory_t;
  *
  */
 typedef struct io_event io_event_t;
+typedef struct io_event_implementation io_event_implementation_t;
 typedef void (*io_event_handler_t) (io_event_t*);
 
+struct PACK_STRUCTURE io_event_implementation {
+	io_event_implementation_t const *specialisation_of;
+};
+
+#define IO_EVENT_STRUCT_MEMBERS \
+	io_event_implementation_t const *implementation;\
+	void (*event_handler) (io_event_t*);\
+	void *user_value;\
+	io_event_t *next_event;\
+	/**/
+
 struct PACK_STRUCTURE io_event {
-	void (*handler) (struct io_event*);
-	void *user_value;
-	struct io_event *next_event;
+	IO_EVENT_STRUCT_MEMBERS
 };
 
 #define def_io_event(FN,UV) {\
-		.handler = FN, \
+		.event_handler = FN, \
 		.user_value = UV, \
 		.next_event = NULL, \
 	}
 
-#define io_event_is_valid(ev) 	((ev)->handler != NULL)
+#define io_event_is_valid(ev) 	((ev)->event_handler != NULL)
 #define io_event_is_active(ev) 	((ev)->next_event != NULL)
 
+bool	io_is_event_of_type (io_event_t const*,io_event_implementation_t const*);
+
+extern io_event_t s_null_io_event;
+extern EVENT_DATA io_event_implementation_t io_event_base_implementation;
+
 INLINE_FUNCTION io_event_t*
-initialise_io_event (io_event_t *ev,io_event_handler_t fn,void* user_value) {
-	ev->handler = fn;
+initialise_io_event (
+	io_event_t *ev,io_event_handler_t fn,void* user_value
+) {
+	ev->implementation = &io_event_base_implementation;
+	ev->event_handler = fn;
 	ev->user_value = user_value;
 	ev->next_event = NULL;
 	return ev;
 }
 
-extern io_event_t s_null_io_event;
+INLINE_FUNCTION io_event_t*
+initialise_typed_io_event (
+	io_event_t *ev,io_event_implementation_t const *I,io_event_handler_t fn,void* user_value
+) {
+	ev->implementation = I;
+	ev->event_handler = fn;
+	ev->user_value = user_value;
+	ev->next_event = NULL;
+	return ev;
+}
 
 typedef struct io_alarm io_alarm_t;
 
@@ -168,13 +195,16 @@ extern io_alarm_t s_null_io_alarm;
 #define IO_PIPE_STRUCT_MEMBERS \
 	io_event_t ev;\
 	int16_t size_of_ring;\
-	int16_t overrun;\
 	int16_t write_index;\
-	int16_t read_index;
+	int16_t read_index;\
+	int16_t overrun;\
+	/**/
 
 typedef struct PACK_STRUCTURE io_pipe {
 	IO_PIPE_STRUCT_MEMBERS
 } io_pipe_t;
+
+#define io_pipe_event(p)	(&(p)->ev)
 
 typedef struct PACK_STRUCTURE io_byte_pipe {
 	IO_PIPE_STRUCT_MEMBERS
@@ -186,6 +216,8 @@ void free_io_byte_pipe (io_byte_pipe_t*,io_byte_memory_t*);
 bool		io_pipe_get_byte (io_byte_pipe_t*,uint8_t*);
 bool		io_pipe_put_byte (io_byte_pipe_t*,uint8_t);
 uint32_t	io_pipe_put_bytes (io_byte_pipe_t*,uint8_t const*,uint32_t);
+
+bool	is_io_byte_pipe_event (io_event_t const*);
 
 // depreciate
 io_byte_pipe_t* initialise_io_pipe (io_byte_pipe_t*,int16_t,uint8_t*);
@@ -1547,6 +1579,28 @@ STBSP__PUBLICDEF void STB_SPRINTF_DECORATE(set_separators)(char comma, char peri
 #endif // STB_SPRINTF_H_INCLUDE
 
 #ifdef IMPLEMENT_IO_CORE
+//-----------------------------------------------------------------------------
+//
+// io core implementation
+//
+//-----------------------------------------------------------------------------
+
+EVENT_DATA io_event_implementation_t io_event_base_implementation = {
+	.specialisation_of = NULL,
+};
+
+bool
+io_is_event_of_type (
+	io_event_t const *ev,io_event_implementation_t const *T
+) {
+	io_event_implementation_t const *E = ev->implementation;
+	bool is = false;
+	do {
+		is = (E == T);
+	} while (!is && (E = E->specialisation_of) != NULL);
+
+	return is && (E != NULL);
+}
 
 static void
 null_event_handler (io_event_t *ev) {
@@ -1621,7 +1675,7 @@ do_next_io_event (io_t *io) {
 
 	EXIT_CRITICAL_SECTION(io);
 
-	ev->handler(ev);
+	ev->event_handler(ev);
 
 	return r;
 }
@@ -1785,12 +1839,27 @@ io_dependant_cpu_clock_start (io_cpu_clock_pointer_t clock) {
 // pipes
 //
 
+EVENT_DATA io_event_implementation_t io_pipe_base_implementation = {
+	.specialisation_of = &io_event_base_implementation,
+};
+
+EVENT_DATA io_event_implementation_t io_byte_pipe_implementation = {
+	.specialisation_of = &io_pipe_base_implementation,
+};
+
+bool
+is_io_byte_pipe_event (io_event_t const *ev) {
+	return io_is_event_of_type (ev,&io_byte_pipe_implementation);
+}
+
 io_byte_pipe_t*
 mk_io_byte_pipe (io_byte_memory_t *bm,uint16_t length) {
 	io_byte_pipe_t *this = io_byte_memory_allocate (bm,sizeof(io_byte_pipe_t));
 	
 	if (this) {
-		initialise_io_event (&this->ev,NULL,NULL);
+		initialise_typed_io_event (
+			io_pipe_event(this),&io_byte_pipe_implementation,NULL,NULL
+		);
 		this->write_index = this->read_index = 0;
 		this->size_of_ring = length;
 		this->overrun = 0;

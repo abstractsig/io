@@ -671,7 +671,7 @@ stm32f4_uart_interrupt_handler (void *user_value) {
 	volatile uint16_t data = this->uart_registers->DR;
 
 	if (io_pipe_put_byte (this->rx_pipe,data)) {
-		io_enqueue_event (this->io,&this->rx_pipe->ev);
+		io_enqueue_event (this->io,io_pipe_event(this->rx_pipe));
 	}
 }
 
@@ -781,14 +781,14 @@ stm32f4_uart_send_message_blocking (io_socket_t *socket,io_encoding_t *encoding)
 
 static size_t
 stm32f4_uart_mtu (io_socket_t const *socket) {
-	return 1024;	//???
+	return 1024;
 }
 
 bool
 stm32f4_uart_binds (io_socket_t *socket,io_event_t *rx) {
 	stm32f4_uart_t *this = (stm32f4_uart_t*) socket;
-	if (this->rx_pipe->ev.next_event == NULL) {
-		this->rx_pipe->ev = *rx;
+	if (!io_event_is_active (io_pipe_event(this->rx_pipe))) {
+		*io_pipe_event(this->rx_pipe) = *rx;
 		return true;
 	} else {
 		return false;
