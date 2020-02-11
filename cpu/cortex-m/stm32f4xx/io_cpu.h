@@ -892,7 +892,7 @@ stm32f4_io_get_byte_memory (io_t *io) {
 }
 
 static io_value_memory_t*
-stm32f4_io_get_stm (io_t *io) {
+stm32f4_io_get_short_term_value_memory (io_t *io) {
 	stm32f4xx_io_t *this = (stm32f4xx_io_t*) io;
 	return this->vm;
 }
@@ -949,7 +949,7 @@ signal_event_pending (io_t *io) {
 
 static void
 stm32f4_do_gc (io_t *io,int32_t count) {
-	io_value_memory_do_gc (io_get_stm (io),count);
+	io_value_memory_do_gc (io_get_short_term_value_memory (io),count);
 }
 
 io_cpu_clock_pointer_t
@@ -1052,7 +1052,7 @@ static umm_io_value_memory_t stm;
 
 static io_implementation_t io_i = {
 	.get_byte_memory = stm32f4_io_get_byte_memory,
-	.get_stm = stm32f4_io_get_stm,
+	.get_short_term_value_memory = stm32f4_io_get_short_term_value_memory,
 	.do_gc = stm32f4_do_gc,
 	.get_core_clock = stm32f4_get_core_clock,
 	.get_random_u32 = stm32f4_random_uint32,

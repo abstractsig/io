@@ -250,7 +250,7 @@ TEST_BEGIN(test_io_constant_values_1) {
 TEST_END
 
 TEST_BEGIN(test_io_int64_value_1) {
-	io_value_memory_t *vm = io_get_stm (TEST_IO);
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
 	memory_info_t vm_begin,vm_end;
 	vref_t r_value;
 
@@ -305,7 +305,7 @@ TEST_BEGIN(test_io_int64_value_1) {
 TEST_END
 
 TEST_BEGIN(test_io_int64_value_2) {
-	io_value_memory_t *vm = io_get_stm (TEST_IO);
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
 	memory_info_t bm_begin,bm_end,vm_begin,vm_end;
 	io_encoding_t *encoding;
@@ -342,7 +342,7 @@ TEST_BEGIN(test_io_int64_value_2) {
 TEST_END
 
 TEST_BEGIN(test_io_float64_value_1) {
-	io_value_memory_t *vm = io_get_stm (TEST_IO);
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
 	memory_info_t vm_begin,vm_end;
 	vref_t r_value;
 
@@ -383,7 +383,7 @@ TEST_BEGIN(test_io_float64_value_1) {
 TEST_END
 
 TEST_BEGIN(test_io_float64_value_2) {
-	io_value_memory_t *vm = io_get_stm (TEST_IO);
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
 	vref_t r_value;
 
 	r_value = reference_value (mk_io_float64_value (vm,42.1));
@@ -405,7 +405,7 @@ TEST_BEGIN(test_io_float64_value_2) {
 TEST_END
 
 TEST_BEGIN(test_io_binary_value_with_const_bytes_1) {
-	io_value_memory_t *vm = io_get_stm (TEST_IO);
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
 	memory_info_t vm_begin,vm_end;
 	vref_t r_value;
 
@@ -439,7 +439,7 @@ TEST_BEGIN(test_io_binary_value_with_const_bytes_1) {
 TEST_END
 
 TEST_BEGIN(test_io_binary_value_dynamic_1) {
-	io_value_memory_t *vm = io_get_stm (TEST_IO);
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
 	memory_info_t vm_begin,vm_end;
 	vref_t r_value;
 
@@ -473,7 +473,7 @@ TEST_BEGIN(test_io_binary_value_dynamic_1) {
 TEST_END
 
 TEST_BEGIN(test_io_text_value_1) {
-	io_value_memory_t *vm = io_get_stm (TEST_IO);
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
 	memory_info_t vm_begin,vm_end;
 	vref_t r_value;
 
@@ -519,7 +519,7 @@ TEST_END
 
 UNIT_SETUP(setup_io_core_values_unit_test) {
 	io_byte_memory_get_info (io_get_byte_memory (TEST_IO),TEST_MEMORY_INFO);
-	io_value_memory_get_info (io_get_stm (TEST_IO),TEST_MEMORY_INFO + 1);
+	io_value_memory_get_info (io_get_short_term_value_memory (TEST_IO),TEST_MEMORY_INFO + 1);
 	return VERIFY_UNIT_CONTINUE;
 }
 
@@ -529,7 +529,7 @@ UNIT_TEARDOWN(teardown_io_core_values_unit_test) {
 
 	io_do_gc (TEST_IO,-1);
 
-	io_value_memory_get_info (io_get_stm (TEST_IO),&vm_end);
+	io_value_memory_get_info (io_get_short_term_value_memory (TEST_IO),&vm_end);
 	VERIFY (vm_end.used_bytes == TEST_MEMORY_INFO[1].used_bytes,NULL);
 
 	io_byte_memory_get_info (bm,&bm_end);
@@ -560,7 +560,7 @@ io_core_values_unit_test (V_unit_test_t *unit) {
 # endif /* IMPLEMENT_VERIFY_IO_CORE_VALUES */
 
 TEST_BEGIN(test_io_memories_1) {
-	io_value_memory_t *vm = io_get_stm (TEST_IO);
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
 
 	VERIFY (bm != NULL,NULL);

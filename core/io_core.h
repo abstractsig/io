@@ -992,7 +992,7 @@ typedef struct PACK_STRUCTURE io_implementation {
 	// core resources
 	//
 	io_byte_memory_t* (*get_byte_memory) (io_t*);
-	io_value_memory_t* (*get_stm) (io_t*);
+	io_value_memory_t* (*get_short_term_value_memory) (io_t*);
 	void (*do_gc) (io_t*,int32_t);
 	io_cpu_clock_pointer_t (*get_core_clock) (io_t*);
 	//
@@ -1028,6 +1028,11 @@ typedef struct PACK_STRUCTURE io_implementation {
 	//
 } io_implementation_t;
 
+void add_io_implementation_core_methods (io_implementation_t*);
+void add_io_implementation_cpu_methods (io_implementation_t*);
+void add_io_implementation_board_methods (io_implementation_t*);
+void add_io_implementation_device_methods (io_implementation_t*);
+
 #define IO_STRUCT_MEMBERS \
 	io_implementation_t const *implementation;\
 	io_event_t *events; \
@@ -1060,8 +1065,8 @@ io_get_byte_memory (io_t *io) {
 }
 
 INLINE_FUNCTION io_value_memory_t*
-io_get_stm (io_t *io) {
-	return io->implementation->get_stm(io);
+io_get_short_term_value_memory (io_t *io) {
+	return io->implementation->get_short_term_value_memory(io);
 }
 
 INLINE_FUNCTION uint32_t
@@ -1229,15 +1234,15 @@ typedef struct PACK_STRUCTURE io_binary_value {
 
 #define io_binary_value_size(b)				(b)->bit.binary_size
 #define io_binary_value_const_bytes(b)		(b)->bit.const_bytes
-#define io_binary_value_inline_bytes(b)		(b)->bit.inline_bytes
+#define io_binary_value_inline_bytes(b)	(b)->bit.inline_bytes
 #define io_binary_value_ro_bytes(b)			(b)->bytes.ro
 #define io_binary_value_rw_bytes(b)			(b)->bytes.rw
 #define io_binary_value_string(b)			(b)->bytes.str
 
 #define IO_VECTOR_VALUE_STRUCT_MEMBERS \
-	IO_VALUE_STRUCT_MEMBERS								\
-	uint32_t arity;											\
-	vref_t values[];										\
+	IO_VALUE_STRUCT_MEMBERS	\
+	uint32_t arity;\
+	vref_t values[];\
 	/**/
 
 typedef struct PACK_STRUCTURE {
@@ -1250,6 +1255,30 @@ typedef struct PACK_STRUCTURE {
  *
  */
 #ifdef IMPLEMENT_IO_CORE
+
+void 
+add_io_implementation_core_methods (io_implementation_t *io_i) {
+	io_i->get_byte_memory = NULL;
+	io_i->get_short_term_value_memory = NULL;
+	io_i->do_gc = NULL;
+	io_i->get_core_clock = NULL;
+	io_i->get_random_u32 = NULL;
+	io_i->get_socket = NULL;
+	io_i->dequeue_event = NULL;
+	io_i->enqueue_event = NULL;
+	io_i->next_event = NULL;
+	io_i->in_event_thread = NULL;
+	io_i->signal_event_pending = NULL;
+	io_i->wait_for_event = NULL;
+	io_i->wait_for_all_events = NULL;
+	io_i->enter_critical_section = NULL;
+	io_i->exit_critical_section = NULL;
+	io_i->register_interrupt_handler = NULL;
+	io_i->unregister_interrupt_handler = NULL;
+	io_i->log = NULL;
+	io_i->panic = NULL;
+}
+
 # define decl_particular_value(REF_NAME,VALUE_TYPE,VALUE_VAR) \
 	extern EVENT_DATA VALUE_TYPE VALUE_VAR;\
 	EVENT_DATA vref_t REF_NAME = def_vref (&reference_to_constant_value,&VALUE_VAR);\

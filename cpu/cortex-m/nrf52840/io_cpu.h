@@ -11,6 +11,20 @@
 #include <nrf52840_bitfields.h>
 #include <nrf52840_peripherals.h>
 
+#define NRF52840_IO_CPU_STRUCT_MEMBERS \
+	IO_STRUCT_MEMBERS				\
+	io_value_memory_t *vm;\
+	io_byte_memory_t *bm;\
+	uint32_t in_event_thread;\
+	/**/
+
+typedef struct PACK_STRUCTURE nrf52840_io {
+	NRF52840_IO_CPU_STRUCT_MEMBERS
+} nrf52840_io_t;
+
+void initialise_cpu_io (io_t*);
+
+
 #define NUMBER_OF_ARM_INTERRUPT_VECTORS	16L
 #define NUMBER_OF_NRF_INTERRUPT_VECTORS	47L
 #define NUMBER_OF_INTERRUPT_VECTORS	(NUMBER_OF_ARM_INTERRUPT_VECTORS + NUMBER_OF_NRF_INTERRUPT_VECTORS)
@@ -32,18 +46,68 @@
 #define SET_EVENT_PENDING				NVIC_SetPendingIRQ (EVENT_THREAD_INTERRUPT)
 
 
-
 //-----------------------------------------------------------------------------
 //
-// Implementtaion
+// nrf52840 Implementtaion
 //
 //-----------------------------------------------------------------------------
 #ifdef IMPLEMENT_IO_CPU
 
-io_t*
-initialise_cpu_io (io_t *io) {
+static io_byte_memory_t*
+nrf52_io_get_byte_memory (io_t *io) {
+	nrf52840_io_t *this = (nrf52840_io_t*) io;
+	return this->bm;
+}
 
-	return io;
+static io_value_memory_t*
+nrf52_io_get_stm (io_t *io) {
+	nrf52840_io_t *this = (nrf52840_io_t*) io;
+	return this->vm;
+}
+
+void
+add_io_implementation_cpu_methods (io_implementation_t *io_i) {
+	add_io_implementation_core_methods (io_i);
+
+	io_i->get_byte_memory = nrf52_io_get_byte_memory;
+	io_i->get_short_term_value_memory = nrf52_io_get_stm;
+
+/*
+	io_i->do_gc = NULL;
+	io_i->get_core_clock = NULL;
+	io_i->get_random_u32 = NULL;
+	io_i->get_socket = NULL;
+	io_i->dequeue_event = NULL;
+	io_i->enqueue_event = NULL;
+	io_i->next_event = NULL;
+	io_i->in_event_thread = NULL;
+	io_i->signal_event_pending = NULL;
+	io_i->wait_for_event = NULL;
+	io_i->wait_for_all_events = NULL;
+	io_i->enter_critical_section = NULL;
+	io_i->exit_critical_section = NULL;
+	io_i->register_interrupt_handler = NULL;
+	io_i->unregister_interrupt_handler = NULL;
+	io_i->log = NULL;
+	io_i->panic = NULL;
+*/
+}
+
+static io_byte_memory_t heap_byte_memory;
+static io_byte_memory_t umm_value_memory;
+static umm_io_value_memory_t short_term_values;
+
+void
+initialise_cpu_io (io_t *io) {
+	nrf52840_io_t *this = (nrf52840_io_t*) io;
+
+	this->bm = &heap_byte_memory;
+	this->vm = (io_value_memory_t*) &short_term_values;
+
+	short_term_values.io = io;
+	initialise_io_byte_memory (io,&heap_byte_memory);
+	initialise_io_byte_memory (io,&umm_value_memory);
+
 }
 
 static void apply_nrf_cpu_errata (void);
@@ -144,13 +208,13 @@ static bool errata_136(void);
 
 void
 apply_nrf_cpu_errata (void) {
-    /* Enable SWO trace functionality. If ENABLE_SWO is not defined, SWO pin will be used as GPIO (see Product
-       Specification to see which one). */
-    #if defined (ENABLE_SWO)
-        CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-        NRF_CLOCK->TRACECONFIG |= CLOCK_TRACECONFIG_TRACEMUX_Serial << CLOCK_TRACECONFIG_TRACEMUX_Pos;
-        NRF_P1->PIN_CNF[0] = (GPIO_PIN_CNF_DRIVE_H0H1 << GPIO_PIN_CNF_DRIVE_Pos) | (GPIO_PIN_CNF_INPUT_Connect << GPIO_PIN_CNF_INPUT_Pos) | (GPIO_PIN_CNF_DIR_Output << GPIO_PIN_CNF_DIR_Pos);
-    #endif
+	/* Enable SWO trace functionality. If ENABLE_SWO is not defined, SWO pin will be used as GPIO (see Product
+	Specification to see which one). */
+	#if defined (ENABLE_SWO)
+	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+	NRF_CLOCK->TRACECONFIG |= CLOCK_TRACECONFIG_TRACEMUX_Serial << CLOCK_TRACECONFIG_TRACEMUX_Pos;
+	NRF_P1->PIN_CNF[0] = (GPIO_PIN_CNF_DRIVE_H0H1 << GPIO_PIN_CNF_DRIVE_Pos) | (GPIO_PIN_CNF_INPUT_Connect << GPIO_PIN_CNF_INPUT_Pos) | (GPIO_PIN_CNF_DIR_Output << GPIO_PIN_CNF_DIR_Pos);
+	#endif
 
     /* Enable Trace functionality. If ENABLE_TRACE is not defined, TRACE pins will be used as GPIOs (see Product
        Specification to see which ones). */
@@ -371,9 +435,32 @@ static bool errata_136(void)
     
     return true;
 }
-
-
 #endif /* IMPLEMENT_IO_CPU */
+#ifdef IMPLEMENT_VERIFY_IO_CPU
+
+#endif /* IMPLEMENT_VERIFY_IO_CPU */
+#ifdef IMPLEMENT_VERIFY_IO_CORE
+UNIT_SETUP(setup_io_cpu_unit_test) {
+	return VERIFY_UNIT_CONTINUE;
+}
+
+UNIT_TEARDOWN(teardown_io_cpu_unit_test) {
+}
+
+void
+io_cpu_unit_test (V_unit_test_t *unit) {
+	static V_test_t const tests[] = {
+		#ifdef IMPLEMENT_VERIFY_IO_CPU
+		#endif
+		0
+	};
+	unit->name = "io cpu";
+	unit->description = "io cpu unit test";
+	unit->tests = tests;
+	unit->setup = setup_io_cpu_unit_test;
+	unit->teardown = teardown_io_cpu_unit_test;
+}
+#endif /* IMPLEMENT_VERIFY_IO_CORE */
 #endif /* io_cpu_H_ */
 /*
 ------------------------------------------------------------------------------
