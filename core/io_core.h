@@ -245,11 +245,9 @@ uint32_t	io_byte_pipe_put_bytes (io_byte_pipe_t*,uint8_t const*,uint32_t);
 
 bool		is_io_byte_pipe_event (io_event_t const*);
 
-
 #define io_byte_pipe_count_free_slots(p) io_pipe_count_free_slots ((io_pipe_t const*) (p))
 #define io_byte_pipe_is_readable(p) io_pipe_is_readable ((io_pipe_t const*) (p))
 #define io_byte_pipe_is_writeable(p) io_pipe_is_writeable ((io_pipe_t const*) (p))
-
 
 //
 // encoding pipe
@@ -260,6 +258,15 @@ typedef struct PACK_STRUCTURE io_encoding_pipe {
 } io_encoding_pipe_t;
 
 bool	is_io_encoding_pipe_event (io_event_t const*);
+
+io_encoding_pipe_t* mk_io_encoding_pipe (io_byte_memory_t*,uint16_t);
+void free_io_encoding_pipe (io_encoding_pipe_t*,io_byte_memory_t*);
+bool	io_encoding_pipe_get_encoding (io_encoding_pipe_t*,io_encoding_t**);
+bool	io_encoding_pipe_put_encoding (io_encoding_pipe_t*,io_encoding_t*);
+
+#define io_encoding_pipe_count_free_slots(p) io_pipe_count_free_slots ((io_pipe_t const*) (p))
+#define io_encoding_pipe_is_readable(p) io_pipe_is_readable ((io_pipe_t const*) (p))
+#define io_encoding_pipe_is_writeable(p) io_pipe_is_writeable ((io_pipe_t const*) (p))
 
 /*
  *
@@ -426,7 +433,7 @@ struct PACK_STRUCTURE io_encoding {
 #define io_encoding_reference_count(e)		(e)->metadata.bit.reference_count
 
 bool	io_is_encoding_of_type (io_encoding_t const*,io_encoding_implementation_t const*);
-void	reference_io_encoding (io_encoding_t*);
+io_encoding_t*	reference_io_encoding (io_encoding_t*);
 void	unreference_io_encoding (io_encoding_t*);
 
 //
@@ -1885,13 +1892,13 @@ is_io_byte_pipe_event (io_event_t const *ev) {
 	return io_is_event_of_type (ev,&io_byte_pipe_implementation);
 }
 
-EVENT_DATA io_event_implementation_t io_encoding_pipe_implementation = {
+EVENT_DATA io_event_implementation_t io_encoding_pipe_event_implementation = {
 	.specialisation_of = &io_pipe_base_implementation,
 };
 
 bool
 is_io_encoding_pipe_event (io_event_t const *ev) {
-	return io_is_event_of_type (ev,&io_encoding_pipe_implementation);
+	return io_is_event_of_type (ev,&io_encoding_pipe_event_implementation);
 }
 
 io_byte_pipe_t*
@@ -1965,6 +1972,69 @@ io_byte_pipe_put_bytes (io_byte_pipe_t *this,uint8_t const *byte,uint32_t length
 		ok = io_byte_pipe_put_byte (this,*byte++);
 	}
 	return length - (end - byte);
+}
+
+io_encoding_pipe_t*
+mk_io_encoding_pipe (io_byte_memory_t *bm,uint16_t length) {
+	io_encoding_pipe_t *this = io_byte_memory_allocate (bm,sizeof(io_encoding_pipe_t));
+	
+	if (this) {
+		initialise_typed_io_event (
+			io_pipe_event(this),&io_encoding_pipe_event_implementation,NULL,NULL
+		);
+		this->write_index = this->read_index = 0;
+		this->size_of_ring = length;
+		this->overrun = 0;
+		this->encoding_ring = io_byte_memory_allocate (bm,sizeof(io_encoding_t*) * length);
+		if (this->encoding_ring == NULL) {
+			io_byte_memory_free (bm,this);
+			this = NULL;
+		}
+	}
+	
+	return this;
+}
+
+void
+free_io_encoding_pipe (io_encoding_pipe_t *this,io_byte_memory_t *bm) {
+	io_byte_memory_free (bm,this->encoding_ring);
+	io_byte_memory_free (bm,this);
+}
+
+INLINE_FUNCTION int16_t
+io_encoding_pipe_increment_index (io_encoding_pipe_t *this,int16_t i,int16_t n) {
+	i += n;
+	if (i >= this->size_of_ring) {
+		i -= this->size_of_ring;
+	}
+	return i;
+}
+
+bool
+io_encoding_pipe_get_encoding (io_encoding_pipe_t *this,io_encoding_t **encoding) {
+	if (io_encoding_pipe_is_readable (this)) {
+		*encoding = this->encoding_ring[this->read_index];
+		this->read_index = io_encoding_pipe_increment_index (
+			this,this->read_index,1
+		);
+		return true;
+	} else {
+		return false;
+	}
+}
+
+bool
+io_encoding_pipe_put_encoding (io_encoding_pipe_t *this,io_encoding_t *encoding) {
+	int16_t f = io_encoding_pipe_count_free_slots(this);
+	if (f > 0) {
+		int16_t j = this->write_index;
+		int16_t i = io_encoding_pipe_increment_index(this,j,1);
+		this->encoding_ring[j] = encoding;
+		this->write_index = i;
+		return true;
+	} else {
+		return false;
+	}
 }
 
 //
@@ -2238,7 +2308,7 @@ EVENT_DATA io_value_reference_implementation_t reference_to_c_stack_value = {
 // Encoding
 //
 
-void
+io_encoding_t*
 reference_io_encoding (io_encoding_t *encoding) {
 	uint32_t new_count = (uint32_t) io_encoding_reference_count (encoding) + 1;
 	if (new_count <= IO_ENCODING_REFERENCE_COUNT_LIMIT) {
@@ -2246,6 +2316,7 @@ reference_io_encoding (io_encoding_t *encoding) {
 	} else {
 		io_panic (io_encoding_get_io (encoding),IO_PANIC_UNRECOVERABLE_ERROR);
 	}
+	return encoding;
 }
 
 void

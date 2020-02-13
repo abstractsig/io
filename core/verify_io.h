@@ -582,12 +582,40 @@ TEST_BEGIN(test_io_byte_pipe_1) {
 		VERIFY (!io_byte_pipe_is_readable (pipe),NULL);
 		VERIFY (io_byte_pipe_put_byte (pipe,42),NULL);
 		VERIFY (io_byte_pipe_is_readable (pipe),NULL);
+		VERIFY (io_byte_pipe_is_writeable (pipe),NULL);
 		VERIFY (io_byte_pipe_get_byte (pipe,&data) && data == 42,NULL);
-		VERIFY (!io_byte_pipe_is_readable (pipe) == 0,NULL);
+		VERIFY (!io_byte_pipe_is_readable (pipe),NULL);
+		VERIFY (io_byte_pipe_is_writeable (pipe),NULL);
 		
 		VERIFY (is_io_byte_pipe_event (io_pipe_event (pipe)),NULL);
 		free_io_byte_pipe (pipe,bm);
 	}
+	io_byte_memory_get_info (bm,&bm_end);
+	VERIFY (bm_end.used_bytes == bm_begin.used_bytes,NULL);
+}
+TEST_END
+
+TEST_BEGIN(test_io_encoding_pipe_1) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bm_begin,bm_end;
+
+	io_byte_memory_get_info (bm,&bm_begin);
+
+	io_encoding_pipe_t *pipe = mk_io_encoding_pipe (bm,4);
+	if (VERIFY (pipe != NULL,NULL)) {
+		io_encoding_t *data = NULL, *encoding;
+		VERIFY (!io_encoding_pipe_is_readable (pipe),NULL);
+		encoding = reference_io_encoding (mk_io_text_encoding (bm));
+		VERIFY (io_encoding_pipe_put_encoding (pipe,encoding),NULL);
+		VERIFY (io_encoding_pipe_is_readable (pipe),NULL);
+		VERIFY (io_encoding_pipe_is_writeable (pipe),NULL);
+		VERIFY (io_encoding_pipe_get_encoding (pipe,&data) && data == encoding,NULL);
+		VERIFY (!io_encoding_pipe_is_readable (pipe),NULL);
+		VERIFY (io_encoding_pipe_is_writeable (pipe),NULL);
+		unreference_io_encoding (encoding);
+		free_io_encoding_pipe (pipe,bm);
+	}
+	
 	io_byte_memory_get_info (bm,&bm_end);
 	VERIFY (bm_end.used_bytes == bm_begin.used_bytes,NULL);
 }
@@ -605,6 +633,7 @@ io_internals_unit_test (V_unit_test_t *unit) {
 	static V_test_t const tests[] = {
 		test_io_memories_1,
 		test_io_byte_pipe_1,
+		test_io_encoding_pipe_1,
 		0
 	};
 	unit->name = "io internals";
