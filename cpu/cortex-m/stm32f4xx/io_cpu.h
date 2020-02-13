@@ -676,11 +676,13 @@ stm32f4_uart_interrupt_handler (void *user_value) {
 }
 
 static void
-stm32f4_uart_initialise (io_socket_t *socket,io_t *io) {
+stm32f4_uart_initialise (
+	io_socket_t *socket,io_t *io,io_socket_constructor_t const *C
+) {
 	stm32f4_uart_t *this = (stm32f4_uart_t*) socket;
 	this->io = io;
 
-	this->rx_pipe = mk_io_byte_pipe (io_get_byte_memory(io),512);
+	this->rx_pipe = mk_io_byte_pipe (io_get_byte_memory(io),C->receive_pipe_length);
 
 	register_io_interrupt_handler (
 		io,this->interrupt_number,stm32f4_uart_interrupt_handler,this
