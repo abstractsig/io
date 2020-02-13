@@ -341,7 +341,7 @@ nrf52_uart_interrupt (void *user_value) {
 	//
 	if (this->uart_registers->EVENTS_ENDRX) {
 		if (this->uart_registers->RXD.AMOUNT > 0) {
-			io_pipe_put_bytes (
+			io_byte_pipe_put_bytes (
 				this->rx_pipe,
 				this->active_rx_buffer,
 				this->uart_registers->RXD.AMOUNT

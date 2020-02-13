@@ -194,6 +194,7 @@ TEST_BEGIN(test_io_text_encoding_1) {
 	if (VERIFY(encoding != NULL,NULL)) {
 		const uint8_t *b,*e;
 
+		reference_io_encoding (encoding);
 		VERIFY (is_io_text_encoding (encoding),NULL);
 		VERIFY (is_io_binary_encoding (encoding),NULL);
 		VERIFY (io_encoding_length (encoding) == 0,NULL);
@@ -210,7 +211,7 @@ TEST_BEGIN(test_io_text_encoding_1) {
 
 		io_encoding_append_byte (encoding,0);
 
-		io_encoding_free(encoding);
+		unreference_io_encoding(encoding);
 	}
 
 	io_byte_memory_get_info (bm,&end);
@@ -578,10 +579,11 @@ TEST_BEGIN(test_io_byte_pipe_1) {
 	io_byte_pipe_t *pipe = mk_io_byte_pipe (bm,8);
 	if (VERIFY (pipe != NULL,NULL)) {
 		uint8_t data = 0;
-		VERIFY (io_pipe_put_byte (pipe,42),NULL);
-		VERIFY (io_byte_pipe_count_occupied_slots (pipe) == 1,NULL);
-		VERIFY (io_pipe_get_byte (pipe,&data) && data == 42,NULL);
-		VERIFY (io_byte_pipe_count_occupied_slots (pipe) == 0,NULL);
+		VERIFY (!io_byte_pipe_is_readable (pipe),NULL);
+		VERIFY (io_byte_pipe_put_byte (pipe,42),NULL);
+		VERIFY (io_byte_pipe_is_readable (pipe),NULL);
+		VERIFY (io_byte_pipe_get_byte (pipe,&data) && data == 42,NULL);
+		VERIFY (!io_byte_pipe_is_readable (pipe) == 0,NULL);
 		
 		VERIFY (is_io_byte_pipe_event (io_pipe_event (pipe)),NULL);
 		free_io_byte_pipe (pipe,bm);

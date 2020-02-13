@@ -54,6 +54,7 @@
 #include <io_math.h>
 
 typedef struct io io_t;
+typedef struct io_encoding io_encoding_t;
 
 #define SHA256_SIZE		32
 
@@ -193,7 +194,7 @@ extern io_alarm_t s_null_io_alarm;
  *
  */
 #define IO_PIPE_STRUCT_MEMBERS \
-	io_event_t ev;\
+	io_event_t ev; /* MUST BE FIRST */\
 	int16_t size_of_ring;\
 	int16_t write_index;\
 	int16_t read_index;\
@@ -206,6 +207,31 @@ typedef struct PACK_STRUCTURE io_pipe {
 
 #define io_pipe_event(p)	(&(p)->ev)
 
+INLINE_FUNCTION bool
+io_pipe_is_readable (io_pipe_t const *this) {
+	return  (this->read_index != this->write_index);
+}
+
+INLINE_FUNCTION int16_t
+io_pipe_count_occupied_slots (io_pipe_t const *this) {
+	int16_t s = this->write_index - this->read_index;
+	if (s < 0) s += this->size_of_ring;
+	return s;
+}
+
+INLINE_FUNCTION int16_t
+io_pipe_count_free_slots (io_pipe_t const *this) {
+	return this->size_of_ring - io_pipe_count_occupied_slots(this) - 1;
+}
+
+INLINE_FUNCTION bool
+io_pipe_is_writeable (io_pipe_t const *this) {
+	return io_pipe_count_free_slots(this) > 0;
+}
+
+//
+// byte pipe
+//
 typedef struct PACK_STRUCTURE io_byte_pipe {
 	IO_PIPE_STRUCT_MEMBERS
 	uint8_t *byte_ring;
@@ -213,36 +239,27 @@ typedef struct PACK_STRUCTURE io_byte_pipe {
 
 io_byte_pipe_t* mk_io_byte_pipe (io_byte_memory_t*,uint16_t);
 void free_io_byte_pipe (io_byte_pipe_t*,io_byte_memory_t*);
-bool		io_pipe_get_byte (io_byte_pipe_t*,uint8_t*);
-bool		io_pipe_put_byte (io_byte_pipe_t*,uint8_t);
-uint32_t	io_pipe_put_bytes (io_byte_pipe_t*,uint8_t const*,uint32_t);
+bool		io_byte_pipe_get_byte (io_byte_pipe_t*,uint8_t*);
+bool		io_byte_pipe_put_byte (io_byte_pipe_t*,uint8_t);
+uint32_t	io_byte_pipe_put_bytes (io_byte_pipe_t*,uint8_t const*,uint32_t);
 
-bool	is_io_byte_pipe_event (io_event_t const*);
+bool		is_io_byte_pipe_event (io_event_t const*);
 
-// depreciate
-io_byte_pipe_t* initialise_io_pipe (io_byte_pipe_t*,int16_t,uint8_t*);
 
-INLINE_FUNCTION int16_t
-io_byte_pipe_count_occupied_slots (io_byte_pipe_t const *this) {
-	int16_t s = this->write_index - this->read_index;
-	if (s < 0) s += this->size_of_ring;
-	return s;
-}
+#define io_byte_pipe_count_free_slots(p) io_pipe_count_free_slots ((io_pipe_t const*) (p))
+#define io_byte_pipe_is_readable(p) io_pipe_is_readable ((io_pipe_t const*) (p))
+#define io_byte_pipe_is_writeable(p) io_pipe_is_writeable ((io_pipe_t const*) (p))
 
-INLINE_FUNCTION int16_t
-io_pipe_count_free_slots (io_byte_pipe_t const *this) {
-	return this->size_of_ring - io_byte_pipe_count_occupied_slots(this) - 1;
-}
 
-INLINE_FUNCTION bool
-io_pipe_is_writeable (io_byte_pipe_t const *this) {
-	return io_pipe_count_free_slots(this) > 0;
-}
+//
+// encoding pipe
+//
+typedef struct PACK_STRUCTURE io_encoding_pipe {
+	IO_PIPE_STRUCT_MEMBERS
+	io_encoding_t **encoding_ring;
+} io_encoding_pipe_t;
 
-INLINE_FUNCTION bool
-io_pipe_is_readable (io_byte_pipe_t const *this) {
-	return  (this->read_index != this->write_index);
-}
+bool	is_io_encoding_pipe_event (io_event_t const*);
 
 /*
  *
@@ -367,7 +384,6 @@ void store_vref (vref_t,vref_t*,vref_t);
  *
  */
 typedef struct io_encoding_implementation io_encoding_implementation_t;
-typedef struct io_encoding io_encoding_t;
 
 typedef vref_t (*io_value_decoder_t) (io_encoding_t*,io_value_memory_t*);
 
@@ -375,6 +391,7 @@ typedef vref_t (*io_value_decoder_t) (io_encoding_t*,io_value_memory_t*);
 	io_encoding_implementation_t const *specialisation_of;\
 	io_encoding_t* (*make_encoding) (io_byte_memory_t*);\
 	void (*free) (io_encoding_t*);\
+	io_t* (*get_io) (io_encoding_t*);\
 	vref_t (*decode_to_io_value) (io_encoding_t*,io_value_decoder_t,io_value_memory_t*);\
 	uint32_t (*grow_increment) (io_encoding_t*);\
 	int32_t (*limit) (void);\
@@ -389,16 +406,28 @@ struct io_encoding_implementation {
 
 #define IO_ENCODING_STRUCT_MEMBERS \
 	io_encoding_implementation_t const *implementation;\
+	union PACK_STRUCTURE {\
+		uint32_t all;\
+		struct PACK_STRUCTURE {\
+			uint16_t reference_count;\
+			uint16_t _spare;\
+		} bit;\
+	} metadata;\
 	/**/
 
 struct PACK_STRUCTURE io_encoding {
 	IO_ENCODING_STRUCT_MEMBERS
 };
 
+#define IO_ENCODING_REFERENCE_COUNT_LIMIT	0xffffUL
+
 #define IO_ENCODING_IMPLEMENATAION(e)		((io_encoding_implementation_t const *) (e))
 #define io_encoding_implementation(e)		(e)->implementation
+#define io_encoding_reference_count(e)		(e)->metadata.bit.reference_count
 
-bool io_is_encoding_of_type (io_encoding_t const*,io_encoding_implementation_t const*);
+bool	io_is_encoding_of_type (io_encoding_t const*,io_encoding_implementation_t const*);
+void	reference_io_encoding (io_encoding_t*);
+void	unreference_io_encoding (io_encoding_t*);
 
 //
 // inline io_encoding methods
@@ -406,6 +435,11 @@ bool io_is_encoding_of_type (io_encoding_t const*,io_encoding_implementation_t c
 INLINE_FUNCTION io_encoding_t*
 new_io_encoding (io_encoding_implementation_t const *I,io_byte_memory_t *bm) {
 	return I->make_encoding (bm);
+}
+
+INLINE_FUNCTION io_t*
+io_encoding_get_io (io_encoding_t *encoding) {
+	return encoding->implementation->get_io (encoding);
 }
 
 INLINE_FUNCTION vref_t
@@ -882,7 +916,6 @@ io_cpu_clock_start (io_cpu_clock_pointer_t c) {
 }
 
 extern EVENT_DATA io_cpu_clock_implementation_t io_cpu_clock_implementation;
-
 
 #define IO_CPU_CLOCK_SOURCE_STRUCT_MEMBERS \
 	IO_CPU_CLOCK_STRUCT_MEMBERS					\
@@ -1852,6 +1885,15 @@ is_io_byte_pipe_event (io_event_t const *ev) {
 	return io_is_event_of_type (ev,&io_byte_pipe_implementation);
 }
 
+EVENT_DATA io_event_implementation_t io_encoding_pipe_implementation = {
+	.specialisation_of = &io_pipe_base_implementation,
+};
+
+bool
+is_io_encoding_pipe_event (io_event_t const *ev) {
+	return io_is_event_of_type (ev,&io_encoding_pipe_implementation);
+}
+
 io_byte_pipe_t*
 mk_io_byte_pipe (io_byte_memory_t *bm,uint16_t length) {
 	io_byte_pipe_t *this = io_byte_memory_allocate (bm,sizeof(io_byte_pipe_t));
@@ -1879,17 +1921,8 @@ free_io_byte_pipe (io_byte_pipe_t *this,io_byte_memory_t *bm) {
 	io_byte_memory_free (bm,this);
 }
 
-io_byte_pipe_t*
-initialise_io_pipe (io_byte_pipe_t *this,int16_t length,uint8_t *ring) {
-	this->write_index = this->read_index = 0;
-	this->size_of_ring = length;
-	this->overrun = 0;
-	this->byte_ring = ring;
-	return this;
-}
-
 INLINE_FUNCTION int16_t
-io_pipe_increment_index (io_byte_pipe_t *this,int16_t i,int16_t n) {
+io_byte_pipe_increment_index (io_byte_pipe_t *this,int16_t i,int16_t n) {
 	i += n;
 	if (i >= this->size_of_ring) {
 		i -= this->size_of_ring;
@@ -1898,10 +1931,10 @@ io_pipe_increment_index (io_byte_pipe_t *this,int16_t i,int16_t n) {
 }
 
 bool
-io_pipe_get_byte (io_byte_pipe_t *this,uint8_t *byte) {
-	if (io_byte_pipe_count_occupied_slots(this) > 0) {
+io_byte_pipe_get_byte (io_byte_pipe_t *this,uint8_t *byte) {
+	if (io_byte_pipe_is_readable (this)) {
 		*byte = this->byte_ring[this->read_index];
-		this->read_index = io_pipe_increment_index (
+		this->read_index = io_byte_pipe_increment_index (
 			this,this->read_index,1
 		);
 		return true;
@@ -1911,11 +1944,11 @@ io_pipe_get_byte (io_byte_pipe_t *this,uint8_t *byte) {
 }
 
 bool
-io_pipe_put_byte (io_byte_pipe_t *this,uint8_t byte) {
-	int16_t f = io_pipe_count_free_slots(this);
+io_byte_pipe_put_byte (io_byte_pipe_t *this,uint8_t byte) {
+	int16_t f = io_byte_pipe_count_free_slots(this);
 	if (f > 0) {
 		int16_t j = this->write_index;
-		int16_t i = io_pipe_increment_index(this,j,1);
+		int16_t i = io_byte_pipe_increment_index(this,j,1);
 		this->byte_ring[j] = byte;
 		this->write_index = i;
 		return true;
@@ -1925,11 +1958,11 @@ io_pipe_put_byte (io_byte_pipe_t *this,uint8_t byte) {
 }
 
 uint32_t
-io_pipe_put_bytes (io_byte_pipe_t *this,uint8_t const *byte,uint32_t length) {
+io_byte_pipe_put_bytes (io_byte_pipe_t *this,uint8_t const *byte,uint32_t length) {
 	uint8_t const *end = byte + length;
 	bool ok = true;
 	while (byte < end && ok) {
-		ok = io_pipe_put_byte (this,*byte++);
+		ok = io_byte_pipe_put_byte (this,*byte++);
 	}
 	return length - (end - byte);
 }
@@ -2205,6 +2238,27 @@ EVENT_DATA io_value_reference_implementation_t reference_to_c_stack_value = {
 // Encoding
 //
 
+void
+reference_io_encoding (io_encoding_t *encoding) {
+	uint32_t new_count = (uint32_t) io_encoding_reference_count (encoding) + 1;
+	if (new_count <= IO_ENCODING_REFERENCE_COUNT_LIMIT) {
+		io_encoding_reference_count (encoding) = new_count;
+	} else {
+		io_panic (io_encoding_get_io (encoding),IO_PANIC_UNRECOVERABLE_ERROR);
+	}
+}
+
+void
+unreference_io_encoding (io_encoding_t *encoding) {
+	if (io_encoding_reference_count(encoding)) {
+		if (--io_encoding_reference_count(encoding) == 0) {
+			io_encoding_free(encoding);
+		}
+	} else {
+		io_panic (io_encoding_get_io (encoding),IO_PANIC_UNRECOVERABLE_ERROR);
+	}
+}
+
 static vref_t
 io_value_encoding_decode_to_io_value (
 	io_encoding_t *encoding,io_value_decoder_t decoder,io_value_memory_t *vm
@@ -2213,19 +2267,43 @@ io_value_encoding_decode_to_io_value (
 }
 
 static io_encoding_t*
-mk_null_encoder (io_byte_memory_t *bm) {
+mk_null_encoding (io_byte_memory_t *bm) {
 	return NULL;
 }
 
 static void
-free_null_encoder (io_encoding_t *encoder) {
+free_null_encoding (io_encoding_t *encoder) {
 }
 
-EVENT_DATA io_encoding_implementation_t io_encoding_implementation = {
+static size_t
+null_encoding_length (io_encoding_t const *encoder) {
+	return 0;
+}
+
+static int32_t
+null_encoding_limit (void) {
+	return 0;
+}
+
+static uint32_t
+null_encoding_grow_increment (io_encoding_t *encoding) {
+	return 0;
+}
+
+static io_t*
+null_encoding_get_io (io_encoding_t *encoding) {
+	return NULL;
+}
+
+EVENT_DATA io_encoding_implementation_t io_encoding_implementation_base = {
 	.specialisation_of = NULL,
-	.make_encoding = mk_null_encoder,
-	.free = free_null_encoder,
+	.make_encoding = mk_null_encoding,
+	.free = free_null_encoding,
+	.get_io = null_encoding_get_io,
 	.decode_to_io_value = io_value_encoding_decode_to_io_value,
+	.limit = null_encoding_limit,
+	.length = null_encoding_length,
+	.grow_increment = null_encoding_grow_increment,
 	.push = NULL,
 	.pop = NULL,
 };
@@ -2244,10 +2322,14 @@ io_is_encoding_of_type (
 }
 
 EVENT_DATA io_encoding_implementation_t io_value_int64_encoding_implementation = {
-	.specialisation_of = NULL,
-	.make_encoding = mk_null_encoder,
-	.free = free_null_encoder,
+	.specialisation_of = &io_encoding_implementation_base,
+	.make_encoding = mk_null_encoding,
+	.free = free_null_encoding,
+	.get_io = null_encoding_get_io,
 	.decode_to_io_value = io_value_encoding_decode_to_io_value,
+	.limit = null_encoding_limit,
+	.length = null_encoding_length,
+	.grow_increment = null_encoding_grow_increment,
 	.push = NULL,
 	.pop = NULL,
 };
@@ -2259,10 +2341,16 @@ bool encoding_is_io_value_int64 (io_encoding_t *encoding) {
 }
 
 EVENT_DATA io_encoding_implementation_t io_value_float64_encoding_implementation = {
-	.specialisation_of = NULL,
-	.make_encoding = mk_null_encoder,
-	.free = free_null_encoder,
+	.specialisation_of = &io_encoding_implementation_base,
+	.make_encoding = mk_null_encoding,
+	.free = free_null_encoding,
+	.get_io = null_encoding_get_io,
 	.decode_to_io_value = io_value_encoding_decode_to_io_value,
+	.limit = null_encoding_limit,
+	.length = null_encoding_length,
+	.grow_increment = null_encoding_grow_increment,
+	.push = NULL,
+	.pop = NULL,
 };
 
 bool
@@ -2287,6 +2375,7 @@ io_text_encoding_initialise (io_binary_encoding_t *this) {
 	if (this->data != NULL) {
 		this->cursor = this->data;
 		this->end = this->data + TEXT_ENCODING_INITIAL_SIZE;
+		this->metadata.all = 0;
 	} else {
 		io_byte_memory_free (this->bm,this);
 		this = NULL;
@@ -2492,23 +2581,30 @@ io_text_encoding_grow_increment (io_encoding_t *encoding) {
 	return TEXT_ENCODING_GROWTH_INCREMENT;
 }
 
+static io_t*
+io_binary_encoding_get_io (io_encoding_t *encoding) {
+	io_binary_encoding_t *this = (io_binary_encoding_t *) encoding;
+	return this->bm->io;
+}
+
 EVENT_DATA io_binary_encoding_implementation_t io_binary_encoding_implementation = {
-	.specialisation_of = NULL,
+	.specialisation_of = &io_encoding_implementation_base,
 	.decode_to_io_value = io_binary_encoding_decode_to_io_value,
-	.make_encoding = mk_null_encoder,
-	.copy = NULL,
-	.free = free_null_encoder,
+	.make_encoding = mk_null_encoding,
+	.free = free_null_encoding,
+	.get_io = io_binary_encoding_get_io,
 	.push = NULL,
 	.pop = NULL,
+	.length = io_text_encoding_length,
+	.limit = io_binary_encoding_nolimit,
+	.grow_increment = io_text_encoding_grow_increment,
+	.copy = NULL,
 	.fill = io_text_encoding_fill_bytes,
 	.append_byte = io_text_encoding_append_byte,
 	.append_bytes = io_text_encoding_append_bytes,
 	.print = io_text_encoding_print,
 	.reset = io_binary_encoding_reset,
 	.get_ro_bytes = io_binary_encoding_get_ro_bytes,
-	.length = io_text_encoding_length,
-	.limit = io_binary_encoding_nolimit,
-	.grow_increment = io_text_encoding_grow_increment,
 };
 
 bool

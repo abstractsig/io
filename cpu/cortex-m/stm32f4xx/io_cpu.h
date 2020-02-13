@@ -670,7 +670,7 @@ stm32f4_uart_interrupt_handler (void *user_value) {
 	stm32f4_uart_t *this = user_value;
 	volatile uint16_t data = this->uart_registers->DR;
 
-	if (io_pipe_put_byte (this->rx_pipe,data)) {
+	if (io_byte_pipe_put_byte (this->rx_pipe,data)) {
 		io_enqueue_event (this->io,io_pipe_event(this->rx_pipe));
 	}
 }
