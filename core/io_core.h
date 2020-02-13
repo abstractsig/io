@@ -263,7 +263,9 @@ io_encoding_pipe_t* mk_io_encoding_pipe (io_byte_memory_t*,uint16_t);
 void free_io_encoding_pipe (io_encoding_pipe_t*,io_byte_memory_t*);
 bool	io_encoding_pipe_get_encoding (io_encoding_pipe_t*,io_encoding_t**);
 bool	io_encoding_pipe_put_encoding (io_encoding_pipe_t*,io_encoding_t*);
+bool	io_encoding_pipe_peek (io_encoding_pipe_t*,io_encoding_t**);
 
+#define io_encoding_pipe_count_occupied_slots(p) io_pipe_count_occupied_slots ((io_pipe_t const*) (p))
 #define io_encoding_pipe_count_free_slots(p) io_pipe_count_free_slots ((io_pipe_t const*) (p))
 #define io_encoding_pipe_is_readable(p) io_pipe_is_readable ((io_pipe_t const*) (p))
 #define io_encoding_pipe_is_writeable(p) io_pipe_is_writeable ((io_pipe_t const*) (p))
@@ -971,6 +973,9 @@ typedef struct PACK_STRUCTURE io_socket_constructor {
 	
 } io_socket_constructor_t;
 
+#define io_socket_constructor_receive_pipe_length(c)	(c)->receive_pipe_length
+#define io_socket_constructor_transmit_pipe_length(c)	(c)->transmit_pipe_length
+
 
 #define IO_SOCKET_IMPLEMENTATION_STRUCT_MEMBERS \
 	io_socket_implementation_t const *specialisation_of;\
@@ -1048,6 +1053,7 @@ io_socket_get_inward_pipe (io_socket_t *socket) {
 // cpu io pins
 //
 typedef uint32_t io_pin_t;
+void	io_pin_nop (io_t*,io_pin_t);
 
 //
 // interrupts
@@ -1102,6 +1108,17 @@ typedef struct PACK_STRUCTURE io_implementation {
 	void (*exit_critical_section) (io_t*,bool);
 	void (*register_interrupt_handler) (io_t*,int32_t,io_interrupt_action_t,void*);
 	bool (*unregister_interrupt_handler) (io_t*,int32_t,io_interrupt_action_t);
+	//
+	// io pins
+	//
+	void (*set_io_pin_output) (io_t*,io_pin_t);
+	void (*set_io_pin_input) (io_t*,io_pin_t);
+	void (*set_io_pin_interrupt) (io_t*,io_pin_t);
+	void (*set_io_pin_alternate) (io_t*,io_pin_t);
+	int32_t (*read_from_io_pin) (io_t*,io_pin_t);
+	void (*write_to_io_pin) (io_t*,io_pin_t,int32_t);
+	void (*toggle_io_pin) (io_t*,io_pin_t);
+	bool (*valid_pin) (io_t*,io_pin_t);
 	//
 	// external notifications
 	//
@@ -1237,6 +1254,37 @@ io_get_socket (io_t *io,int32_t s) {
 	return io->implementation->get_socket (io,s);
 }
 
+INLINE_FUNCTION void
+io_set_pin_to_output (io_t *io,io_pin_t p) {
+	io->implementation->set_io_pin_output (io,p);
+}
+
+INLINE_FUNCTION void
+io_set_pin_to_input (io_t *io,io_pin_t p) {
+	io->implementation->set_io_pin_input (io,p);
+}
+
+INLINE_FUNCTION void
+write_to_io_pin (io_t *io,io_pin_t p,int32_t s) {
+	io->implementation->write_to_io_pin (io,p,s);
+}
+
+INLINE_FUNCTION void
+toggle_io_pin (io_t *io,io_pin_t p) {
+	io->implementation->toggle_io_pin (io,p);
+}
+
+INLINE_FUNCTION int32_t
+io_read_pin (io_t *io,io_pin_t p) {
+	return io->implementation->read_from_io_pin (io,p);
+}
+
+INLINE_FUNCTION bool
+io_pin_is_valid (io_t *io,io_pin_t p) {
+	return io->implementation->valid_pin (io,p);
+}
+
+
 #define ENTER_CRITICAL_SECTION(E)	\
 	{	\
 		bool __critical_handle = enter_io_critical_section(E);
@@ -1248,6 +1296,8 @@ io_get_socket (io_t *io,int32_t s) {
 
 enum {
 	IO_PANIC_UNRECOVERABLE_ERROR = 1,
+	IO_PANIC_SOMETHING_BAD_HAPPENED,
+	IO_PANIC_DEVICE_ERROR,
 	IO_PANIC_OUT_OF_MEMORY,
 };
 
@@ -1358,28 +1408,58 @@ io_core_get_null_value_memory (io_t *io) {
 	return NULL;
 }
 
+void
+io_pin_nop (io_t *io,io_pin_t p) {
+}
+
+static int32_t
+read_from_io_pin_nop (io_t *io,io_pin_t p) {
+	return 0;
+}
+
+static void
+write_to_io_pin_nop (io_t *io,io_pin_t p,int32_t v) {
+}
+
+static bool 
+io_pin_is_always_invalid (io_t *io,io_pin_t p) {
+	return false;
+}
+
+static const io_implementation_t	io_base = {
+	.get_byte_memory = io_core_get_null_byte_memory,
+	.get_short_term_value_memory = io_core_get_null_value_memory,
+	.get_long_term_value_memory = io_core_get_null_value_memory,
+	.do_gc = NULL,
+	.get_core_clock = NULL,
+	.get_random_u32 = NULL,
+	.get_socket = io_core_get_null_socket,
+	.dequeue_event = dequeue_io_event,
+	.enqueue_event = enqueue_io_event,
+	.next_event = do_next_io_event,
+	.in_event_thread = NULL,
+	.signal_event_pending = NULL,
+	.wait_for_event = NULL,
+	.wait_for_all_events = NULL,
+	.enter_critical_section = NULL,
+	.exit_critical_section = NULL,
+	.register_interrupt_handler = NULL,
+	.unregister_interrupt_handler = NULL,
+	.set_io_pin_output = io_pin_nop,
+	.set_io_pin_input = io_pin_nop,
+	.set_io_pin_interrupt = io_pin_nop,
+	.set_io_pin_alternate = io_pin_nop,
+	.read_from_io_pin = read_from_io_pin_nop,
+	.write_to_io_pin = write_to_io_pin_nop,
+	.toggle_io_pin = io_pin_nop,
+	.valid_pin = io_pin_is_always_invalid,
+	.log = NULL,
+	.panic = NULL,
+};
+
 void 
 add_io_implementation_core_methods (io_implementation_t *io_i) {
-	io_i->get_byte_memory = io_core_get_null_byte_memory;
-	io_i->get_short_term_value_memory = io_core_get_null_value_memory;
-	io_i->get_long_term_value_memory = io_core_get_null_value_memory;
-	io_i->do_gc = NULL;
-	io_i->get_core_clock = NULL;
-	io_i->get_random_u32 = NULL;
-	io_i->get_socket = io_core_get_null_socket;
-	io_i->dequeue_event = dequeue_io_event;
-	io_i->enqueue_event = enqueue_io_event;
-	io_i->next_event = do_next_io_event;
-	io_i->in_event_thread = NULL;
-	io_i->signal_event_pending = NULL;
-	io_i->wait_for_event = NULL;
-	io_i->wait_for_all_events = NULL;
-	io_i->enter_critical_section = NULL;
-	io_i->exit_critical_section = NULL;
-	io_i->register_interrupt_handler = NULL;
-	io_i->unregister_interrupt_handler = NULL;
-	io_i->log = NULL;
-	io_i->panic = NULL;
+	memcpy (io_i,&io_base,sizeof(io_implementation_t));
 }
 
 # define decl_particular_value(REF_NAME,VALUE_TYPE,VALUE_VAR) \
@@ -2044,6 +2124,17 @@ io_encoding_pipe_put_encoding (io_encoding_pipe_t *this,io_encoding_t *encoding)
 		return false;
 	}
 }
+
+bool
+io_encoding_pipe_peek (io_encoding_pipe_t *this,io_encoding_t **encoding) {
+	if (io_encoding_pipe_is_readable (this)) {
+		*encoding = this->encoding_ring[this->read_index];
+		return true;
+	} else {
+		return false;
+	}
+}
+
 
 //
 // reference to umm value

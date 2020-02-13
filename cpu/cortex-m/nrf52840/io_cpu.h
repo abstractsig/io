@@ -39,6 +39,12 @@ void initialise_cpu_io (io_t*);
 		__DMB();	\
 	} while (0)
 
+#define HIGHEST_INTERRUPT_PRIORITY			0
+#define HIGH_INTERRUPT_PRIORITY				1
+#define NORMAL_INTERRUPT_PRIORITY			2
+#define LOW_INTERRUPT_PRIORITY				3
+#define LOWEST_INTERRUPT_PRIORITY			7
+#define EVENT_LOOP_INTERRUPT_PRIORITY		LOWEST_INTERRUPT_PRIORITY
 
 #define EVENT_THREAD_INTERRUPT		SWI0_EGU0_IRQn
 #define SET_EVENT_PENDING				NVIC_SetPendingIRQ (EVENT_THREAD_INTERRUPT)
@@ -70,12 +76,6 @@ extern EVENT_DATA io_cpu_clock_implementation_t nrf52_core_clock_implementation;
 
 #define GPIO_PIN_INACTIVE					0
 #define GPIO_PIN_ACTIVE						1
-
-typedef enum {
-	NRF_GPIO_PIN_NOPULL   = GPIO_PIN_CNF_PULL_Disabled, ///<  Pin pull-up resistor disabled.
-	NRF_GPIO_PIN_PULLDOWN = GPIO_PIN_CNF_PULL_Pulldown, ///<  Pin pull-down resistor enabled.
-	NRF_GPIO_PIN_PULLUP   = GPIO_PIN_CNF_PULL_Pullup,   ///<  Pin pull-up resistor enabled.
-} nrf_gpio_pin_pull_t;
 
 
 typedef union PACK_STRUCTURE {
@@ -129,6 +129,7 @@ typedef struct PACK_STRUCTURE nrf52_uart {
 	io_encoding_implementation_t const *encoding;
 
 	io_encoding_pipe_t *tx_pipe;
+	io_event_t transmit_complete;
 	
 	io_byte_pipe_t *rx_pipe;
 	uint8_t* rx_buffer[2];
@@ -143,7 +144,6 @@ typedef struct PACK_STRUCTURE nrf52_uart {
 	NRF_UARTE_Type *uart_registers;
 	IRQn_Type interrupt_number;
 	uint32_t baud_rate;
-	uint32_t rx_buffer_size;
 
 } nrf52_uart_t;
 
@@ -155,8 +155,12 @@ extern EVENT_DATA io_socket_implementation_t nrf52_uart_implementation;
 // nrf52840 Implementtaion
 //
 //-----------------------------------------------------------------------------
-#include <nrf52_to_nrf52840.h>
-#include <nrf52840_peripherals.h>
+//
+// to allow for secure peripherals
+//
+#define NRF_PERIPHERAL(P)			P
+#define NRF_GPIOTE_PERIPHERAL		NRF_GPIOTE
+#include <nrf52_sdk.h>
 
 //
 // Clock
@@ -238,26 +242,116 @@ EVENT_DATA io_cpu_clock_implementation_t nrf52_core_clock_implementation = {
 // Sockets
 //
 static void	nrf52_uart_interrupt (void*);
+static void	nrf52_uart_tx_complete (io_event_t*);
+
+#define NRF52_UART_RX_DMA_BUFFER_LENGTH 1
 
 static void
 nrf52_uart_initialise (io_socket_t *socket,io_t *io,io_socket_constructor_t const *C) {
 	nrf52_uart_t *this = (nrf52_uart_t*) socket;
 	this->io = io;
-	this->rx_pipe = mk_io_byte_pipe (io_get_byte_memory(io),512);
+	
+	this->tx_pipe = mk_io_encoding_pipe (
+		io_get_byte_memory(io),io_socket_constructor_transmit_pipe_length(C)
+	);
+
+	this->rx_pipe = mk_io_byte_pipe (
+		io_get_byte_memory(io),io_socket_constructor_receive_pipe_length(C)
+	);
+
+	this->rx_buffer[0] = io_byte_memory_allocate (
+		io_get_byte_memory (io),NRF52_UART_RX_DMA_BUFFER_LENGTH
+	);
+	this->rx_buffer[1] = io_byte_memory_allocate (
+		io_get_byte_memory (io),NRF52_UART_RX_DMA_BUFFER_LENGTH
+	);
+	this->active_rx_buffer = this->rx_buffer[0];
+	this->next_rx_buffer = this->rx_buffer[1];
+
+	initialise_io_event (
+		&this->transmit_complete,nrf52_uart_tx_complete,this
+	);
 
 	register_io_interrupt_handler (
 		io,this->interrupt_number,nrf52_uart_interrupt,this
 	);
 }
 
+static void
+nrf_uart_start_rx (nrf52_uart_t *this) {
+
+	if (nrf_io_pin_is_valid(this->cts_pin)) {
+		io_set_pin_to_input(this->io,this->cts_pin.io);
+		while (io_read_pin(this->io,this->cts_pin.io));
+	}
+
+	this->uart_registers->SHORTS = (
+		(UARTE_SHORTS_ENDRX_STARTRX_Enabled << UARTE_SHORTS_ENDRX_STARTRX_Pos)
+	);
+	this->uart_registers->RXD.PTR = (uint32_t) this->active_rx_buffer;
+	this->uart_registers->RXD.MAXCNT = NRF52_UART_RX_DMA_BUFFER_LENGTH;
+	this->uart_registers->TASKS_STARTRX = 1;
+}
+
 static bool
 nrf52_uart_open (io_socket_t *socket) {
-	return false;
+	nrf52_uart_t *this = (nrf52_uart_t*) socket;
+
+	if (this->uart_registers->ENABLE == 0) {
+
+		if (nrf_io_pin_is_valid (this->rts_pin)) {
+			//
+			// and not hardware flow control
+			//
+			io_set_pin_to_output (this->io,this->rts_pin.io);
+			write_to_io_pin (this->io,this->rts_pin.io,0);
+		}		
+
+		if (nrf_io_pin_is_valid (this->cts_pin)) {
+			io_set_pin_to_input (this->io,this->cts_pin.io);
+		}
+
+		this->uart_registers->BAUDRATE = this->baud_rate;
+		this->uart_registers->PSEL.RXD = nrf_gpio_pin_map(this->rx_pin);
+		this->uart_registers->PSEL.TXD = nrf_gpio_pin_map(this->tx_pin);
+		
+		// no parity, no hardware flow control
+		this->uart_registers->CONFIG = 0;
+
+		this->uart_registers->TXD.MAXCNT = 0;		
+		this->uart_registers->ENABLE = 8;
+		
+		this->uart_registers->INTENSET = (
+				(1 << UARTE_INTENSET_RXTO_Pos)
+			|	(1 << UARTE_INTENSET_RXSTARTED_Pos)
+		//	|	(1 << UARTE_INTENSET_RXDRDY_Pos)
+			|	(1 << UARTE_INTENSET_ENDRX_Pos)
+			|	(1 << UARTE_INTENSET_ENDTX_Pos)
+		);
+		
+		this->uart_registers->EVENTS_CTS = 0;
+		
+		NVIC_SetPriority (this->interrupt_number,HIGH_INTERRUPT_PRIORITY);
+		NVIC_ClearPendingIRQ (this->interrupt_number);
+		NVIC_EnableIRQ (this->interrupt_number);
+
+		nrf_uart_start_rx (this);
+		return true;
+	} else {
+		// already open
+		return false;
+	}
 }
 
 static void
 nrf52_uart_close (io_socket_t *socket) {
-	// and then ....
+	nrf52_uart_t *this = (nrf52_uart_t*) socket;
+	
+	NVIC_DisableIRQ (this->interrupt_number);
+	this->uart_registers->ENABLE = 0;
+
+	io_dequeue_event (this->io,io_pipe_event (this->tx_pipe));
+	io_dequeue_event (this->io,io_pipe_event (this->rx_pipe));
 }
 
 static io_t*
@@ -269,7 +363,7 @@ nrf52_uart_get_io (io_socket_t *socket) {
 bool
 nrf52_uart_binds (io_socket_t *socket,io_event_t *rx) {
 	nrf52_uart_t *this = (nrf52_uart_t*) socket;
-	if (io_event_is_active(&this->rx_pipe->ev)) {
+	if (io_event_is_active (&this->rx_pipe->ev)) {
 		this->rx_pipe->ev = *rx;
 		return true;
 	} else {
@@ -286,26 +380,65 @@ nrf52_uart_get_inward_pipe (io_socket_t *socket) {
 static io_encoding_t*
 nrf52_uart_new_message (io_socket_t *socket) {
 	nrf52_uart_t *this = (nrf52_uart_t*) socket;
-	return new_io_encoding (this->encoding,io_get_byte_memory(this->io));
+	return reference_io_encoding (
+		new_io_encoding (this->encoding,io_get_byte_memory(this->io))
+	);
+}
+
+static bool
+nrf_uart_output_next_buffer (nrf52_uart_t *this) {
+	io_encoding_t *next;
+	if (
+			this->uart_registers->ENABLE 
+		&& io_encoding_pipe_peek (this->tx_pipe,&next)
+	) {
+		const uint8_t *begin,*end;
+		io_encoding_get_ro_bytes (next,&begin,&end);
+		this->uart_registers->TXD.MAXCNT = end - begin;
+		this->uart_registers->TXD.PTR = (uint32_t) begin;
+		this->uart_registers->TASKS_STARTTX = 1;
+		return true;
+	} else {
+		return false;
+	}
 }
 
 static bool
 nrf52_uart_send_message_blocking (io_socket_t *socket,io_encoding_t *encoding) {
 	if (is_io_binary_encoding (encoding)) {
-//		nrf52_uart_t *this = (nrf52_uart_t*) socket;
-		const uint8_t *b,*e;
-
-		io_encoding_get_ro_bytes (encoding,&b,&e);
-/*
-		while (b < e) {
-			while (!(this->uart_registers->SR & USART_SR_TXE));
-			this->uart_registers->DR = *b++;
+		nrf52_uart_t *this = (nrf52_uart_t*) socket;
+		if (io_encoding_pipe_put_encoding (this->tx_pipe,encoding)) {
+			if (io_encoding_pipe_count_occupied_slots (this->tx_pipe) == 1) {
+				nrf_uart_output_next_buffer (this);
+			}
+			return true;
+		} else {
+			unreference_io_encoding (encoding);
+			return false;
 		}
-*/		
-		io_encoding_free(encoding);
-		return true;
 	} else {
 		return false;
+	}
+}
+
+void
+nrf52_uart_tx_complete (io_event_t *ev) {
+	nrf52_uart_t *this = ev->user_value;
+	this->uart_registers->EVENTS_TXSTARTED = 0;
+	io_encoding_t *next;
+	
+	if (io_encoding_pipe_get_encoding (this->tx_pipe,&next)) {
+		unreference_io_encoding (next);
+	} else {
+		io_panic (this->io,IO_PANIC_SOMETHING_BAD_HAPPENED);
+	}
+	
+	if (
+			!nrf_uart_output_next_buffer (this)
+		&&	this->uart_registers->ENABLE
+		&& io_event_is_valid (io_pipe_event (this->tx_pipe))
+	) {
+		io_enqueue_event (this->io,io_pipe_event (this->tx_pipe));
 	}
 }
 
@@ -326,13 +459,13 @@ nrf52_uart_interrupt (void *user_value) {
 		// this is a stopped event, need a flush ...
 		//
 		if (this->uart_registers->RXD.AMOUNT > 0) {
-			//io_enqueue_event (this->io,this->receive_data_available);
+			io_enqueue_event (this->io,io_pipe_event (this->rx_pipe));
 		}
 		this->uart_registers->EVENTS_RXTO = 0;
 	}
 
 	if (this->uart_registers->EVENTS_ENDTX) {
-		// io_enqueue_event (this->io,&this->transmit_complete);
+		io_enqueue_event (this->io,&this->transmit_complete);
 		this->uart_registers->EVENTS_ENDTX = 0;
 	}
 
@@ -357,7 +490,7 @@ nrf52_uart_interrupt (void *user_value) {
 				this->next_rx_buffer = this->active_rx_buffer;
 				this->active_rx_buffer = temp;
 			}
-			io_enqueue_event (this->io,&this->rx_pipe->ev);
+			io_enqueue_event (this->io,io_pipe_event (this->rx_pipe));
 		}
 		this->uart_registers->EVENTS_ENDRX = 0;
 	}
@@ -530,6 +663,77 @@ nrf52_unregister_interrupt_handler (
 	}
 }
 
+static void
+nrf52_set_io_pin_to_input (io_t *io,io_pin_t rpin) {
+	nrf_io_pin_t pin = {rpin};
+	nrf_gpio_cfg_input (
+		nrf_gpio_pin_map(pin),nrf_gpio_pin_pull_mode(pin)
+	);
+}
+
+static void
+nrf52_set_io_pin_to_output (io_t *io,io_pin_t rpin) {
+	nrf_io_pin_t pin = {rpin};
+	write_to_io_pin (io,rpin,nrf_gpio_pin_initial_state(pin));
+	nrf_gpio_cfg_output(nrf_gpio_pin_map(pin));
+}
+
+static void
+nrf52_toggle_io_pin (io_t *env,io_pin_t rpin) {
+	nrf_io_pin_t pin = {rpin};
+	nrf_gpio_pin_toggle(nrf_gpio_pin_map(pin));
+}
+
+static int32_t
+nrf52_read_io_input_pin (io_t *env,io_pin_t rpin) {
+	nrf_io_pin_t pin = {rpin};
+	return (
+			nrf_gpio_pin_read (nrf_gpio_pin_map(pin))
+		==	nrf_gpio_pin_active_level(pin)
+	);
+}
+
+void
+nrf_gpio_pin_set_drive_level (nrf_io_pin_t pin) {
+	uint32_t pin_number = nrf_gpio_pin_map(pin);
+	NRF_GPIO_Type *reg = nrf_gpio_pin_port_decode(&pin_number);
+	uint32_t cfg = reg->PIN_CNF[pin_number] & ~GPIO_PIN_CNF_DRIVE_Msk;
+	cfg |= (nrf_gpio_pin_drive_level(pin) << GPIO_PIN_CNF_DRIVE_Pos);
+	reg->PIN_CNF[pin_number] = cfg;
+}
+
+static void
+nrf52_write_to_io_pin (io_t *io,io_pin_t rpin,int32_t state) {
+	nrf_io_pin_t pin = {rpin};
+	if (state ^ nrf_gpio_pin_active_level (pin)) {
+		nrf_gpio_pin_write(nrf_gpio_pin_map(pin),0);
+	} else {
+		nrf_gpio_pin_write(nrf_gpio_pin_map(pin),1);
+	}
+}
+
+static void
+nrf52_set_io_pin_interrupt (io_t *io,io_pin_t rpin) {
+	nrf_io_pin_t pin = {rpin};
+	
+	nrf_gpio_cfg_input(nrf_gpio_pin_map(pin),nrf_gpio_pin_pull_mode(pin));
+
+	NRF_GPIOTE_PERIPHERAL->CONFIG[nrf_gpio_pin_event_channel_number(pin)] = (
+			(GPIOTE_CONFIG_MODE_Event << GPIOTE_CONFIG_MODE_Pos)
+		|	(NRF_GPIO_PIN_MAP_PIN(nrf_gpio_pin_map(pin)) << GPIOTE_CONFIG_PSEL_Pos)
+		#ifdef GPIOTE_CONFIG_PORT_Pos
+		|	(NRF_GPIO_PIN_MAP_PORT(nrf_gpio_pin_map(pin)) << GPIOTE_CONFIG_PORT_Pos)
+		#endif
+		|	(nrf_gpio_pin_event_sense(pin) << GPIOTE_CONFIG_POLARITY_Pos)
+	);
+}
+
+static bool
+nrf52_io_pin_is_valid (io_t *io,io_pin_t p) {
+	nrf_io_pin_t pin = {p};
+	return nrf_io_pin_is_valid (pin);
+}
+
 void
 add_io_implementation_cpu_methods (io_implementation_t *io_i) {
 	add_io_implementation_core_methods (io_i);
@@ -547,13 +751,32 @@ add_io_implementation_cpu_methods (io_implementation_t *io_i) {
 	io_i->unregister_interrupt_handler = nrf52_unregister_interrupt_handler;
 	io_i->wait_for_all_events = wait_for_all_events;
 
+	io_i->set_io_pin_output = nrf52_set_io_pin_to_output,
+	io_i->set_io_pin_input = nrf52_set_io_pin_to_input,
+	io_i->set_io_pin_interrupt = nrf52_set_io_pin_interrupt,
+	io_i->set_io_pin_alternate = io_pin_nop,
+	io_i->read_from_io_pin = nrf52_read_io_input_pin,
+	io_i->write_to_io_pin = nrf52_write_to_io_pin,
+	io_i->toggle_io_pin = nrf52_toggle_io_pin,
+	io_i->valid_pin = nrf52_io_pin_is_valid,
+
 	io_i->log = nrf52_log;
 	io_i->panic = nrf52_panic;
+}
+
+static void
+event_thread (void *io) {
+	while (next_io_event (io));
 }
 
 void
 initialise_cpu_io (io_t *io) {
 	((nrf52840_io_t*) io)->in_event_thread = false;
+	
+	register_io_interrupt_handler (
+		io,EVENT_THREAD_INTERRUPT,event_thread,io
+	);
+	NVIC_EnableIRQ (EVENT_THREAD_INTERRUPT);
 }
 
 static void apply_nrf_cpu_errata (void);
@@ -625,6 +848,54 @@ __attribute__ ((section(".isr_vector")))
 const void* s_flash_vector_table[NUMBER_OF_INTERRUPT_VECTORS] = {
 	&ld_top_of_c_stack,
 	nrf52_core_reset,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
+	handle_io_cpu_interrupt,
 	handle_io_cpu_interrupt,
 	handle_io_cpu_interrupt,
 	handle_io_cpu_interrupt,
