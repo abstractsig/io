@@ -124,6 +124,7 @@ typedef struct PACK_STRUCTURE stm32f4_uart {
 	io_t *io;
 	io_encoding_implementation_t const *encoding;
 	
+	io_encoding_pipe_t *tx_pipe;
 	io_byte_pipe_t *rx_pipe;
 	
 	io_cpu_clock_pointer_t peripheral_bus_clock;
@@ -682,7 +683,13 @@ stm32f4_uart_initialise (
 	stm32f4_uart_t *this = (stm32f4_uart_t*) socket;
 	this->io = io;
 
-	this->rx_pipe = mk_io_byte_pipe (io_get_byte_memory(io),C->receive_pipe_length);
+	this->rx_pipe = mk_io_byte_pipe (
+		io_get_byte_memory(io),C->receive_pipe_length
+	);
+
+	this->tx_pipe = mk_io_encoding_pipe (
+		io_get_byte_memory(io),C->transmit_pipe_length
+	);
 
 	register_io_interrupt_handler (
 		io,this->interrupt_number,stm32f4_uart_interrupt_handler,this
@@ -784,23 +791,28 @@ stm32f4_uart_send_message_blocking (io_socket_t *socket,io_encoding_t *encoding)
 static size_t
 stm32f4_uart_mtu (io_socket_t const *socket) {
 	return 1024;
-}
+}	
 
-bool
-stm32f4_uart_binds (io_socket_t *socket,io_event_t *rx) {
+static io_event_t*
+stm32f4_uart_bindr (io_socket_t *socket,io_event_t *rx) {
 	stm32f4_uart_t *this = (stm32f4_uart_t*) socket;
 	if (!io_event_is_active (io_pipe_event(this->rx_pipe))) {
-		*io_pipe_event(this->rx_pipe) = *rx;
-		return true;
+		merge_into_io_event(rx,io_pipe_event(this->rx_pipe));
+		return io_pipe_event(this->rx_pipe);
 	} else {
-		return false;
+		return NULL;
 	}
 }
 
-static io_pipe_t*
-stm32f4_uart_get_inward_pipe (io_socket_t *socket) {
+static io_event_t*
+stm32f4_uart_bindt (io_socket_t *socket,io_event_t *ev) {
 	stm32f4_uart_t *this = (stm32f4_uart_t*) socket;
-	return (io_pipe_t*) this->rx_pipe;
+	if (!io_event_is_active (io_pipe_event(this->tx_pipe))) {
+		merge_into_io_event(ev,io_pipe_event(this->tx_pipe));
+		return io_pipe_event(this->tx_pipe);
+	} else {
+		return NULL;
+	}
 }
 
 EVENT_DATA io_socket_implementation_t stm32f4_uart_implementation = {
@@ -810,8 +822,8 @@ EVENT_DATA io_socket_implementation_t stm32f4_uart_implementation = {
 	.get_io = stm32f4_uart_get_io,
 	.open = stm32f4_uart_open,
 	.close = stm32f4_uart_close,
-	.binds = stm32f4_uart_binds,
-	.get_inward_pipe = stm32f4_uart_get_inward_pipe,
+	.bindr = stm32f4_uart_bindr,
+	.bindt = stm32f4_uart_bindt,
 	.new_message = stm32f4_uart_new_message,
 	.send_message = stm32f4_uart_send_message_blocking,
 	.iterate_inner_sockets = NULL,

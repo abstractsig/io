@@ -360,14 +360,14 @@ nrf52_uart_get_io (io_socket_t *socket) {
 	return this->io;
 }
 
-bool
-nrf52_uart_binds (io_socket_t *socket,io_event_t *rx) {
+io_event_t*
+nrf52_uart_bindr (io_socket_t *socket,io_event_t *rx) {
 	nrf52_uart_t *this = (nrf52_uart_t*) socket;
-	if (io_event_is_active (&this->rx_pipe->ev)) {
-		this->rx_pipe->ev = *rx;
-		return true;
+	if (io_event_is_active (io_pipe_event(this->rx_pipe))) {
+		merge_into_io_event(rx,io_pipe_event(this->rx_pipe));
+		return io_pipe_event(this->rx_pipe));
 	} else {
-		return false;
+		return NULL;
 	}
 }
 
@@ -513,7 +513,7 @@ EVENT_DATA io_socket_implementation_t nrf52_uart_implementation = {
 	.get_io = nrf52_uart_get_io,
 	.open = nrf52_uart_open,
 	.close = nrf52_uart_close,
-	.binds = nrf52_uart_binds,
+	.bindr = nrf52_uart_bindr,
 	.get_inward_pipe = nrf52_uart_get_inward_pipe,
 	.new_message = nrf52_uart_new_message,
 	.send_message = nrf52_uart_send_message_blocking,

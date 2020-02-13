@@ -17,7 +17,8 @@
  * USAGE
  * =====
  * Include this file in whatever places need to refer to it.
- * In one C/C++ define IMPLEMENT_IO_CORE.
+ * In one C source define IMPLEMENT_IO_CORE prior to the include
+ * directive.
  *
  * COMMING SOON
  * ============
@@ -55,6 +56,7 @@
 
 typedef struct io io_t;
 typedef struct io_encoding io_encoding_t;
+typedef struct io_pipe io_pipe_t;
 
 #define SHA256_SIZE		32
 
@@ -128,6 +130,7 @@ typedef void (*io_event_handler_t) (io_event_t*);
 
 struct PACK_STRUCTURE io_event_implementation {
 	io_event_implementation_t const *specialisation_of;
+	io_pipe_t* (*cast_to_pipe) (io_event_t*);
 };
 
 #define IO_EVENT_STRUCT_MEMBERS \
@@ -149,6 +152,10 @@ struct PACK_STRUCTURE io_event {
 
 #define io_event_is_valid(ev) 	((ev)->event_handler != NULL)
 #define io_event_is_active(ev) 	((ev)->next_event != NULL)
+
+#define merge_into_io_event(s,d) \
+	(d)->event_handler = (s)->event_handler;\
+	(d)->user_value = (s)->user_value;
 
 bool	io_is_event_of_type (io_event_t const*,io_event_implementation_t const*);
 
@@ -177,6 +184,14 @@ initialise_typed_io_event (
 	return ev;
 }
 
+INLINE_FUNCTION io_pipe_t*
+io_event_cast_to_pipe (io_event_t *ev) {
+	return ev->implementation->cast_to_pipe (ev);
+}
+
+//
+// alarms
+//
 typedef struct io_alarm io_alarm_t;
 
 struct PACK_STRUCTURE io_alarm {
@@ -201,9 +216,9 @@ extern io_alarm_t s_null_io_alarm;
 	int16_t overrun;\
 	/**/
 
-typedef struct PACK_STRUCTURE io_pipe {
+struct PACK_STRUCTURE io_pipe {
 	IO_PIPE_STRUCT_MEMBERS
-} io_pipe_t;
+};
 
 #define io_pipe_event(p)	(&(p)->ev)
 
@@ -255,6 +270,7 @@ bool		is_io_byte_pipe_event (io_event_t const*);
 typedef struct PACK_STRUCTURE io_encoding_pipe {
 	IO_PIPE_STRUCT_MEMBERS
 	io_encoding_t **encoding_ring;
+	
 } io_encoding_pipe_t;
 
 bool	is_io_encoding_pipe_event (io_event_t const*);
@@ -984,9 +1000,9 @@ typedef struct PACK_STRUCTURE io_socket_constructor {
 	bool (*open) (io_socket_t*);\
 	void (*close) (io_socket_t*);\
 	io_t*	(*get_io) (io_socket_t*); \
-	bool (*binds) (io_socket_t*,io_event_t*);\
+	io_event_t* (*bindt) (io_socket_t*,io_event_t*);\
+	io_event_t* (*bindr) (io_socket_t*,io_event_t*);\
 	void (*bindc) (io_socket_t*);\
-	io_pipe_t* (*get_inward_pipe) (io_socket_t*);\
 	io_encoding_t*	(*new_message) (io_socket_t*); \
 	bool (*send_message) (io_socket_t*,io_encoding_t*);\
 	bool (*iterate_inner_sockets) (io_socket_t*,io_socket_iterator_t,void*);\
@@ -1039,14 +1055,14 @@ io_socket_send_message (io_socket_t *socket,io_encoding_t *m) {
 	return socket->implementation->send_message (socket,m);
 }
 
-INLINE_FUNCTION bool
-io_socket_binds (io_socket_t *socket,io_event_t *ev) {
-	return socket->implementation->binds (socket,ev);
+INLINE_FUNCTION io_event_t*
+io_socket_bindr (io_socket_t *socket,io_event_t *ev) {
+	return socket->implementation->bindr (socket,ev);
 }
 
-INLINE_FUNCTION io_pipe_t*
-io_socket_get_inward_pipe (io_socket_t *socket) {
-	return socket->implementation->get_inward_pipe (socket);
+INLINE_FUNCTION io_event_t*
+io_socket_bindt (io_socket_t *socket,io_event_t *ev) {
+	return socket->implementation->bindt (socket,ev);
 }
 
 //
@@ -1713,8 +1729,14 @@ STBSP__PUBLICDEF void STB_SPRINTF_DECORATE(set_separators)(char comma, char peri
 //
 //-----------------------------------------------------------------------------
 
+static io_pipe_t*
+cast_io_event_to_null_pipe (io_event_t *ev) {
+	return NULL;
+}
+
 EVENT_DATA io_event_implementation_t io_event_base_implementation = {
 	.specialisation_of = NULL,
+	.cast_to_pipe = cast_io_event_to_null_pipe,
 };
 
 bool
@@ -1946,7 +1968,6 @@ EVENT_DATA io_cpu_clock_implementation_t io_cpu_clock_implementation = {
 	.stop = io_cpu_clock_stop_base,
 };
 
-
 float64_t
 io_dependant_cpu_clock_get_frequency (io_cpu_clock_pointer_t clock) {
 	io_cpu_dependant_clock_t const *this = (io_cpu_dependant_clock_t const*) (
@@ -1967,12 +1988,20 @@ io_dependant_cpu_clock_start (io_cpu_clock_pointer_t clock) {
 // pipes
 //
 
+static io_pipe_t*
+cast_io_pipe_event_to_pipe (io_event_t *ev) {
+	// BECAUSE ev is first member in pipe
+	return (io_pipe_t*) ev;
+}
+
 EVENT_DATA io_event_implementation_t io_pipe_base_implementation = {
 	.specialisation_of = &io_event_base_implementation,
+	.cast_to_pipe = cast_io_pipe_event_to_pipe,
 };
 
 EVENT_DATA io_event_implementation_t io_byte_pipe_implementation = {
 	.specialisation_of = &io_pipe_base_implementation,
+	.cast_to_pipe = cast_io_pipe_event_to_pipe,
 };
 
 bool
@@ -1982,6 +2011,7 @@ is_io_byte_pipe_event (io_event_t const *ev) {
 
 EVENT_DATA io_event_implementation_t io_encoding_pipe_event_implementation = {
 	.specialisation_of = &io_pipe_base_implementation,
+	.cast_to_pipe = cast_io_pipe_event_to_pipe,
 };
 
 bool
