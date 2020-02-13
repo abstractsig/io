@@ -127,6 +127,8 @@ typedef struct PACK_STRUCTURE nrf52_uart {
 	
 	io_t *io;
 	io_encoding_implementation_t const *encoding;
+
+	io_encoding_pipe_t *tx_pipe;
 	
 	io_byte_pipe_t *rx_pipe;
 	uint8_t* rx_buffer[2];
@@ -157,7 +159,7 @@ extern EVENT_DATA io_socket_implementation_t nrf52_uart_implementation;
 #include <nrf52840_peripherals.h>
 
 //
-// Clocke
+// Clock
 //
 
 static float64_t
@@ -168,7 +170,10 @@ nrf52_crystal_oscillator_get_frequency (io_cpu_clock_pointer_t this) {
 static bool
 nrf52_crystal_oscillator_start (io_cpu_clock_pointer_t this) {
 	if (NRF_CLOCK->EVENTS_HFCLKSTARTED == 0) {
-		NRF_CLOCK->EVENTS_HFCLKSTARTED = 0;
+		//
+		// this also connects the clock to the CPU 
+		// (i.e replaces the on-chip clock)
+		//
 		NRF_CLOCK->TASKS_HFCLKSTART    = 1;
 		while (NRF_CLOCK->EVENTS_HFCLKSTARTED == 0);
 	}
@@ -235,7 +240,7 @@ EVENT_DATA io_cpu_clock_implementation_t nrf52_core_clock_implementation = {
 static void	nrf52_uart_interrupt (void*);
 
 static void
-nrf52_uart_initialise (io_socket_t *socket,io_t *io) {
+nrf52_uart_initialise (io_socket_t *socket,io_t *io,io_socket_constructor_t const *C) {
 	nrf52_uart_t *this = (nrf52_uart_t*) socket;
 	this->io = io;
 	this->rx_pipe = mk_io_byte_pipe (io_get_byte_memory(io),512);

@@ -964,9 +964,17 @@ typedef struct io_socket io_socket_t;
 
 typedef bool (*io_socket_iterator_t) (io_socket_t*,void*);
 
+typedef struct PACK_STRUCTURE io_socket_constructor {
+
+	uint16_t transmit_pipe_length;
+	uint16_t receive_pipe_length;
+	
+} io_socket_constructor_t;
+
+
 #define IO_SOCKET_IMPLEMENTATION_STRUCT_MEMBERS \
 	io_socket_implementation_t const *specialisation_of;\
-	void (*initialise) (io_socket_t*,io_t*);\
+	void (*initialise) (io_socket_t*,io_t*,io_socket_constructor_t const*);\
 	void (*free) (io_socket_t*);\
 	bool (*open) (io_socket_t*);\
 	void (*close) (io_socket_t*);\
@@ -997,8 +1005,8 @@ struct PACK_STRUCTURE io_socket {
 // inline io socket implementation
 //
 INLINE_FUNCTION void
-io_socket_initialise (io_socket_t *socket,io_t *io) {
-	socket->implementation->initialise(socket,io);
+io_socket_initialise (io_socket_t *socket,io_t *io,io_socket_constructor_t const *C) {
+	socket->implementation->initialise(socket,io,C);
 }
 
 INLINE_FUNCTION bool
