@@ -117,7 +117,34 @@ typedef union PACK_STRUCTURE {
 		.nrf.gpiote_channel = 0,\
 		.nrf.event_sense = GPIOTE_CONFIG_POLARITY_None,\
 	}
+	
+#define def_nrf_io_input_pin(port,pin_number,active,pull) (nrf_io_pin_t) {\
+		.nrf.pin_map = NRF_GPIO_PIN_MAP(port,pin_number),\
+		.nrf.active_level = active,\
+		.nrf.initial_state = GPIO_PIN_INACTIVE,\
+		.nrf.pull_mode = pull,\
+		.nrf.gpiote_channel = 0,\
+		.nrf.event_sense = GPIOTE_CONFIG_POLARITY_None,\
+	}
 
+#define def_nrf_io_output_pin(port,pin_number,active,initial) (nrf_io_pin_t) {\
+		.nrf.pin_map = NRF_GPIO_PIN_MAP(port,pin_number),\
+		.nrf.active_level = active,\
+		.nrf.initial_state = initial,\
+		.nrf.pull_mode = NRF_GPIO_PIN_NOPULL,\
+		.nrf.gpiote_channel = 0,\
+		.nrf.event_sense = GPIOTE_CONFIG_POLARITY_None,\
+	}
+
+#define def_nrf_io_interrupt_pin(port,pin_number,active,pull,channel,sense) (nrf_io_pin_t) {\
+		.nrf.pin_map = NRF_GPIO_PIN_MAP(port,pin_number),\
+		.nrf.active_level = active,\
+		.nrf.initial_state = 0,\
+		.nrf.pull_mode = pull,\
+		.nrf.gpiote_channel = channel,\
+		.nrf.event_sense = sense,\
+	}
+	
 //
 // sockets
 //
