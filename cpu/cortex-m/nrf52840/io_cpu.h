@@ -365,16 +365,21 @@ nrf52_uart_bindr (io_socket_t *socket,io_event_t *rx) {
 	nrf52_uart_t *this = (nrf52_uart_t*) socket;
 	if (io_event_is_active (io_pipe_event(this->rx_pipe))) {
 		merge_into_io_event(rx,io_pipe_event(this->rx_pipe));
-		return io_pipe_event(this->rx_pipe));
+		return io_pipe_event(this->rx_pipe);
 	} else {
 		return NULL;
 	}
 }
 
-static io_pipe_t*
-nrf52_uart_get_inward_pipe (io_socket_t *socket) {
+static io_event_t*
+nrf52_uart_bindt (io_socket_t *socket,io_event_t *ev) {
 	nrf52_uart_t *this = (nrf52_uart_t*) socket;
-	return (io_pipe_t*) this->rx_pipe;
+	if (!io_event_is_active (io_pipe_event(this->tx_pipe))) {
+		merge_into_io_event(ev,io_pipe_event(this->tx_pipe));
+		return io_pipe_event(this->tx_pipe);
+	} else {
+		return NULL;
+	}
 }
 
 static io_encoding_t*
@@ -514,7 +519,7 @@ EVENT_DATA io_socket_implementation_t nrf52_uart_implementation = {
 	.open = nrf52_uart_open,
 	.close = nrf52_uart_close,
 	.bindr = nrf52_uart_bindr,
-	.get_inward_pipe = nrf52_uart_get_inward_pipe,
+	.bindt = nrf52_uart_bindt,
 	.new_message = nrf52_uart_new_message,
 	.send_message = nrf52_uart_send_message_blocking,
 	.iterate_inner_sockets = NULL,
