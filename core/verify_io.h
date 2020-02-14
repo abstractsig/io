@@ -587,6 +587,7 @@ TEST_BEGIN(test_io_byte_pipe_1) {
 		VERIFY (!io_byte_pipe_is_readable (pipe),NULL);
 		VERIFY (io_byte_pipe_is_writeable (pipe),NULL);
 		
+		VERIFY (is_io_byte_pipe ((io_pipe_t*) (pipe)),NULL);
 		VERIFY (is_io_byte_pipe_event (io_pipe_event (pipe)),NULL);
 		VERIFY (!io_event_is_valid (io_pipe_event (pipe)),NULL);
 		
@@ -615,6 +616,7 @@ TEST_BEGIN(test_io_encoding_pipe_1) {
 		VERIFY (!io_encoding_pipe_is_readable (pipe),NULL);
 		VERIFY (io_encoding_pipe_is_writeable (pipe),NULL);
 
+		VERIFY (is_io_encoding_pipe ((io_pipe_t*) (pipe)),NULL);
 		VERIFY (is_io_encoding_pipe_event (io_pipe_event (pipe)),NULL);
 		VERIFY (!io_event_is_valid (io_pipe_event (pipe)),NULL);
 
