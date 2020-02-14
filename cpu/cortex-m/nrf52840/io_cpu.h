@@ -129,6 +129,7 @@ typedef struct PACK_STRUCTURE nrf52_uart {
 	io_encoding_implementation_t const *encoding;
 
 	io_encoding_pipe_t *tx_pipe;
+	io_event_t signal_transmit_available;
 	io_event_t transmit_complete;
 	
 	io_byte_pipe_t *rx_pipe;
@@ -254,6 +255,9 @@ nrf52_uart_initialise (io_socket_t *socket,io_t *io,io_socket_constructor_t cons
 	this->tx_pipe = mk_io_encoding_pipe (
 		io_get_byte_memory(io),io_socket_constructor_transmit_pipe_length(C)
 	);
+	initialise_io_event (
+		&this->signal_transmit_available,NULL,this
+	);
 
 	this->rx_pipe = mk_io_byte_pipe (
 		io_get_byte_memory(io),io_socket_constructor_receive_pipe_length(C)
@@ -371,12 +375,19 @@ nrf52_uart_bindr (io_socket_t *socket,io_event_t *rx) {
 	}
 }
 
-static io_event_t*
+static void*
+get_new_encoding (void *socket) {
+	return io_socket_new_message (socket);
+}
+
+static io_pipe_t*
 nrf52_uart_bindt (io_socket_t *socket,io_event_t *ev) {
 	nrf52_uart_t *this = (nrf52_uart_t*) socket;
 	if (!io_event_is_active (io_pipe_event(this->tx_pipe))) {
-		merge_into_io_event(ev,io_pipe_event(this->tx_pipe));
-		return io_pipe_event(this->tx_pipe);
+		this->signal_transmit_available = *ev;
+		this->tx_pipe->user_action = get_new_encoding;
+		this->tx_pipe->user_value = this;
+		return (io_pipe_t*) (this->tx_pipe);
 	} else {
 		return NULL;
 	}
