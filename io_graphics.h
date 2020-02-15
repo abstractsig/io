@@ -1809,6 +1809,11 @@ io_graphics_unit_test (V_unit_test_t *unit) {
 	unit->setup = setup_io_graphics_unit_test;
 	unit->teardown = teardown_io_graphics_unit_test;
 }
+#define IO_GRAPHICS_UNIT_TESTS	\
+	io_graphics_unit_test,
+	/**/
+#else
+#define IO_GRAPHICS_UNIT_TESTS
 #endif /* IMPLEMENT_VERIFY_IO_GRAPHICS */
 #endif /* io_graphics_H_ */
 /*

@@ -69,6 +69,12 @@ uint32_t		print_unit_test_report (V_runner_t*);
 
 
 #ifdef IMPLEMENT_VERIFY_IO_CORE
+//-----------------------------------------------------------------------------
+//
+// implementtaion of verify
+//
+//-----------------------------------------------------------------------------
+#include <io_device.h>
 
 #define vprintf(r,fmt,...) io_printf(r->io,fmt,##__VA_ARGS__)
 
@@ -668,28 +674,12 @@ io_internals_unit_test (V_unit_test_t *unit) {
 	unit->teardown = teardown_io_internals_unit_test;
 }
 
-#ifdef IMPLEMENT_VERIFY_IO_SHELL
-# include <io_shell.h>
-#endif
-
-#ifdef IMPLEMENT_VERIFY_IO_DEVICE
-# include <io_device.h>
-#endif
-
 void
 run_ut_io (V_runner_t *runner) {
 	static const unit_test_t test_set[] = {
 		io_internals_unit_test,
 		IO_CORE_VALUES_UNIT_TEST
-		#ifdef IMPLEMENT_VERIFY_IO_GRAPHICS
-		io_graphics_unit_test,
-		#endif
-		#ifdef IMPLEMENT_VERIFY_IO_SHELL
-		io_shell_unit_test,
-		#endif
-		#ifdef IMPLEMENT_VERIFY_IO_CPU
-		io_cpu_unit_test,
-		#endif
+		IO_CPU_UNIT_TESTS
 		IO_DEVICE_UNIT_TESTS
 		0
 	};

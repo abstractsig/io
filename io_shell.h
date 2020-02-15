@@ -23,7 +23,11 @@ def_constant_symbol(cr_T_STOP,		"stop",4)
 
 
 #ifdef IMPLEMENT_IO_SHELL
-
+//-----------------------------------------------------------------------------
+//
+// implementtaion of io_shell
+//
+//-----------------------------------------------------------------------------
 io_source_decoder_t*
 mk_io_shell_source_decoder (io_t *io,vref_t r_value,is_symbol_t const *keywords) {
 	return mk_io_source_decoder (
@@ -469,7 +473,11 @@ io_shell_unit_test (V_unit_test_t *unit) {
 	unit->setup = setup_io_shell_unit_test;
 	unit->teardown = teardown_io_shell_unit_test;
 }
-
+#define IO_SHELL_UNIT_TESTS \
+	io_shell_unit_test,\
+	/**/
+#else
+#define IO_SHELL_UNIT_TESTS
 #endif /* IMPLEMENT_VERIFY_IO_SHELL */
 #endif /* io_shell_H_ */
 /*
