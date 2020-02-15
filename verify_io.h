@@ -514,7 +514,18 @@ TEST_BEGIN(test_stack_vector_value_1) {
 
 	VERIFY (io_vector_value_get_arity (r_vect,&arity) && arity == 1,NULL);
 	VERIFY (io_vector_value_get_values (r_vect,&args) && vref_is_nil(args[0]),NULL);
+}
+TEST_END
 
+TEST_BEGIN(test_vector_value_1) {
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
+	memory_info_t vm_begin,vm_end;
+
+	io_value_memory_get_info (vm,&vm_begin);
+
+	io_value_memory_do_gc (vm,-1);
+	io_value_memory_get_info (vm,&vm_end);
+	VERIFY (vm_end.used_bytes == vm_begin.used_bytes,NULL);
 }
 TEST_END
 
@@ -550,6 +561,7 @@ io_core_values_unit_test (V_unit_test_t *unit) {
 		test_io_binary_value_dynamic_1,
 		test_io_text_value_1,
 		test_stack_vector_value_1,
+		test_vector_value_1,
 		0
 	};
 	unit->name = "io_values";
@@ -558,6 +570,11 @@ io_core_values_unit_test (V_unit_test_t *unit) {
 	unit->setup = setup_io_core_values_unit_test;
 	unit->teardown = teardown_io_core_values_unit_test;
 }
+#define IO_CORE_VALUES_UNIT_TEST	\
+		io_core_values_unit_test,
+		/**/
+#else
+#define IO_CORE_VALUES_UNIT_TEST
 # endif /* IMPLEMENT_VERIFY_IO_CORE_VALUES */
 
 TEST_BEGIN(test_io_memories_1) {
@@ -651,10 +668,6 @@ io_internals_unit_test (V_unit_test_t *unit) {
 	unit->teardown = teardown_io_internals_unit_test;
 }
 
-#ifdef IMPLEMENT_VERIFY_IO_GRAPHICS
-# include <io_graphics.h>
-#endif
-
 #ifdef IMPLEMENT_VERIFY_IO_SHELL
 # include <io_shell.h>
 #endif
@@ -667,9 +680,7 @@ void
 run_ut_io (V_runner_t *runner) {
 	static const unit_test_t test_set[] = {
 		io_internals_unit_test,
-		#ifdef IMPLEMENT_VERIFY_IO_CORE_VALUES
-		io_core_values_unit_test,
-		#endif
+		IO_CORE_VALUES_UNIT_TEST
 		#ifdef IMPLEMENT_VERIFY_IO_GRAPHICS
 		io_graphics_unit_test,
 		#endif

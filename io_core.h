@@ -6,6 +6,11 @@
  * which higher level languages can be developed.  By higher level we mean
  * languages that are more 'expressive' than C such as Javascript or Python.
  *
+ * Features
+ *
+ * Asynchronous execution model
+ * Garbage collector
+ *
  * VERSION HISTORY
  * ===============
  * 1.0	 (2020-01)
@@ -23,7 +28,7 @@
  * COMMING SOON
  * ============
  * Collection values: vector, list and map
- * Incremental garbage collection whith cycle detection
+ * Incremental garbage collection with cycle detection
  * Layered communication sockets
  * Persistent storage of io_values
  * Additional io language support for Javascript and Python
