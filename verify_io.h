@@ -679,9 +679,7 @@ run_ut_io (V_runner_t *runner) {
 		#ifdef IMPLEMENT_VERIFY_IO_CPU
 		io_cpu_unit_test,
 		#endif
-		#ifdef IMPLEMENT_VERIFY_IO_DEVICE
-		io_device_unit_test,
-		#endif
+		IO_DEVICE_UNIT_TESTS
 		0
 	};
 	V_run_unit_tests(runner,test_set);

@@ -1009,26 +1009,26 @@ typedef struct io_socket io_socket_t;
 typedef bool (*io_socket_iterator_t) (io_socket_t*,void*);
 
 typedef struct PACK_STRUCTURE io_socket_constructor {
-
+	io_encoding_implementation_t const *encoding;
+	uint32_t speed;
 	uint16_t transmit_pipe_length;
 	uint16_t receive_pipe_length;
-	
 } io_socket_constructor_t;
 
 #define io_socket_constructor_receive_pipe_length(c)	(c)->receive_pipe_length
 #define io_socket_constructor_transmit_pipe_length(c)	(c)->transmit_pipe_length
 
-
 #define IO_SOCKET_IMPLEMENTATION_STRUCT_MEMBERS \
 	io_socket_implementation_t const *specialisation_of;\
-	void (*initialise) (io_socket_t*,io_t*,io_socket_constructor_t const*);\
+	io_socket_t* (*new) (io_t*,io_socket_constructor_t const*);\
+	io_socket_t* (*initialise) (io_socket_t*,io_t*,io_socket_constructor_t const*);\
 	void (*free) (io_socket_t*);\
 	bool (*open) (io_socket_t*);\
 	void (*close) (io_socket_t*);\
 	io_t*	(*get_io) (io_socket_t*); \
 	io_pipe_t* (*bindt) (io_socket_t*,io_event_t*);\
 	io_event_t* (*bindr) (io_socket_t*,io_event_t*);\
-	void (*bindc) (io_socket_t*);\
+	void (*bindc) (io_socket_t*,io_socket_constructor_t*);\
 	io_encoding_t*	(*new_message) (io_socket_t*); \
 	bool (*send_message) (io_socket_t*,io_encoding_t*);\
 	bool (*iterate_inner_sockets) (io_socket_t*,io_socket_iterator_t,void*);\
@@ -1048,12 +1048,22 @@ struct PACK_STRUCTURE io_socket {
 	IO_SOCKET_STRUCT_MEMBERS
 };
 
+bool	is_io_socket_of_type (io_socket_t const*,io_socket_implementation_t const*);
+bool	is_physical_io_socket (io_socket_t const*);
+bool	is_constructed_io_socket (io_socket_t const*);
+
+io_socket_t* io_socket_new_null (io_t*,io_socket_constructor_t const*);
+void io_socket_free_panic (io_socket_t*);
+
+extern EVENT_DATA io_socket_implementation_t io_physical_socket_implementation_base;
+extern EVENT_DATA io_socket_implementation_t io_constructed_socket_implementation_base;
+
 //
 // inline io socket implementation
 //
-INLINE_FUNCTION void
+INLINE_FUNCTION io_socket_t*
 io_socket_initialise (io_socket_t *socket,io_t *io,io_socket_constructor_t const *C) {
-	socket->implementation->initialise(socket,io,C);
+	return socket->implementation->initialise(socket,io,C);
 }
 
 INLINE_FUNCTION bool
@@ -1307,6 +1317,11 @@ io_set_pin_to_input (io_t *io,io_pin_t p) {
 }
 
 INLINE_FUNCTION void
+io_set_pin_to_interrupt (io_t *io,io_pin_t p) {
+	io->implementation->set_io_pin_interrupt (io,p);
+}
+
+INLINE_FUNCTION void
 write_to_io_pin (io_t *io,io_pin_t p,int32_t s) {
 	io->implementation->write_to_io_pin (io,p,s);
 }
@@ -1428,13 +1443,157 @@ typedef struct PACK_STRUCTURE {
 	IO_VECTOR_VALUE_STRUCT_MEMBERS
 } io_vector_value_t;
 
-/*
- *
- * global constants
- *
- */
 #ifdef IMPLEMENT_IO_CORE
+//-----------------------------------------------------------------------------
+//
+// io core implementation
+//
+//-----------------------------------------------------------------------------
 
+//
+// io socket base
+//
+io_socket_t*
+io_socket_new_null (io_t *io,io_socket_constructor_t const *C) {
+	return NULL;
+}
+
+static io_socket_t*
+io_socket_initialise_nop (
+	io_socket_t *socket,io_t *io,io_socket_constructor_t const *C
+) {
+	return NULL;
+}
+
+void
+io_socket_free_panic (io_socket_t *socket) {
+	// a panic really
+	while(1);
+}
+
+static bool
+io_socket_open_nop (io_socket_t *socket) {
+	return false;
+}
+
+static void
+io_socket_close_nop (io_socket_t *socket) {
+}
+
+static io_t*
+io_socket_get_io_null (io_socket_t *socket) {
+	return NULL;
+}
+
+static io_pipe_t*
+io_socket_bindt_nop (io_socket_t *socket,io_event_t *ev) {
+	return NULL;
+}
+
+static io_event_t*
+io_socket_bindr_nop (io_socket_t *socket,io_event_t *ev) {
+	return NULL;
+}
+
+static void
+io_socket_bindc_nop (io_socket_t *socket,io_socket_constructor_t *C) {
+}
+
+static io_encoding_t*
+io_socket_new_message_null (io_socket_t *socket) {
+	return NULL;
+}
+
+static bool
+io_socket_send_message_nop (io_socket_t *socket,io_encoding_t *msg) {
+	return false;
+}
+
+static size_t
+io_socket_mtu_nop (io_socket_t const *socket) {
+	return 0;
+}
+
+EVENT_DATA io_socket_implementation_t io_socket_implementation_base = {
+	.specialisation_of = NULL,
+	.new = io_socket_new_null,
+	.initialise = io_socket_initialise_nop,
+	.free = io_socket_free_panic,
+	.open = io_socket_open_nop,
+	.close = io_socket_close_nop,
+	.get_io = io_socket_get_io_null,
+	.bindt = io_socket_bindt_nop,
+	.bindr = io_socket_bindr_nop,
+	.bindc = io_socket_bindc_nop,
+	.new_message = io_socket_new_message_null,
+	.send_message = io_socket_send_message_nop,
+	.iterate_inner_sockets = NULL,
+	.iterate_outer_sockets = NULL,
+	.mtu = io_socket_mtu_nop,
+};
+
+bool
+is_io_socket_of_type (
+	io_socket_t const *socket,io_socket_implementation_t const *T
+) {
+	io_socket_implementation_t const *E = socket->implementation;
+	bool is = false;
+	do {
+		is = (E == T);
+	} while (!is && (E = E->specialisation_of) != NULL);
+
+	return is && (E != NULL);
+}
+
+EVENT_DATA io_socket_implementation_t io_physical_socket_implementation_base = {
+	.specialisation_of = &io_socket_implementation_base,
+	.new = io_socket_new_null,
+	.initialise = io_socket_initialise_nop,
+	.free = io_socket_free_panic,
+	.open = io_socket_open_nop,
+	.close = io_socket_close_nop,
+	.get_io = io_socket_get_io_null,
+	.bindt = io_socket_bindt_nop,
+	.bindr = io_socket_bindr_nop,
+	.bindc = io_socket_bindc_nop,
+	.new_message = io_socket_new_message_null,
+	.send_message = io_socket_send_message_nop,
+	.iterate_inner_sockets = NULL,
+	.iterate_outer_sockets = NULL,
+	.mtu = io_socket_mtu_nop,
+};
+
+bool
+is_physical_io_socket (io_socket_t const *socket) {
+	return is_io_socket_of_type (socket,&io_physical_socket_implementation_base);
+}
+
+EVENT_DATA io_socket_implementation_t io_constructed_socket_implementation_base = {
+	.specialisation_of = &io_socket_implementation_base,
+	.new = io_socket_new_null,
+	.initialise = io_socket_initialise_nop,
+	.free = io_socket_free_panic,
+	.open = io_socket_open_nop,
+	.close = io_socket_close_nop,
+	.get_io = io_socket_get_io_null,
+	.bindt = io_socket_bindt_nop,
+	.bindr = io_socket_bindr_nop,
+	.bindc = io_socket_bindc_nop,
+	.new_message = io_socket_new_message_null,
+	.send_message = io_socket_send_message_nop,
+	.iterate_inner_sockets = NULL,
+	.iterate_outer_sockets = NULL,
+	.mtu = io_socket_mtu_nop,
+};
+
+bool
+is_constructed_io_socket (io_socket_t const *socket) {
+	return is_io_socket_of_type (socket,&io_constructed_socket_implementation_base);
+}
+
+//
+// io_t base
+//
 static io_socket_t*
 io_core_get_null_socket (io_t *io,int32_t h) {
 	return NULL;
