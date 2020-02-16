@@ -91,7 +91,7 @@ V_record_test_result (
 	runner->total_tests++;
 
 	if(!(result)) {
-		runner->total_failed++;
+		runner->total_failed++;	// NB: This line used as a breakpoint, do not move
 	}
 
 	return result;
@@ -378,8 +378,6 @@ TEST_BEGIN(test_io_float64_value_1) {
 			NULL
 		);
 
-		//io_printf (TEST_IO,"\nf = %2.2f",f64);
-
 		unreference_value (r_value);
 	}
 
@@ -408,6 +406,8 @@ TEST_BEGIN(test_io_float64_value_2) {
 		unreference_value (r_value);
 		io_encoding_free(encoding);
 	}
+
+	io_do_gc (TEST_IO,-1);
 }
 TEST_END
 
@@ -503,9 +503,8 @@ TEST_BEGIN(test_io_text_value_1) {
 
 			io_encoding_free(encoding);
 		}
+		unreference_value (r_value);
 	}
-
-	unreference_value (r_value);
 
 	io_value_memory_do_gc (vm,-1);
 	io_value_memory_get_info (vm,&vm_end);
@@ -526,9 +525,49 @@ TEST_END
 TEST_BEGIN(test_vector_value_1) {
 	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
 	memory_info_t vm_begin,vm_end;
-
+	vref_t r_value;
+	
 	io_value_memory_get_info (vm,&vm_begin);
 
+	r_value = reference_value (mk_io_vector_value (vm,0,NULL));
+	if (VERIFY(vref_is_valid(r_value),NULL)) {
+		uint32_t arity = 42;
+		VERIFY (io_vector_value_get_arity (r_value,&arity) && arity == 0,NULL);
+		unreference_value (r_value);
+	}
+
+	io_value_memory_do_gc (vm,-1);
+	io_value_memory_get_info (vm,&vm_end);
+	VERIFY (vm_end.used_bytes == vm_begin.used_bytes,NULL);
+}
+TEST_END
+
+TEST_BEGIN(test_vector_value_2) {
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
+	memory_info_t vm_begin,vm_end;
+	vref_t r_value;
+	
+	io_value_memory_get_info (vm,&vm_begin);
+	
+	{
+		vref_t r_int = mk_io_int64_value (vm,42);
+		vref_t args[] = {cr_NIL,r_int};
+		vref_t const *values;
+		
+		r_value = reference_value (mk_io_vector_value (vm,SIZEOF(args),args));
+		if (VERIFY(vref_is_valid(r_value),NULL)) {
+			uint32_t arity = 42;
+			VERIFY (io_vector_value_get_arity (r_value,&arity) && arity == 2,NULL);
+
+			if (VERIFY (io_vector_value_get_values (r_value,&values),NULL)) {
+				VERIFY (vref_is_nil (values[0]),NULL);
+				VERIFY (vref_is_equal_to (values[1],r_int),NULL);
+			}
+			
+			unreference_value (r_value);
+		}
+	}
+	
 	io_value_memory_do_gc (vm,-1);
 	io_value_memory_get_info (vm,&vm_end);
 	VERIFY (vm_end.used_bytes == vm_begin.used_bytes,NULL);
@@ -546,7 +585,6 @@ UNIT_TEARDOWN(teardown_io_core_values_unit_test) {
 	memory_info_t bm_end,vm_end;
 
 	io_do_gc (TEST_IO,-1);
-
 	io_value_memory_get_info (io_get_short_term_value_memory (TEST_IO),&vm_end);
 	VERIFY (vm_end.used_bytes == TEST_MEMORY_INFO[1].used_bytes,NULL);
 
@@ -568,6 +606,7 @@ io_core_values_unit_test (V_unit_test_t *unit) {
 		test_io_text_value_1,
 		test_stack_vector_value_1,
 		test_vector_value_1,
+		test_vector_value_2,
 		0
 	};
 	unit->name = "io_values";
@@ -585,11 +624,83 @@ io_core_values_unit_test (V_unit_test_t *unit) {
 
 TEST_BEGIN(test_io_memories_1) {
 	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
-	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	io_byte_memory_t *mem,*bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bm_begin,bm_end;
 
 	VERIFY (bm != NULL,NULL);
 	VERIFY (io_value_memory_get_io(vm) == TEST_IO,NULL);
 
+	io_byte_memory_get_info (bm,&bm_begin);
+
+	mem = mk_io_byte_memory (TEST_IO,32);
+	if (VERIFY (mem != NULL,NULL)) {
+		memory_info_t begin,end;
+		void *data;
+		
+		io_byte_memory_get_info (mem,&begin);
+		VERIFY (begin.used_bytes == 0,NULL);
+		
+		data = io_byte_memory_allocate (mem,12);
+		VERIFY (data != NULL,NULL);
+	
+		io_byte_memory_free (mem,data);
+	
+		io_byte_memory_get_info (mem,&end);
+		VERIFY (end.used_bytes == begin.used_bytes,NULL);
+		
+		free_io_byte_memory (mem);
+	}
+	
+	io_byte_memory_get_info (bm,&bm_end);
+	VERIFY (bm_end.used_bytes == bm_begin.used_bytes,NULL);
+}
+TEST_END
+
+TEST_BEGIN(test_io_memories_2) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bm_begin,bm_end;
+
+	io_byte_memory_get_info (bm,&bm_begin);
+	
+	io_value_memory_t *vm = mk_umm_io_value_memory (
+		TEST_IO,1024,INVALID_MEMORY_ID
+	);
+	
+	if (VERIFY (vm != NULL,NULL)) {
+		memory_info_t begin,end;
+		vref_t r_value;
+		bool ok;
+		
+		io_value_memory_get_info (vm,&begin);
+		VERIFY (begin.used_bytes == 0,NULL);
+
+		ok = true;
+		for (int i = 0; i < 8; i++) {
+			r_value = mk_io_int64_value (vm,42);
+			ok &= vref_is_valid(r_value);
+		}
+		
+		VERIFY (ok,"values created");
+		io_value_memory_do_gc (vm,-1);
+		io_value_memory_get_info (vm,&end);
+		VERIFY (end.used_bytes == 0,NULL);
+
+		ok = true;
+		for (int i = 0; i < 16; i++) {
+			r_value = mk_io_int64_value (vm,42);
+			ok &= vref_is_valid(r_value);
+		}
+		
+		VERIFY (ok,"values created");
+		io_value_memory_do_gc (vm,-1);
+		io_value_memory_get_info (vm,&end);
+		VERIFY (end.used_bytes == 0,NULL);
+		
+		umm_value_memory_free_memory (vm);
+	}
+	
+	io_byte_memory_get_info (bm,&bm_end);
+	VERIFY (bm_end.used_bytes == bm_begin.used_bytes,NULL);
 }
 TEST_END
 
@@ -652,6 +763,22 @@ TEST_BEGIN(test_io_encoding_pipe_1) {
 }
 TEST_END
 
+TEST_BEGIN(test_io_value_pipe_1) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bm_begin,bm_end;
+
+	io_byte_memory_get_info (bm,&bm_begin);
+
+	io_value_pipe_t *pipe = mk_io_value_pipe (bm,8);
+	if (VERIFY (pipe != NULL,NULL)) {
+		
+		free_io_value_pipe (pipe,bm);
+	}
+	io_byte_memory_get_info (bm,&bm_end);
+	VERIFY (bm_end.used_bytes == bm_begin.used_bytes,NULL);
+}
+TEST_END
+
 UNIT_SETUP(setup_io_internalss_unit_test) {
 	return VERIFY_UNIT_CONTINUE;
 }
@@ -663,8 +790,10 @@ static void
 io_internals_unit_test (V_unit_test_t *unit) {
 	static V_test_t const tests[] = {
 		test_io_memories_1,
+		test_io_memories_2,
 		test_io_byte_pipe_1,
 		test_io_encoding_pipe_1,
+		test_io_value_pipe_1,
 		0
 	};
 	unit->name = "io internals";

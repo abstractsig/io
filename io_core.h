@@ -9,7 +9,6 @@
  * Features
  *
  * Asynchronous execution model
- * Garbage collector
  *
  * VERSION HISTORY
  * ===============
@@ -28,7 +27,7 @@
  * COMMING SOON
  * ============
  * Collection values: vector, list and map
- * Incremental garbage collection with cycle detection
+ * Add cycle detection to garbage collection
  * Layered communication sockets
  * Persistent storage of io_values
  * Additional io language support for Javascript and Python
@@ -108,7 +107,11 @@ typedef struct {
 } io_byte_memory_t;
 
 void 	iterate_io_byte_memory_allocations(io_byte_memory_t*,bool (*cb) (void*,void*),void*);
-void	initialise_io_byte_memory (io_t*,io_byte_memory_t*);
+void	incremental_iterate_io_byte_memory_allocations (io_byte_memory_t*,uint16_t*,bool (*) (void*,void*),void *);
+
+io_byte_memory_t*	mk_io_byte_memory (io_t*,uint32_t);
+io_byte_memory_t*	initialise_io_byte_memory (io_t*,io_byte_memory_t*);
+void	free_io_byte_memory (io_byte_memory_t*);
 void*	umm_malloc(io_byte_memory_t*,size_t);
 void*	umm_calloc(io_byte_memory_t*,size_t,size_t);
 void*	umm_realloc(io_byte_memory_t*,void *ptr, size_t size );
@@ -316,7 +319,6 @@ INLINE_FUNCTION io_encoding_t*
 io_encoding_pipe_new_encoding (io_pipe_t *pipe) {
 	return ((io_encoding_pipe_implementation_t const*) pipe->implementation)->new_encoding((io_pipe_t*)pipe);
 }
-
 /*
  *
  * References to values
@@ -362,6 +364,26 @@ union PACK_STRUCTURE io_value_reference {
 #define vref_implementation(r)	(r).ref.implementation
 #define vref_expando(r)			(r).ref.expando
 #define vref_all(r)				(r).all
+
+//
+// value pipe
+//
+typedef struct PACK_STRUCTURE io_value_pipe {
+	IO_PIPE_STRUCT_MEMBERS
+	vref_t *value_ring;
+} io_value_pipe_t;
+
+io_value_pipe_t* mk_io_value_pipe (io_byte_memory_t*,uint16_t);
+void free_io_value_pipe (io_value_pipe_t*,io_byte_memory_t*);
+bool	io_value_pipe_get_value (io_value_pipe_t*,vref_t*);
+bool	io_value_pipe_put_value (io_value_pipe_t*,vref_t);
+bool	io_value_pipe_peek (io_value_pipe_t*,vref_t*);
+
+#define io_value_pipe_count_occupied_slots(p) io_pipe_count_occupied_slots ((io_pipe_t const*) (p))
+#define io_value_pipe_count_free_slots(p) io_pipe_count_free_slots ((io_pipe_t const*) (p))
+#define io_value_pipe_is_readable(p) io_pipe_is_readable ((io_pipe_t const*) (p))
+#define io_value_pipe_is_writeable(p) io_pipe_is_writeable ((io_pipe_t const*) (p))
+
 
 #ifdef IO_32_BIT_BUILD
 COMPILER_VERIFY(sizeof(vref_t) == 8);
@@ -834,10 +856,10 @@ io_value_mode_t const* io_modal_value_get_modes (io_value_t const*);
 	/**/
 
 #define decl_io_modal_value(T,S) \
-	.implementation = IO_VALUE_IMPLEMENTATION(T),			\
-	.reference_count_ = 0,			\
-	.size_ = S,						\
-	.current_mode = (T)->modes,		\
+	.implementation = IO_VALUE_IMPLEMENTATION(T), \
+	.reference_count_ = 0, \
+	.size_ = S, \
+	.current_mode = (T)->modes, \
 	/**/
 
 /*
@@ -869,6 +891,7 @@ struct PACK_STRUCTURE io_value_memory {
 };
 
 #define io_value_memory_id(vm)	(vm)->id_
+bool	register_io_value_memory (io_value_memory_t*);
 
 //
 // inline value memory implementation
@@ -904,9 +927,17 @@ typedef struct PACK_STRUCTURE umm_io_value_memory {
 	IO_VALUE_MEMORY_STRUCT_MEMBERS
 	io_byte_memory_t *bm;
 	io_t *io;
+
+	uint16_t		gc_cursor;
+	uint16_t		gc_stack_size;
+
 } umm_io_value_memory_t;
 
 extern EVENT_DATA io_value_memory_implementation_t umm_value_memory_implementation;
+
+#define INVALID_MEMORY_ID	0x10000
+io_value_memory_t* mk_umm_io_value_memory (io_t*,uint32_t,uint32_t);
+void umm_value_memory_free_memory (io_value_memory_t*);
 
 /*
  *-----------------------------------------------------------------------------
@@ -1149,6 +1180,10 @@ typedef struct PACK_STRUCTURE io_implementation {
 	//
 	io_socket_t* (*get_socket) (io_t*,int32_t);
 	//
+	// tasks
+	//
+	void (*signal_task_pending) (io_t*);
+	//
 	// events
 	//
 	void (*dequeue_event) (io_t*,io_event_t*);
@@ -1273,6 +1308,11 @@ register_io_interrupt_handler (io_t *io,int32_t h,io_interrupt_action_t a,void *
 INLINE_FUNCTION bool
 unregister_io_interrupt_handler (io_t *io,int32_t h,io_interrupt_action_t a) {
 	return io->implementation->unregister_interrupt_handler (io,h,a);
+}
+
+INLINE_FUNCTION void
+signal_io_task_pending (io_t *io) {
+	io->implementation->signal_task_pending (io);
 }
 
 INLINE_FUNCTION void
@@ -1438,15 +1478,20 @@ typedef struct PACK_STRUCTURE io_binary_value {
 #define io_binary_value_rw_bytes(b)			(b)->bytes.rw
 #define io_binary_value_string(b)			(b)->bytes.str
 
+
 #define IO_VECTOR_VALUE_STRUCT_MEMBERS \
-	IO_VALUE_STRUCT_MEMBERS	\
-	uint32_t arity;\
-	vref_t values[];\
+	IO_VALUE_STRUCT_MEMBERS \
+	uint32_t arity; \
 	/**/
 
 typedef struct PACK_STRUCTURE {
 	IO_VECTOR_VALUE_STRUCT_MEMBERS
+	vref_t values[];
 } io_vector_value_t;
+
+vref_t	mk_io_vector_value (io_value_memory_t*,uint32_t arity,vref_t const*);
+bool		io_vector_value_get_arity (vref_t,uint32_t*);
+bool		io_vector_value_get_values (vref_t,vref_t const**);
 
 #ifdef IMPLEMENT_IO_CORE
 //-----------------------------------------------------------------------------
@@ -1644,6 +1689,7 @@ static const io_implementation_t	io_base = {
 	.enqueue_event = enqueue_io_event,
 	.next_event = do_next_io_event,
 	.in_event_thread = NULL,
+	.signal_task_pending = NULL,
 	.signal_event_pending = NULL,
 	.wait_for_event = NULL,
 	.wait_for_all_events = NULL,
@@ -1770,27 +1816,22 @@ def_constant_symbol(cr_OPEN,		"open",4)
 // vector
 //
 
-#define IO_VECTOR_VALUE_STRUCT_MEMBERS_STACK \
-	IO_VALUE_STRUCT_MEMBERS					\
-	uint32_t arity;								\
-	/**/
-
 extern EVENT_DATA io_value_implementation_t io_vector_value_implementation;
 #define declare_stack_vector(name,...) \
 	struct PACK_STRUCTURE io_vector_value_stack_##name {\
-	IO_VECTOR_VALUE_STRUCT_MEMBERS_STACK	\
-	vref_t values[(sizeof((vref_t[]){__VA_ARGS__})/sizeof(vref_t))];	\
+		IO_VECTOR_VALUE_STRUCT_MEMBERS	\
+		union PACK_STRUCTURE {\
+			vref_t ro[(sizeof((vref_t[]){__VA_ARGS__})/sizeof(vref_t))];\
+			vref_t rw[(sizeof((vref_t[]){__VA_ARGS__})/sizeof(vref_t))];\
+		} values;\
 	};\
 	struct io_vector_value_stack_##name name##_v = {\
 			decl_io_value (&io_vector_value_implementation,sizeof(struct io_vector_value_stack_##name)) \
 			.arity = (sizeof((vref_t[]){__VA_ARGS__})/sizeof(vref_t)),\
-			.values = {__VA_ARGS__}\
+			.values.rw = {__VA_ARGS__}\
 		};\
 	vref_t name = def_vref (&reference_to_c_stack_value,&name##_v);\
 	UNUSED(name);
-
-bool		io_vector_value_get_arity (vref_t,uint32_t*);
-bool		io_vector_value_get_values (vref_t,vref_t const**);
 
 //
 // text decoding
@@ -2414,6 +2455,99 @@ io_encoding_pipe_put (io_t *io,io_pipe_t *this,const char *fmt,va_list va) {
 	io_enqueue_event (io,io_pipe_event(this));
 }
 
+static EVENT_DATA io_pipe_implementation_t io_value_pipe_implementation = {
+	.specialisation_of = &io_pipe_implementation_base,
+};
+
+bool
+is_io_value_pipe (io_pipe_t const *pipe) {
+	return io_is_pipe_of_type (pipe,&io_value_pipe_implementation);
+}
+
+static EVENT_DATA io_event_implementation_t io_value_pipe_event_implementation = {
+	.specialisation_of = &io_event_implementation_base,
+	.cast_to_pipe = cast_io_pipe_event_to_pipe,
+};
+
+INLINE_FUNCTION int16_t
+io_value_pipe_increment_index (io_value_pipe_t *this,int16_t i,int16_t n) {
+	i += n;
+	if (i >= this->size_of_ring) {
+		i -= this->size_of_ring;
+	}
+	return i;
+}
+
+io_value_pipe_t*
+mk_io_value_pipe (io_byte_memory_t *bm,uint16_t length) {
+	io_value_pipe_t *this = io_byte_memory_allocate (bm,sizeof(io_value_pipe_t));
+	
+	if (this) {
+		this->implementation = &io_value_pipe_implementation,
+		initialise_typed_io_event (
+			io_pipe_event(this),&io_value_pipe_event_implementation,NULL,NULL
+		);
+		this->size_of_ring = length;
+		this->overrun = 0;
+		this->value_ring = io_byte_memory_allocate (bm,sizeof(vref_t) * length);
+		if (this->value_ring == NULL) {
+			io_byte_memory_free (bm,this);
+			this = NULL;
+		}
+	}
+	
+	return this;
+}
+
+void
+free_io_value_pipe (io_value_pipe_t *this,io_byte_memory_t *bm) {
+	vref_t r_value;
+	
+	while (io_value_pipe_get_value (this,&r_value)) {
+		unreference_value (r_value);
+	}
+	
+	io_byte_memory_free (bm,this->value_ring);
+	io_byte_memory_free (bm,this);
+}
+
+bool
+io_value_pipe_get_value (io_value_pipe_t *this,vref_t *r_value) {
+	if (io_encoding_pipe_is_readable (this)) {
+		*r_value = this->value_ring[this->read_index];
+		this->read_index = io_value_pipe_increment_index (
+			this,this->read_index,1
+		);
+		return true;
+	} else {
+		return false;
+	}
+}
+
+bool
+io_value_pipe_peek (io_value_pipe_t *this,vref_t *r_value) {
+	if (io_encoding_pipe_is_readable (this)) {
+		*r_value = this->value_ring[this->read_index];
+		return true;
+	} else {
+		return false;
+	}
+}
+
+bool
+io_value_pipe_put_value (io_value_pipe_t *this,vref_t r_value) {
+	int16_t f = io_value_pipe_count_free_slots(this);
+	if (f > 0) {
+		int16_t j = this->write_index;
+		int16_t i = io_value_pipe_increment_index(this,j,1);
+		this->value_ring[j] = reference_value (r_value);
+		this->write_index = i;
+		return true;
+	} else {
+		return false;
+	}
+}
+
 //
 // reference to umm value
 //
@@ -2438,9 +2572,8 @@ io_reference_to_umm_value_unreference (vref_t r_value) {
 	if (value) {
 		if (io_value_reference_count(value)) {
 			io_value_reference_count(value) --;
-			if (io_value_reference_count(value) == 0) {
-				free_umm_value ((umm_io_value_memory_t*) io_get_value_memory_by_id (io_value_reference_p32_memory(r_value)),value);
-			}
+		} else {
+			// a panic really
 		}
 	}
 }
@@ -2477,11 +2610,38 @@ EVENT_DATA io_value_reference_implementation_t reference_to_umm_value = {
 //
 // umm-heap based io_value memory
 //
+#define GC_STACK_LENGTH	8
+
+static void initialise_io_byte_memory_cursor (io_byte_memory_t*,uint16_t*);
+
+io_value_memory_t*
+mk_umm_io_value_memory (io_t *io,uint32_t size,uint32_t id) {
+	umm_io_value_memory_t *this = io_byte_memory_allocate (
+		io_get_byte_memory(io),sizeof(umm_io_value_memory_t)
+	);
+	
+	if (this) {
+		this->implementation = &umm_value_memory_implementation;
+		this->io = io;
+		this->id_ = id;
+		this->bm = mk_io_byte_memory (io,size);
+		if (this->bm != NULL) {
+			initialise_io_byte_memory_cursor(this->bm,&this->gc_cursor);
+			this->gc_stack_size = GC_STACK_LENGTH;
+		} else {
+			io_byte_memory_free (io_get_byte_memory(io),this);
+			this = NULL;
+		}
+	}
+	
+	return (io_value_memory_t*) this;
+}
 
 void
 umm_value_memory_free_memory (io_value_memory_t *vm) {
 	umm_io_value_memory_t *this = (umm_io_value_memory_t*) vm;
-	umm_free (this->bm,this);
+	free_io_byte_memory (this->bm);
+	umm_free (io_get_byte_memory(this->io),this);
 }
 
 vref_t
@@ -2527,12 +2687,10 @@ umm_value_memory_gc_iterator (void *value,void *user_value) {
 	return stack->cursor < stack->end;
 }
 
-#define GC_STACK_LENGTH	8
-
 static void
 umm_value_memory_do_gc (io_value_memory_t *vm,int32_t count) {
-/*	umm_io_value_memory_t *this = (umm_io_value_memory_t*) vm;
-	io_value_t* values[GC_STACK_LENGTH];
+	umm_io_value_memory_t *this = (umm_io_value_memory_t*) vm;
+	io_value_t* values[this->gc_stack_size];
 
 	if (count < 0) count = 1000000;
 
@@ -2543,8 +2701,8 @@ umm_value_memory_do_gc (io_value_memory_t *vm,int32_t count) {
 		};
 		bool clean = true;
 
-		iterate_io_byte_memory_allocations (
-			this->bm,umm_value_memory_gc_iterator,&stack
+		incremental_iterate_io_byte_memory_allocations (
+			this->bm,&this->gc_cursor,umm_value_memory_gc_iterator,&stack
 		);
 
 		{
@@ -2562,7 +2720,6 @@ umm_value_memory_do_gc (io_value_memory_t *vm,int32_t count) {
 		}
 		count--;
 	};
-*/
 }
 
 bool
@@ -3609,7 +3766,6 @@ EVENT_DATA io_value_implementation_t binary_value_implementation_with_dynamic_by
 	.get_modes = io_value_get_null_modes,
 };
 
-
 static vref_t
 mk_io_binary_value_for (io_value_memory_t *vm,io_value_implementation_t const *I,uint8_t const *bytes,int32_t size) {
 	io_binary_value_t base = {
@@ -3826,6 +3982,53 @@ EVENT_DATA io_value_implementation_t ion_continuation_value_implementation = {
 //
 // vector value
 //
+
+vref_t
+mk_io_vector_value (io_value_memory_t *vm,uint32_t arity,vref_t const* values) {
+	io_vector_value_t *base = alloca (sizeof(io_vector_value_t) + (arity * sizeof (vref_t)));
+	base->implementation = &io_vector_value_implementation;
+	base->reference_count_ = 0;
+	base->size_ = sizeof(io_vector_value_t) + (arity * sizeof (vref_t));
+	base->arity = arity;
+	memcpy (base->values,values,arity * sizeof (vref_t));
+	return io_value_memory_new_value (
+		vm,
+		&io_vector_value_implementation,
+		sizeof(io_vector_value_t) + (arity * sizeof (vref_t)),
+		def_vref (&reference_to_c_stack_value,base)
+	);
+}
+
+static io_value_t*
+io_vector_value_initialise (vref_t r_value,vref_t r_base) {
+	io_vector_value_t *this = vref_cast_to_rw_pointer(r_value);
+	io_vector_value_t const *base = io_typesafe_ro_cast(r_base,cr_VECTOR);
+
+	if (base != NULL) {
+		vref_t const *cursor = base->values;
+		vref_t const *end = cursor + base->arity;
+		vref_t *dest = this->values;
+		this->arity = base->arity;
+		while (cursor < end) {
+			*dest++ = reference_value (*cursor++);
+		}
+	} else {
+		this = NULL;
+	}
+
+	return vref_cast_to_rw_pointer(r_value);
+}
+
+static void
+io_vector_value_free (io_value_t *value) {
+	io_vector_value_t *this = (io_vector_value_t*) value;
+	vref_t *cursor = this->values;
+	vref_t *end = cursor + this->arity;
+	while (cursor < end) {
+		unreference_value (*cursor++);
+	}
+}
+
 bool
 io_vector_value_get_arity (vref_t r_value,uint32_t *arity) {
 	io_vector_value_t const *this = io_typesafe_ro_cast (
@@ -3850,30 +4053,6 @@ io_vector_value_get_values (vref_t r_value,vref_t const** values) {
 	} else {
 		return false;
 	}
-}
-
-// needs byte memory
-static io_value_t*
-io_vector_value_initialise (vref_t r_value,vref_t r_base) {
-/*	io_vector_value_t *this = (io_binary_value_t*) value;
-	io_vector_value_t const *base = io_typesafe_ro_cast(r_base,cr_CONSTANT_BINARY);
-
-	if (base != NULL) {
-
-	} else {
-		this = NULL;
-	}
-*/
-	return vref_cast_to_rw_pointer(r_value);
-}
-
-static void
-io_vector_value_free (io_value_t *value) {
-}
-
-vref_t
-mk_io_vector_value (vref_t r_context,vref_t const *const* values) {
-	return INVALID_VREF;
 }
 
 EVENT_DATA io_value_implementation_t io_vector_value_implementation = {
@@ -4206,10 +4385,6 @@ io_source_decoder_end_of_statement (io_source_decoder_t *this) {
 #define UMM_FREELIST_MASK (0x8000)
 #define UMM_BLOCKNO_MASK  (0x7FFF)
 
-
-//umm_block_t *umm_heap = NULL;
-//unsigned short int umm_numblocks = 0;
-
 #define UMM_NUMBLOCKS(m) (m)->number_of_blocks
 #define UMM_BLOCK(m,b)  (m)->heap[b]
 
@@ -4219,7 +4394,36 @@ io_source_decoder_end_of_statement (io_source_decoder_t *this) {
 #define UMM_PFREE(m,b)  (UMM_BLOCK(m,b).body.free.prev)
 #define UMM_DATA(m,b)   (UMM_BLOCK(m,b).body.data)
 
+io_byte_memory_t*
+mk_io_byte_memory (io_t *io,uint32_t size) {
+	io_byte_memory_t *this = io_byte_memory_allocate (
+		io_get_byte_memory (io),sizeof(io_byte_memory_t)
+	);
+	
+	if (this) {
+		this->number_of_blocks = (size / sizeof(umm_block_t)),
+		this->heap = io_byte_memory_allocate (
+			io_get_byte_memory (io),size
+		);
+		if (this->heap) {
+			initialise_io_byte_memory (io,this);
+		} else {
+			io_byte_memory_free (io_get_byte_memory (io),this);
+			this= NULL;
+		}
+	}
+	
+	return this;
+}
+
 void
+free_io_byte_memory (io_byte_memory_t *this) {
+	io_byte_memory_t *bm = io_get_byte_memory (this->io);
+	io_byte_memory_free (bm,this->heap);
+	io_byte_memory_free (bm,this);
+}
+
+io_byte_memory_t*
 initialise_io_byte_memory (io_t *io,io_byte_memory_t *mem) {
   	// init heap pointer and size, and memset it to 0
 	io_memset (mem->heap,0x00,mem->number_of_blocks * sizeof(umm_block_t));
@@ -4272,6 +4476,8 @@ initialise_io_byte_memory (io_t *io,io_byte_memory_t *mem) {
     UMM_NBLOCK(mem,block_last) = 0;
     UMM_PBLOCK(mem,block_last) = block_1th;
   }
+  
+  return mem;
 }
 
 void
@@ -4299,18 +4505,50 @@ io_byte_memory_get_info (io_byte_memory_t *mem,memory_info_t *info) {
 }
 
 void
+initialise_io_byte_memory_cursor (io_byte_memory_t *bm,uint16_t *cursor) {
+	*cursor = 0;
+}
+
+void
+incremental_iterate_io_byte_memory_allocations (
+	io_byte_memory_t *bm,uint16_t *cursor,bool (*cb) (void*,void*),void *user_value
+) {
+	uint16_t begin = *cursor;
+	
+	do {
+		uint16_t blockNo = *cursor;
+		*cursor = UMM_NBLOCK(bm,*cursor) & UMM_BLOCKNO_MASK;
+		if (
+				blockNo != 0															// not first
+			&&	((UMM_NBLOCK(bm,blockNo) & UMM_FREELIST_MASK) == 0)		// not free
+			&&	(blockNo != (UMM_NUMBLOCKS(bm) - 1))							// not last
+		) {
+			if (!cb ((void *)&UMM_DATA(bm,blockNo),user_value)) {
+				if ((UMM_NBLOCK(bm,*cursor) & UMM_FREELIST_MASK)) {
+					// do not leave cursor at start of free list as
+					// assimilations will make this invalid
+					*cursor = UMM_NBLOCK(bm,0) & UMM_BLOCKNO_MASK;
+				}
+				return;
+			}
+		}
+	} while (*cursor != begin);
+	
+	*cursor = 0;
+}
+
+void
 iterate_io_byte_memory_allocations (
 	io_byte_memory_t *bm,bool (*cb) (void*,void*),void *user_value
 ) {
-	unsigned short int blockNo = UMM_NBLOCK(bm,0) & UMM_BLOCKNO_MASK;
-
-	while( UMM_NBLOCK(bm,blockNo) & UMM_BLOCKNO_MASK ) {
-		if( UMM_NBLOCK(bm,blockNo) & UMM_FREELIST_MASK ) {
-			if (!cb ((void *)&UMM_DATA(bm,blockNo),user_value)) {
+	uint16_t cursor = UMM_NBLOCK(bm,0) & UMM_BLOCKNO_MASK;
+	while( UMM_NBLOCK(bm,cursor) & UMM_BLOCKNO_MASK ) {
+		if( UMM_NBLOCK(bm,cursor) & UMM_FREELIST_MASK ) {
+			if (!cb ((void *)&UMM_DATA(bm,cursor),user_value)) {
 				break;
 			}
 		}
-		blockNo = UMM_NBLOCK(bm,blockNo) & UMM_BLOCKNO_MASK;
+		cursor = UMM_NBLOCK(bm,cursor) & UMM_BLOCKNO_MASK;
 	}
 }
 
