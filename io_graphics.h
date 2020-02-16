@@ -904,6 +904,12 @@ io_graphics_compare_float32 (float32_t a,float32_t b,float32_t epsilon) {
 #define STBTT_malloc(x,u)  umm_malloc(u,x)
 #define STBTT_free(x,u)    umm_free(u,x)
 #define STBTT_SMALL_MEMORY
+//
+// we see arsserts caused by out-of-memory in rasterizer but it
+// looks like stb_tt copes with these, perhaps at the cost of
+// degraded bitmat quality
+// 
+#define STBTT_assert(x)
 #include <stb_truetype.h>
 #include <font/Proggy-Small.h>
 #include <font/Roboto-Bold.h>
