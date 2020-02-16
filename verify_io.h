@@ -518,7 +518,7 @@ TEST_BEGIN(test_stack_vector_value_1) {
 	vref_t const *args;
 
 	VERIFY (io_vector_value_get_arity (r_vect,&arity) && arity == 1,NULL);
-	VERIFY (io_vector_value_get_values (r_vect,&args) && vref_is_nil(args[0]),NULL);
+	VERIFY (io_vector_value_get_values (r_vect,&arity,&args) && vref_is_nil(args[0]),NULL);
 }
 TEST_END
 
@@ -559,7 +559,7 @@ TEST_BEGIN(test_vector_value_2) {
 			uint32_t arity = 42;
 			VERIFY (io_vector_value_get_arity (r_value,&arity) && arity == 2,NULL);
 
-			if (VERIFY (io_vector_value_get_values (r_value,&values),NULL)) {
+			if (VERIFY (io_vector_value_get_values (r_value,&arity,&values),NULL)) {
 				VERIFY (vref_is_nil (values[0]),NULL);
 				VERIFY (vref_is_equal_to (values[1],r_int),NULL);
 			}
@@ -764,16 +764,46 @@ TEST_BEGIN(test_io_encoding_pipe_1) {
 TEST_END
 
 TEST_BEGIN(test_io_value_pipe_1) {
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
 	memory_info_t bm_begin,bm_end;
-
+	memory_info_t vm_begin,vm_end;
+	
+	io_value_memory_get_info (vm,&vm_begin);
 	io_byte_memory_get_info (bm,&bm_begin);
 
-	io_value_pipe_t *pipe = mk_io_value_pipe (bm,8);
+	io_value_pipe_t *pipe = mk_io_value_pipe (bm,3);
 	if (VERIFY (pipe != NULL,NULL)) {
+		vref_t values[] = {
+			mk_io_int64_value (vm,42),
+			mk_io_int64_value (vm,43),
+			mk_io_int64_value (vm,44),
+		};
+		vref_t r_value;
+		
+		VERIFY (!io_value_pipe_is_readable (pipe),NULL);
+		VERIFY (io_value_pipe_put_value (pipe,values[0]),NULL);
+		VERIFY (io_value_pipe_is_readable (pipe),NULL);
+
+		VERIFY (io_value_pipe_put_value (pipe,values[1]),NULL);
+
+		VERIFY (!io_value_pipe_put_value (pipe,values[2]),NULL);
+		
+		VERIFY (io_value_pipe_get_value (pipe,&r_value),NULL);
+		VERIFY (vref_is_equal_to (r_value,values[0]),NULL);
+		VERIFY (io_value_pipe_is_readable (pipe),NULL);
+		VERIFY (io_value_pipe_get_value (pipe,&r_value),NULL);
+		VERIFY (vref_is_equal_to (r_value,values[1]),NULL);
+		VERIFY (!io_value_pipe_is_readable (pipe),NULL);
+		VERIFY (!io_value_pipe_get_value (pipe,&r_value),NULL);
 		
 		free_io_value_pipe (pipe,bm);
 	}
+
+	io_do_gc (TEST_IO,-1);
+	io_value_memory_get_info (vm,&vm_end);
+	VERIFY (vm_end.used_bytes == vm_begin.used_bytes,NULL);
+
 	io_byte_memory_get_info (bm,&bm_end);
 	VERIFY (bm_end.used_bytes == bm_begin.used_bytes,NULL);
 }

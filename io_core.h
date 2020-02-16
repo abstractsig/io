@@ -199,6 +199,28 @@ io_event_cast_to_pipe (io_event_t *ev) {
 }
 
 //
+// time
+//
+
+typedef union PACK_STRUCTURE io_time {
+	int64_t nanoseconds;
+	uint64_t u64;
+	uint8_t bytes[8];
+	struct {
+		uint32_t low;
+		uint32_t high;
+	} part;
+} io_time_t;
+
+#define time_to_milliseconds(t)		((t)/1000000LL)
+#define microsecond_time(m)			((int64_t)(m) * 1000LL)
+#define millisecond_time(m)			(io_time_t){(int64_t)(m) * 1000000LL}
+#define time_in_milliseconds(m)		((int64_t)(m) / 1000000LL)
+#define second_time(m)					((int64_t)(m) * 1000000000LL)
+#define minute_time(m)					(second_time(m) * 60LL)
+
+
+//
 // alarms
 //
 typedef struct io_alarm io_alarm_t;
@@ -206,11 +228,23 @@ typedef struct io_alarm io_alarm_t;
 struct PACK_STRUCTURE io_alarm {
 	io_event_t *at;					// raised 'at' when
 	io_event_t *error;				// raised if at cannot be raised as the correct time
-	int64_t when;
+	io_time_t when;
 	io_alarm_t *next_alarm;
 };
 
 extern io_alarm_t s_null_io_alarm;
+
+INLINE_FUNCTION io_alarm_t*
+initialise_io_alarm (
+	io_alarm_t *ev,io_event_t *at,io_event_t *err,io_time_t when
+) {
+	ev->when = when;
+	ev->at = at;
+	ev->error = err;
+	ev->next_alarm = NULL;
+	return ev;
+}
+
 
 //
 // Pipes
@@ -422,9 +456,10 @@ reference_value (vref_t r_value) {
 	return vref_implementation(r_value)->reference(r_value);
 }
 
-INLINE_FUNCTION void
+INLINE_FUNCTION vref_t
 unreference_value (vref_t r_value) {
 	vref_implementation(r_value)->unreference(r_value);
+	return r_value;
 }
 
 INLINE_FUNCTION void*
@@ -1184,7 +1219,9 @@ typedef struct PACK_STRUCTURE io_implementation {
 	//
 	// tasks
 	//
+	bool (*enqueue_task) (io_t*,vref_t);
 	void (*signal_task_pending) (io_t*);
+	bool (*do_next_task) (io_t*);
 	//
 	// events
 	//
@@ -1195,6 +1232,12 @@ typedef struct PACK_STRUCTURE io_implementation {
 	void (*signal_event_pending) (io_t*);
 	void (*wait_for_event) (io_t*);
 	void (*wait_for_all_events) (io_t*);
+	//
+	// time
+	//
+	io_time_t (*get_time) (io_t*);
+	void (*enqueue_alarm) (io_t*,io_alarm_t*);
+	void (*dequeue_alarm) (io_t*,io_alarm_t*);
 	//
 	// interrupts
 	//
@@ -1317,6 +1360,16 @@ signal_io_task_pending (io_t *io) {
 	io->implementation->signal_task_pending (io);
 }
 
+INLINE_FUNCTION bool
+io_enqueue_task (io_t *io,vref_t r_task) {
+	return io->implementation->enqueue_task (io,r_task);
+}
+
+INLINE_FUNCTION bool
+io_do_next_task (io_t *io) {
+	return io->implementation->do_next_task (io);
+}
+
 INLINE_FUNCTION void
 io_dequeue_event (io_t *io,io_event_t *ev) {
 	io->implementation->dequeue_event (io,ev);
@@ -1386,6 +1439,26 @@ io_read_pin (io_t *io,io_pin_t p) {
 INLINE_FUNCTION bool
 io_pin_is_valid (io_t *io,io_pin_t p) {
 	return io->implementation->valid_pin (io,p);
+}
+
+INLINE_FUNCTION bool
+io_is_in_event_thread (io_t *io) {
+	return io->implementation->in_event_thread (io);
+}
+
+INLINE_FUNCTION io_time_t
+io_get_time (io_t *io) {
+	return io->implementation->get_time (io);
+}
+
+INLINE_FUNCTION void
+io_enqueue_alarm (io_t *io,io_alarm_t *a) {
+	io->implementation->enqueue_alarm (io,a);
+}
+
+INLINE_FUNCTION void
+io_dequeue_alarm (io_t *io,io_alarm_t *a) {
+	io->implementation->dequeue_alarm (io,a);
 }
 
 
@@ -1491,9 +1564,9 @@ typedef struct PACK_STRUCTURE {
 	vref_t values[];
 } io_vector_value_t;
 
-vref_t	mk_io_vector_value (io_value_memory_t*,uint32_t arity,vref_t const*);
+vref_t	mk_io_vector_value (io_value_memory_t*,uint32_t,vref_t const*);
 bool		io_vector_value_get_arity (vref_t,uint32_t*);
-bool		io_vector_value_get_values (vref_t,vref_t const**);
+bool		io_vector_value_get_values (vref_t,uint32_t*,vref_t const**);
 
 #ifdef IMPLEMENT_IO_CORE
 //-----------------------------------------------------------------------------
@@ -1691,7 +1764,9 @@ static const io_implementation_t	io_base = {
 	.enqueue_event = enqueue_io_event,
 	.next_event = do_next_io_event,
 	.in_event_thread = NULL,
+	.get_time = NULL,
 	.signal_task_pending = NULL,
+	.enqueue_task = NULL,
 	.signal_event_pending = NULL,
 	.wait_for_event = NULL,
 	.wait_for_all_events = NULL,
@@ -2067,7 +2142,7 @@ do_next_io_event (io_t *io) {
 io_alarm_t s_null_io_alarm = {
 	.at = &s_null_io_event,
 	.error = &s_null_io_event,
-	.when = LLONG_MAX,
+	.when = {LLONG_MAX},
 	.next_alarm = NULL,
 };
 
@@ -2516,7 +2591,7 @@ free_io_value_pipe (io_value_pipe_t *this,io_byte_memory_t *bm) {
 bool
 io_value_pipe_get_value (io_value_pipe_t *this,vref_t *r_value) {
 	if (io_encoding_pipe_is_readable (this)) {
-		*r_value = this->value_ring[this->read_index];
+		*r_value = unreference_value (this->value_ring[this->read_index]);
 		this->read_index = io_value_pipe_increment_index (
 			this,this->read_index,1
 		);
@@ -4047,11 +4122,12 @@ io_vector_value_get_arity (vref_t r_value,uint32_t *arity) {
 }
 
 bool
-io_vector_value_get_values (vref_t r_value,vref_t const** values) {
+io_vector_value_get_values (vref_t r_value,uint32_t *arity,vref_t const** values) {
 	io_vector_value_t const *this = io_typesafe_ro_cast (
 		r_value,cr_VECTOR
 	);
 	if (this) {
+		*arity = this->arity;
 		*values = this->values;
 		return true;
 	} else {
@@ -4503,7 +4579,8 @@ void
 io_byte_memory_get_info (io_byte_memory_t *mem,memory_info_t *info) {
 	unsigned short int blockNo = UMM_NBLOCK(mem,0) & UMM_BLOCKNO_MASK;
 
-	info->total_bytes = 0;
+	info->total_bytes = UMM_NUMBLOCKS(mem) * sizeof(umm_block_t);
+	info->free_bytes = 0;
 	info->used_bytes = 0;
 
 	while( UMM_NBLOCK(mem,blockNo) & UMM_BLOCKNO_MASK ) {
@@ -4511,7 +4588,7 @@ io_byte_memory_get_info (io_byte_memory_t *mem,memory_info_t *info) {
 
 		if( UMM_NBLOCK(mem,blockNo) & UMM_FREELIST_MASK ) {
 			// free
-			info->total_bytes += curBlocks;
+			info->free_bytes += curBlocks;
 		} else {
 			// allocated
 			info->used_bytes += curBlocks;
@@ -4519,7 +4596,7 @@ io_byte_memory_get_info (io_byte_memory_t *mem,memory_info_t *info) {
 		blockNo = UMM_NBLOCK(mem,blockNo) & UMM_BLOCKNO_MASK;
 	}
 
-	info->total_bytes *= sizeof(umm_block_t);
+	info->free_bytes *= sizeof(umm_block_t);
 	info->used_bytes *= sizeof(umm_block_t);
 }
 
