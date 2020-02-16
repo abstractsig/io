@@ -106,8 +106,11 @@ typedef struct {
 	unsigned int number_of_blocks;
 } io_byte_memory_t;
 
+typedef struct io_value io_value_t;
+typedef struct io_value_memory io_value_memory_t;
+
 void 	iterate_io_byte_memory_allocations(io_byte_memory_t*,bool (*cb) (void*,void*),void*);
-void	incremental_iterate_io_byte_memory_allocations (io_byte_memory_t*,uint16_t*,bool (*) (void*,void*),void *);
+void	incremental_iterate_io_byte_memory_allocations (io_byte_memory_t*,uint16_t*,bool (*) (io_value_t*,void*),void *);
 
 io_byte_memory_t*	mk_io_byte_memory (io_t*,uint32_t);
 io_byte_memory_t*	initialise_io_byte_memory (io_t*,io_byte_memory_t*);
@@ -124,8 +127,6 @@ void	io_byte_memory_get_info (io_byte_memory_t*,memory_info_t *info);
 #define io_byte_memory_free umm_free
 #define io_byte_memory_reallocate umm_realloc
 
-typedef struct io_value io_value_t;
-typedef struct io_value_memory io_value_memory_t;
 
 /*
  *
@@ -2681,9 +2682,13 @@ struct gc_stack {
 };
 
 bool
-umm_value_memory_gc_iterator (void *value,void *user_value) {
+umm_value_memory_gc_iterator (io_value_t *value,void *user_value) {
 	struct gc_stack *stack = user_value;
-	*stack->cursor++ = value;
+	
+	if (io_value_reference_count(value) == 0) {
+		*stack->cursor++ = value;
+	}
+	
 	return stack->cursor < stack->end;
 }
 
@@ -2708,9 +2713,7 @@ umm_value_memory_do_gc (io_value_memory_t *vm,int32_t count) {
 		{
 			io_value_t** cursor = values;
 			while (cursor < stack.cursor) {
-				if (io_value_reference_count(*cursor) == 0) {
-					free_umm_value (this,*cursor);
-				}
+				free_umm_value (this,*cursor);
 				cursor++;
 			}
 		}
@@ -4511,7 +4514,7 @@ initialise_io_byte_memory_cursor (io_byte_memory_t *bm,uint16_t *cursor) {
 
 void
 incremental_iterate_io_byte_memory_allocations (
-	io_byte_memory_t *bm,uint16_t *cursor,bool (*cb) (void*,void*),void *user_value
+	io_byte_memory_t *bm,uint16_t *cursor,bool (*cb) (io_value_t*,void*),void *user_value
 ) {
 	uint16_t begin = *cursor;
 	
