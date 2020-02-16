@@ -765,6 +765,7 @@ vref_t	default_io_value_receive (io_t*,vref_t,uint32_t,vref_t const*);
 io_value_t* io_value_initialise_nop (vref_t,vref_t);
 io_value_mode_t const* io_value_get_null_modes (io_value_t const*);
 vref_t io_value_compare_no_comparison(io_value_t const*,vref_t);
+vref_t	io_value_send (io_t *io,vref_t r_value,uint32_t argc,...);
 
 //
 // inline io_value methods
@@ -787,7 +788,7 @@ io_value_encode (vref_t r_value,io_encoding_t *c) {
 }
 
 INLINE_FUNCTION vref_t
-io_value_send (io_t *io,vref_t r_value,uint32_t argc,vref_t const *args) {
+io_value_sendm (io_t *io,vref_t r_value,uint32_t argc,vref_t const *args) {
 	io_value_t const *v = vref_cast_to_ro_pointer (r_value);
 	return v->implementation->receive(io,r_value,argc,args);
 }
@@ -4058,6 +4059,21 @@ io_vector_value_get_values (vref_t r_value,vref_t const** values) {
 	}
 }
 
+vref_t
+io_value_send (io_t *io,vref_t r_value,uint32_t argc,...) {
+	uint32_t count = argc;
+	vref_t args[argc], *arg = args;
+	va_list va;
+
+	va_start(va,argc);
+	while (count--) {
+		*arg++ = va_arg(va,vref_t);
+	}
+	va_end(va);
+
+	return io_value_sendm (io,r_value,argc,args);
+}
+
 EVENT_DATA io_value_implementation_t io_vector_value_implementation = {
 	.specialisation_of = &univ_value_implementation,
 	.encoding = decl_io_value_encoding (CR_VECTOR_ENCODING_INDEX),
@@ -4372,7 +4388,7 @@ void
 io_source_decoder_end_of_statement (io_source_decoder_t *this) {
 	io_source_decoder_context_t *ctx = io_source_decoder_context(this);
 	if (ctx->arity) {
-		io_value_send (io_source_decoder_io(this),ctx->r_value,ctx->arity,ctx->args);
+		io_value_sendm (io_source_decoder_io(this),ctx->r_value,ctx->arity,ctx->args);
 		io_source_decoder_pop_context (this);
 	} else {
 		// do i pop ??
