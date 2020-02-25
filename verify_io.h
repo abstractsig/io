@@ -368,10 +368,18 @@ TEST_BEGIN(test_io_constant_values_1) {
 	VERIFY(vref_is_valid(cr_RESULT_CONTINUE),NULL);
 
 	extern EVENT_DATA io_value_implementation_t nil_value_implementation;
+	extern EVENT_DATA io_value_implementation_t i64_number_value_implementation;
+	extern EVENT_DATA io_value_implementation_t f64_number_value_implementation;
+	extern EVENT_DATA io_value_implementation_t binary_value_implementation;
+	extern EVENT_DATA io_value_implementation_t io_text_value_implementation;
 	io_value_implementation_t const* expect[] = {
 		&univ_value_implementation,
 		&nil_value_implementation,
 		&io_vector_value_implementation,
+		&i64_number_value_implementation,
+		&f64_number_value_implementation,
+		&binary_value_implementation,
+		&io_text_value_implementation,
 	};
 	bool ok = true;
 	for (int i = 0; i < SIZEOF(expect) && ok; i++) {

@@ -4716,7 +4716,7 @@ mk_io_text_value (io_value_memory_t *vm,uint8_t const *bytes,int32_t size) {
 
 EVENT_DATA io_value_implementation_t io_symbol_value_implementation_with_const_bytes = {
 	.specialisation_of = &binary_value_implementation_with_const_bytes,
-	.name = "symbol",
+	.name = "const-symbol",
 	.initialise = io_binary_value_initialise_with_const_bytes,
 	.free = io_value_free_nop,
 	.decode = {io_decode_x70_to_invalid_value},
