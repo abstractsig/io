@@ -187,6 +187,89 @@ print_unit_test_report (V_runner_t *runner) {
 	}
 	return runner->total_failed == 0;
 }
+#ifdef IMPLEMENT_VERIFY_IO_MATH
+
+TEST_BEGIN(test_io_is_prime_1) {
+	VERIFY (!is_u32_integer_prime (0),NULL);
+	VERIFY (!is_u32_integer_prime (1),NULL);
+	VERIFY (is_u32_integer_prime (2),NULL);
+
+	uint32_t p[] = {163,277,409,547};
+	bool ok = true;
+	for (int i = 0; i < SIZEOF(p) && ok; i++) {
+		ok &= is_u32_integer_prime (p[i]);
+	}
+	VERIFY (ok,"all prime");
+}
+TEST_END
+
+TEST_BEGIN(test_io_next_prime_1) {
+	uint32_t p[][2] = {{0,2},{1,2},{7,11},{163,167},{20,23},{50,53}};
+	bool ok = true;
+	for (int i = 0; i < SIZEOF(p); i++) {
+		ok &= (next_prime_u32_integer (p[i][0]) == p[i][1]);
+	}
+	VERIFY (ok,"all next primes ok");
+}
+TEST_END
+
+TEST_BEGIN(test_read_le_uint32_1) {
+	uint8_t p[8] = {0x42,0,0,0};
+	int64_t v = read_le_uint32 (p);
+	VERIFY (v = 42,NULL);
+}
+TEST_END
+
+TEST_BEGIN(test_read_le_int64_1) {
+	uint8_t p[8] = {0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,};
+	int64_t v = read_le_int64 (p);
+	VERIFY (v = -1,NULL);
+}
+TEST_END
+
+TEST_BEGIN(test_read_float64_1) {
+	uint8_t p[8] = {205,204,204,204,204,12,69,64};
+	float64_t v = read_le_float64 (p);	
+	VERIFY (io_math_compare_float64_eq (v,42.1),NULL);
+}
+TEST_END
+
+UNIT_SETUP(setup_io_math_unit_test) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	io_byte_memory_get_info (bm,TEST_MEMORY_INFO);
+	return VERIFY_UNIT_CONTINUE;
+}
+
+UNIT_TEARDOWN(teardown_io_math_unit_test) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bm_end;
+	io_byte_memory_get_info (bm,&bm_end);
+	VERIFY (bm_end.used_bytes == TEST_MEMORY_INFO->used_bytes,NULL);
+}
+
+void
+io_math_unit_test (V_unit_test_t *unit) {
+	static V_test_t const tests[] = {
+		test_io_is_prime_1,
+		test_io_next_prime_1,
+		test_read_le_uint32_1,
+		test_read_le_int64_1,
+		test_read_float64_1,
+		0
+	};
+	unit->name = "io math";
+	unit->description = "io math unit test";
+	unit->tests = tests;
+	unit->setup = setup_io_math_unit_test;
+	unit->teardown = teardown_io_math_unit_test;
+}
+# define IO_MATH_UNIT_TESTS \
+	io_math_unit_test,\
+	/**/
+#else
+# define IO_MATH_UNIT_TESTS
+#endif /* IMPLEMENT_VERIFY_IO_MATH */
+
 # ifdef IMPLEMENT_VERIFY_IO_CORE_VALUES
 
 TEST_BEGIN(test_io_text_encoding_1) {
@@ -225,6 +308,41 @@ TEST_BEGIN(test_io_text_encoding_1) {
 }
 TEST_END
 
+TEST_BEGIN(test_io_x70_encoding_1) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t begin,end;
+
+	io_byte_memory_get_info (bm,&begin);
+
+	io_encoding_t *encoding = mk_io_x70_encoding (bm);
+
+	if (VERIFY(encoding != NULL,NULL)) {
+		const uint8_t *b,*e;
+	
+		reference_io_encoding (encoding);
+
+		VERIFY (is_io_x70_encoding (encoding),NULL);
+		VERIFY (is_io_binary_encoding (encoding),NULL);
+		VERIFY (io_encoding_length (encoding) == 0,NULL);
+
+		VERIFY (io_encoding_printf (encoding,"%s","abc") == 3,NULL);
+		VERIFY (io_encoding_length (encoding) == 3,NULL);
+
+		io_encoding_get_ro_bytes (encoding,&b,&e);
+		VERIFY ((e - b) == 3,NULL);
+		VERIFY (memcmp ("abc",b,3) == 0,NULL);
+
+		io_encoding_reset (encoding);
+		VERIFY (io_encoding_length (encoding) == 0,NULL);
+		
+		unreference_io_encoding(encoding);
+	}
+
+	io_byte_memory_get_info (bm,&end);
+	VERIFY (end.used_bytes == begin.used_bytes,NULL);
+}
+TEST_END
+
 TEST_BEGIN(test_io_constant_values_1) {
 
 	VERIFY(vref_is_valid(cr_UNIV),NULL);
@@ -249,10 +367,18 @@ TEST_BEGIN(test_io_constant_values_1) {
 	VERIFY(vref_is_valid(cr_RESULT),NULL);
 	VERIFY(vref_is_valid(cr_RESULT_CONTINUE),NULL);
 
-	VERIFY (
-		get_io_value_implementation_from_encoding_index(CR_UNIV_ENCODING_INDEX) == &univ_value_implementation,
-		NULL
-	);
+	extern EVENT_DATA io_value_implementation_t nil_value_implementation;
+	io_value_implementation_t const* expect[] = {
+		&univ_value_implementation,
+		&nil_value_implementation,
+		&io_vector_value_implementation,
+	};
+	bool ok = true;
+	for (int i = 0; i < SIZEOF(expect) && ok; i++) {
+		ok = expect[i] == io_get_value_implementation (TEST_IO,expect[i]->name,strlen(expect[i]->name));
+	}
+	VERIFY(ok,"value implementations match");
+
 }
 TEST_END
 
@@ -348,6 +474,71 @@ TEST_BEGIN(test_io_int64_value_2) {
 }
 TEST_END
 
+TEST_BEGIN(test_io_int64_value_3) {
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bm_begin,bm_end;
+	io_encoding_t *encoding;
+	vref_t r_value;
+
+	io_byte_memory_get_info (bm,&bm_begin);
+
+	r_value = reference_value (mk_io_int64_value (vm,42));
+
+	encoding = mk_io_x70_encoding (bm);
+
+	if (VERIFY(encoding != NULL,NULL)) {
+		const uint8_t *b,*e;
+	
+		uint8_t expect[] = {
+			X70_UINT_VALUE_BYTE,3,
+			'i','6','4',
+			42,0,0,0,0,0,0,0
+		};
+		
+		VERIFY (io_value_encode (r_value,encoding),NULL);
+
+		io_encoding_get_ro_bytes (encoding,&b,&e);
+		if (
+			VERIFY (
+				(
+						(e - b) == sizeof(expect) 
+					&& memcmp (expect,b,sizeof(expect)) == 0
+				),
+				NULL
+			)
+		) {
+			vref_t r_decoded = io_encoding_decode_to_io_value (
+				encoding,io_x70_decoder,vm
+			);
+		
+			if (
+				VERIFY (
+						vref_is_valid(r_decoded) 
+					&&	io_typesafe_ro_cast (r_decoded,cr_I64_NUMBER),
+					NULL
+				)
+			) {
+				int64_t i64_value;
+				VERIFY (
+						io_value_get_as_int64 (r_value,&i64_value)
+					&&	i64_value == 42,
+					NULL
+				);
+			}
+		}
+		
+		io_encoding_free(encoding);
+	}
+
+	unreference_value (r_value);
+
+	io_do_gc (TEST_IO,-1);
+	io_byte_memory_get_info (bm,&bm_end);
+	VERIFY (bm_end.used_bytes == bm_begin.used_bytes,NULL);
+}
+TEST_END
+
 TEST_BEGIN(test_io_float64_value_1) {
 	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
 	memory_info_t vm_begin,vm_end;
@@ -408,6 +599,71 @@ TEST_BEGIN(test_io_float64_value_2) {
 	}
 
 	io_do_gc (TEST_IO,-1);
+}
+TEST_END
+
+TEST_BEGIN(test_io_float64_value_3) {
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bm_begin,bm_end;
+	io_encoding_t *encoding;
+	vref_t r_value;
+
+	io_byte_memory_get_info (bm,&bm_begin);
+
+	r_value = reference_value (mk_io_float64_value (vm,42.1));
+
+	encoding = mk_io_x70_encoding (bm);
+
+	if (VERIFY(encoding != NULL,NULL)) {
+		const uint8_t *b,*e;
+	
+		uint8_t expect[] = {
+			X70_UINT_VALUE_BYTE,3,
+			'f','6','4',
+			205,204,204,204,204,12,69,64
+		};
+		
+		VERIFY (io_value_encode (r_value,encoding),NULL);
+
+		io_encoding_get_ro_bytes (encoding,&b,&e);
+		if (
+			VERIFY (
+				(
+						(e - b) == sizeof(expect) 
+					&& memcmp (expect,b,sizeof(expect)) == 0
+				),
+				NULL
+			)
+		) {
+			vref_t r_decoded = io_encoding_decode_to_io_value (
+				encoding,io_x70_decoder,vm
+			);
+		
+			if (
+				VERIFY (
+						vref_is_valid(r_decoded) 
+					&&	io_typesafe_ro_cast (r_decoded,cr_F64_NUMBER),
+					NULL
+				)
+			) {
+				float64_t f64_value;
+				VERIFY (
+						io_value_get_as_float64 (r_value,&f64_value)
+					&&	io_math_compare_float64_eq (f64_value,42.1),
+					NULL
+				);
+			}
+		}
+
+		io_encoding_free(encoding);
+	}
+
+	unreference_value (r_value);
+
+	io_do_gc (TEST_IO,-1);
+	io_byte_memory_get_info (bm,&bm_end);
+	VERIFY (bm_end.used_bytes == bm_begin.used_bytes,NULL);
 }
 TEST_END
 
@@ -512,6 +768,76 @@ TEST_BEGIN(test_io_text_value_1) {
 }
 TEST_END
 
+TEST_BEGIN(test_io_text_value_2) {
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
+	memory_info_t vm_begin,vm_end;
+	vref_t r_value;
+
+	io_value_memory_get_info (vm,&vm_begin);
+
+	r_value = reference_value (mk_io_text_value (vm,(uint8_t const*)"abc",3));
+
+	if (VERIFY(vref_is_valid(r_value),NULL)) {
+		io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+		io_encoding_t *encoding = mk_io_x70_encoding (bm);
+
+		if (VERIFY (io_value_encode (r_value,encoding),NULL)) {
+
+			const uint8_t *b,*e;
+		
+			uint8_t expect[] = {
+				X70_UINT_VALUE_BYTE,4,
+				't','e','x','t',
+				X70_UINT_VALUE_BYTE,3,
+				'a','b','c'
+			};
+
+			io_encoding_get_ro_bytes (encoding,&b,&e);
+
+			if (
+				VERIFY (
+					(
+							(e - b) == sizeof(expect)
+						&& memcmp (expect,b,sizeof(expect)) == 0
+					),
+					NULL
+				)
+			) {
+				vref_t r_decoded = io_encoding_decode_to_io_value (
+					encoding,io_x70_decoder,vm
+				);
+			
+				if (
+					VERIFY (
+							vref_is_valid(r_decoded) 
+						&&	io_typesafe_ro_cast (r_decoded,cr_TEXT),
+						NULL
+					)
+				) {
+					io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+					io_encoding_t *e1 = mk_io_text_encoding (bm);
+
+					if (VERIFY (io_value_encode (r_decoded,e1),NULL)) {
+						const uint8_t *b,*e;
+						io_encoding_get_ro_bytes (e1,&b,&e);
+						VERIFY ((e - b) == 3 && memcmp(b,"abc",3) == 0,NULL);
+					}
+
+					io_encoding_free(e1);
+				}
+			}
+		
+			io_encoding_free(encoding);
+		}
+		unreference_value (r_value);
+	}
+
+	io_value_memory_do_gc (vm,-1);
+	io_value_memory_get_info (vm,&vm_end);
+	VERIFY (vm_end.used_bytes == vm_begin.used_bytes,NULL);
+}
+TEST_END
+
 TEST_BEGIN(test_stack_vector_value_1) {
 	declare_stack_vector (r_vect,cr_NIL);
 	uint32_t arity;
@@ -596,14 +922,18 @@ void
 io_core_values_unit_test (V_unit_test_t *unit) {
 	static V_test_t const tests[] = {
 		test_io_text_encoding_1,
+		test_io_x70_encoding_1,
 		test_io_constant_values_1,
 		test_io_int64_value_1,
 		test_io_int64_value_2,
+		test_io_int64_value_3,
 		test_io_float64_value_1,
 		test_io_float64_value_2,
+		test_io_float64_value_3,
 		test_io_binary_value_with_const_bytes_1,
 		test_io_binary_value_dynamic_1,
 		test_io_text_value_1,
+		test_io_text_value_2,
 		test_stack_vector_value_1,
 		test_vector_value_1,
 		test_vector_value_2,
@@ -809,6 +1139,275 @@ TEST_BEGIN(test_io_value_pipe_1) {
 }
 TEST_END
 
+TEST_BEGIN(test_io_tls_sha256_1) {
+	io_sha256_context_t ctx;
+	uint8_t output[32];
+	uint8_t expect[32] = {
+		0xe3,0xb0,0xc4,0x42,0x98,0xfc,0x1c,0x14,
+		0x9a,0xfb,0xf4,0xc8,0x99,0x6f,0xb9,0x24,
+		0x27,0xae,0x41,0xe4,0x64,0x9b,0x93,0x4c,
+		0xa4,0x95,0x99,0x1b,0x78,0x52,0xb8,0x55
+	};
+
+	io_sha256_start (TEST_IO,&ctx);
+	io_sha256_update (TEST_IO,&ctx,NULL,0);
+	io_sha256_finish (TEST_IO,&ctx,output);
+	VERIFY (memcmp (output,expect,32) == 0,NULL);
+}
+TEST_END
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * test_io_tls_sha256_2 --
+ *
+ *-----------------------------------------------------------------------------
+ */
+TEST_BEGIN(test_io_tls_sha256_2) {
+	io_sha256_context_t ctx;
+	uint8_t data[] = {0x81,0xa7,0x23,0xd9,0x66};
+	uint8_t expect[SHA256_SIZE] = {
+		0x75,0x16,0xfb,0x8b,0xb1,0x13,0x50,0xdf,
+		0x2b,0xf3,0x86,0xbc,0x3c,0x33,0xbd,0x0f,
+		0x52,0xcb,0x4c,0x67,0xc6,0xe4,0x74,0x5e,
+		0x04,0x88,0xe6,0x2c,0x2a,0xea,0x26,0x05
+	};
+	uint8_t output[32];
+
+	io_sha256_start (TEST_IO,&ctx);
+	io_sha256_update (TEST_IO,&ctx,data,sizeof(data));
+	io_sha256_finish (TEST_IO,&ctx,output);
+	
+	VERIFY (memcmp (output,expect,SHA256_SIZE) == 0,NULL);
+}
+TEST_END
+
+TEST_BEGIN(test_vref_bucket_hash_table_1) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	vref_hash_table_t *hash;
+	memory_info_t begin,end;
+
+	io_byte_memory_get_info (bm,&begin);
+	
+	hash = mk_vref_bucket_hash_table (bm,7);
+	if (VERIFY (hash != NULL,NULL)) {
+		VERIFY (!vref_hash_table_contains (hash,cr_NIL),NULL);
+		free_vref_hash_table (hash);
+	}
+	
+	io_byte_memory_get_info (bm,&end);
+	VERIFY (end.used_bytes == begin.used_bytes,NULL);	
+}
+TEST_END
+
+TEST_BEGIN(test_vref_bucket_hash_table_2) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	vref_hash_table_t *hash;
+	memory_info_t begin,end;
+
+	io_byte_memory_get_info (bm,&begin);
+	
+	hash = mk_vref_bucket_hash_table (bm,7);
+	VERIFY (vref_hash_table_insert (hash,cr_NIL),NULL);
+	VERIFY (vref_hash_table_contains (hash,cr_NIL),NULL);
+	VERIFY (vref_hash_table_remove (hash,cr_NIL),NULL);
+	VERIFY (!vref_hash_table_contains (hash,cr_NIL),NULL);
+
+	free_vref_hash_table (hash);
+	io_byte_memory_get_info (bm,&end);
+	VERIFY (end.used_bytes == begin.used_bytes,NULL);	
+}
+TEST_END
+			
+TEST_BEGIN(test_vref_bucket_hash_table_3) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
+	vref_hash_table_t *hash;
+	memory_info_t bmbegin,bmend;
+	memory_info_t vmbegin,vmend;
+	vref_t r_a;
+	
+	io_byte_memory_get_info (bm,&bmbegin);
+	io_value_memory_get_info (vm,&vmbegin);
+	
+	hash = mk_vref_bucket_hash_table (bm,7);
+
+	r_a = mk_io_int64_value (vm,42);
+	VERIFY (vref_hash_table_insert (hash,r_a),NULL);
+	VERIFY (vref_hash_table_contains (hash,r_a),NULL);
+
+	io_value_memory_do_gc (vm,-1);
+	io_value_memory_get_info (vm,&vmend);
+	VERIFY (vmend.used_bytes > vmbegin.used_bytes,NULL);	
+	
+	free_vref_hash_table (hash);
+	io_byte_memory_get_info (bm,&bmend);
+	VERIFY (bmend.used_bytes == bmbegin.used_bytes,NULL);	
+
+	io_value_memory_do_gc (vm,-1);
+	io_value_memory_get_info (vm,&vmend);
+	VERIFY (vmend.used_bytes == vmbegin.used_bytes,NULL);	
+}
+TEST_END
+
+TEST_BEGIN(test_vref_bucket_hash_table_4) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
+	vref_hash_table_t *hash;
+	memory_info_t bmbegin,bmend;
+	memory_info_t vmbegin,vmend;
+	vref_t r_value[16];
+	bool ok;
+	
+	io_byte_memory_get_info (bm,&bmbegin);
+	io_value_memory_get_info (vm,&vmbegin);
+	
+	hash = mk_vref_bucket_hash_table (bm,30);
+
+	ok = true;
+	for (uint32_t i = 0; i < SIZEOF(r_value); i++) {
+		r_value[i] = mk_io_int64_value (vm,i);
+		ok &= vref_hash_table_insert (hash,r_value[i]);
+	}
+	VERIFY (ok,"values all added");
+	
+	io_value_memory_do_gc (vm,-1);
+	io_value_memory_get_info (vm,&vmend);
+	VERIFY (vmend.used_bytes > vmbegin.used_bytes,NULL);	
+
+	ok = true;
+	for (uint32_t i = 0; i < SIZEOF(r_value); i++) {
+		ok &= vref_hash_table_contains (hash,r_value[i]);
+	}
+	VERIFY (ok,"values all present");
+	
+	free_vref_hash_table (hash);
+	io_byte_memory_get_info (bm,&bmend);
+	VERIFY (bmend.used_bytes == bmbegin.used_bytes,NULL);	
+
+	io_value_memory_do_gc (vm,-1);
+	io_value_memory_get_info (vm,&vmend);
+	VERIFY (vmend.used_bytes == vmbegin.used_bytes,NULL);	
+}
+TEST_END
+
+TEST_BEGIN(test_vref_bucket_hash_table_5) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
+	vref_hash_table_t *hash;
+	memory_info_t bmbegin,bmend;
+	memory_info_t vmbegin,vmend;
+	vref_t r_value[16];
+	bool ok;
+	
+	io_byte_memory_get_info (bm,&bmbegin);
+	io_value_memory_get_info (vm,&vmbegin);
+	
+	hash = mk_vref_bucket_hash_table (bm,30);
+
+	ok = true;
+	for (uint32_t i = 0; i < SIZEOF(r_value); i++) {
+		r_value[i] = mk_io_int64_value (vm,i);
+		ok &= vref_hash_table_insert (hash,r_value[i]);
+	}
+	VERIFY (ok,"values all added");
+	
+	io_value_memory_do_gc (vm,-1);
+	io_value_memory_get_info (vm,&vmend);
+	VERIFY (vmend.used_bytes > vmbegin.used_bytes,NULL);	
+
+	ok = true;
+	for (uint32_t i = 0; i < SIZEOF(r_value); i++) {
+		ok &= vref_hash_table_remove (hash,r_value[i]);
+	}
+	VERIFY (ok,"values all removed");
+
+	ok = true;
+	for (uint32_t i = 0; i < SIZEOF(r_value); i++) {
+		ok &= !vref_hash_table_contains (hash,r_value[i]);
+	}
+	VERIFY (ok,"values all gone");
+	
+	free_vref_hash_table (hash);
+	io_byte_memory_get_info (bm,&bmend);
+	VERIFY (bmend.used_bytes == bmbegin.used_bytes,NULL);	
+
+	io_value_memory_do_gc (vm,-1);
+	io_value_memory_get_info (vm,&vmend);
+	VERIFY (vmend.used_bytes == vmbegin.used_bytes,NULL);	
+}
+TEST_END
+
+TEST_BEGIN(test_string_hash_table_1) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	string_hash_table_t *hash;
+	memory_info_t begin,end;
+
+	io_byte_memory_get_info (bm,&begin);
+	
+	hash = mk_string_hash_table (bm,7);
+	if (VERIFY (hash != NULL,NULL)) {
+		const char* key = "abc";
+		char data[] = {5,6,0,7};
+		string_hash_table_mapping_t map;
+		
+		VERIFY (!string_hash_table_map (hash,key,strlen(key),&map),NULL);
+		VERIFY (string_hash_table_insert (hash,key,strlen(key),def_hash_mapping_i32(42)),NULL);
+		map.i32 = 0;
+		VERIFY (string_hash_table_map (hash,key,strlen(key),&map) && map.i32 == 42,NULL);
+
+		VERIFY (string_hash_table_insert (hash,data,sizeof(data),def_hash_mapping_i32(9)),NULL);
+		map.i32 = 0;
+		VERIFY (string_hash_table_map (hash,data,sizeof(data),&map) && map.i32 == 9,NULL);
+
+		VERIFY (!string_hash_table_insert (hash,data,sizeof(data),def_hash_mapping_i32(22)),NULL);
+		map.i32 = 0;
+		VERIFY (string_hash_table_map (hash,data,sizeof(data),&map) && map.i32 == 22,NULL);
+
+		free_string_hash_table (hash);
+	}
+	
+	io_byte_memory_get_info (bm,&end);
+	VERIFY (end.used_bytes == begin.used_bytes,NULL);	
+}
+TEST_END
+
+TEST_BEGIN(test_string_hash_table_2) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	string_hash_table_t *hash;
+	memory_info_t begin,end;
+
+	io_byte_memory_get_info (bm,&begin);
+	
+	hash = mk_string_hash_table (bm,7);
+	if (VERIFY (hash != NULL,NULL)) {
+		uint32_t len = hash->table_size;
+		bool ok = true;
+		
+		for (int i = 0; i < 120 && ok; i++) {
+			char c = 'a' + i;
+			ok &= string_hash_table_insert (hash,&c,1,def_hash_mapping_i32(i));
+		}
+		VERIFY (ok,"all inserted");
+		// table grew
+		VERIFY (hash->table_size > len,NULL);
+
+		ok = true;
+		for (int i = 0; i < 48 && ok; i++) {
+			string_hash_table_mapping_t v;
+			char c = 'a' + i;
+			ok &= string_hash_table_map (hash,&c,1,&v) && v.i32 == i;
+		}
+		VERIFY (ok,"all mapped");
+		
+		free_string_hash_table (hash);
+	}
+	
+	io_byte_memory_get_info (bm,&end);
+	VERIFY (end.used_bytes == begin.used_bytes,NULL);	
+}
+TEST_END
+
 UNIT_SETUP(setup_io_internalss_unit_test) {
 	return VERIFY_UNIT_CONTINUE;
 }
@@ -824,6 +1423,15 @@ io_internals_unit_test (V_unit_test_t *unit) {
 		test_io_byte_pipe_1,
 		test_io_encoding_pipe_1,
 		test_io_value_pipe_1,
+		test_io_tls_sha256_1,
+		test_io_tls_sha256_2,
+		test_vref_bucket_hash_table_1,
+		test_vref_bucket_hash_table_2,
+		test_vref_bucket_hash_table_3,
+		test_vref_bucket_hash_table_4,
+		test_vref_bucket_hash_table_5,
+		test_string_hash_table_1,
+		test_string_hash_table_2,
 		0
 	};
 	unit->name = "io internals";
@@ -838,6 +1446,7 @@ run_ut_io (V_runner_t *runner) {
 	static const unit_test_t test_set[] = {
 		io_internals_unit_test,
 		IO_CORE_VALUES_UNIT_TEST
+		IO_MATH_UNIT_TESTS
 		IO_CPU_UNIT_TESTS
 		IO_DEVICE_UNIT_TESTS
 		0

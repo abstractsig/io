@@ -56,13 +56,23 @@
 # error "not yet"
 #endif
 
-#include <io_math.h>
+//#include <io_math.h>
 
 typedef struct io io_t;
 typedef struct io_encoding io_encoding_t;
 typedef struct io_pipe io_pipe_t;
 
+//
+// identity
+//
 #define SHA256_SIZE		32
+
+typedef struct io_sha256_context {
+    uint32_t total[2];          /*!< The number of Bytes processed.  */
+    uint32_t state[8];          /*!< The intermediate digest state.  */
+    unsigned char buffer[64];   /*!< The data block being processed. */
+    int is224;                  /* not used */
+} io_sha256_context_t;
 
 /*
  *
@@ -219,7 +229,6 @@ typedef union PACK_STRUCTURE io_time {
 #define second_time(m)					((int64_t)(m) * 1000000000LL)
 #define minute_time(m)					(second_time(m) * 60LL)
 
-
 //
 // alarms
 //
@@ -244,7 +253,6 @@ initialise_io_alarm (
 	ev->next_alarm = NULL;
 	return ev;
 }
-
 
 //
 // Pipes
@@ -354,12 +362,13 @@ INLINE_FUNCTION io_encoding_t*
 io_encoding_pipe_new_encoding (io_pipe_t *pipe) {
 	return ((io_encoding_pipe_implementation_t const*) pipe->implementation)->new_encoding((io_pipe_t*)pipe);
 }
+typedef union io_value_reference vref_t;
+
 /*
  *
  * References to values
  *
  */
-typedef union io_value_reference vref_t;
 
 typedef struct PACK_STRUCTURE io_value_reference_implementation {
 	vref_t (*reference) (vref_t);
@@ -419,7 +428,6 @@ bool	io_value_pipe_peek (io_value_pipe_t*,vref_t*);
 #define io_value_pipe_is_readable(p) io_pipe_is_readable ((io_pipe_t const*) (p))
 #define io_value_pipe_is_writeable(p) io_pipe_is_writeable ((io_pipe_t const*) (p))
 
-
 #ifdef IO_32_BIT_BUILD
 COMPILER_VERIFY(sizeof(vref_t) == 8);
 #else
@@ -477,6 +485,10 @@ vref_get_containing_memory (vref_t r_value) {
 	return vref_implementation(r_value)->get_containing_memory(r_value);
 }
 
+INLINE_FUNCTION int64_t
+vref_get_as_builtin_integer (vref_t r_value) {
+	return vref_implementation(r_value)->get_as_builtin_integer(r_value);
+}
 
 extern EVENT_DATA io_value_reference_implementation_t reference_to_constant_value;
 
@@ -491,6 +503,82 @@ extern EVENT_DATA io_value_reference_implementation_t reference_to_constant_valu
 #define vref_not_nil(r)				(!vref_is_equal_to(r,cr_NIL))
 
 void store_vref (vref_t,vref_t*,vref_t);
+
+//
+// hash
+//
+typedef struct vref_hash_table vref_hash_table_t;
+
+typedef struct vref_hash_table_implementation {
+	void	(*free) (vref_hash_table_t*);
+	bool	(*insert) (vref_hash_table_t*,vref_t);
+	bool	(*contains) (vref_hash_table_t*,vref_t);
+	bool	(*remove) (vref_hash_table_t*,vref_t);
+} vref_hash_table_implementation_t;
+
+#define VREF_HASH_TABLE_STRUCT_MEMBERS \
+	vref_hash_table_implementation_t const *implementation;		\
+	/**/
+
+struct PACK_STRUCTURE vref_hash_table {
+	VREF_HASH_TABLE_STRUCT_MEMBERS
+};
+
+//
+// inline vref hash implementation
+//
+INLINE_FUNCTION void
+free_vref_hash_table (vref_hash_table_t *h) {
+	h->implementation->free(h);
+}
+
+INLINE_FUNCTION bool
+vref_hash_table_insert (vref_hash_table_t *h,vref_t r_value) {
+	return h->implementation->insert(h,r_value);
+}
+
+INLINE_FUNCTION bool
+vref_hash_table_contains (vref_hash_table_t *h,vref_t r_value) {
+	return h->implementation->contains(h,r_value);
+}
+
+INLINE_FUNCTION bool
+vref_hash_table_remove (vref_hash_table_t *h,vref_t r_value) {
+	return h->implementation->remove(h,r_value);
+}
+
+vref_hash_table_t*	mk_vref_bucket_hash_table (io_byte_memory_t*,uint32_t);
+
+typedef union string_hash_table_mapping {
+	uint32_t u32;
+	int32_t i32;
+	void *ptr;
+	void const *ro_ptr;
+} string_hash_table_mapping_t;
+
+#define def_hash_mapping_i32(v)		(string_hash_table_mapping_t){.i32 = v}
+#define def_hash_mapping_ptr(p)		(string_hash_table_mapping_t){.ptr = p}
+#define def_hash_mapping_ro_ptr(p)	(string_hash_table_mapping_t){.ro_ptr = p}
+
+typedef struct string_hash_table_entry {
+	struct string_hash_table_entry *next_entry;
+	char *bytes;
+	uint32_t size;
+	string_hash_table_mapping_t mapping;
+} string_hash_table_entry_t;
+
+typedef struct string_hash_table {
+	string_hash_table_entry_t **table;	
+	io_byte_memory_t *bm;
+	uint32_t table_size;
+	uint32_t table_grow;
+} string_hash_table_t;
+
+string_hash_table_t* mk_string_hash_table (io_byte_memory_t*,uint32_t);
+void free_string_hash_table (string_hash_table_t*);
+bool string_hash_table_insert (string_hash_table_t*,const char*,uint32_t,string_hash_table_mapping_t);
+bool string_hash_table_remove (string_hash_table_t*,const char*,uint32_t);
+bool string_hash_table_map (string_hash_table_t*,const char*,uint32_t,string_hash_table_mapping_t*);
 
 /*
  *
@@ -672,17 +760,30 @@ typedef bool (*io_character_iterator_t) (io_character_t,void*);
 bool	is_io_text_encoding (io_encoding_t const*);
 bool	io_text_encoding_iterate_characters (io_encoding_t const*,io_character_iterator_t,void*);
 
-extern EVENT_DATA io_binary_encoding_implementation_t io_text_encoding_implementation;
-
 INLINE_FUNCTION io_encoding_t*
 mk_io_text_encoding (io_byte_memory_t *bm) {
+	extern EVENT_DATA io_binary_encoding_implementation_t io_text_encoding_implementation;
 	return io_text_encoding_implementation.make_encoding(bm);
 }
 
-//
-// x70 encoding: a wire-format encoding of values
-//
+INLINE_FUNCTION io_encoding_t*
+mk_io_x70_encoding (io_byte_memory_t *bm) {
+	extern EVENT_DATA io_binary_encoding_implementation_t io_x70_encoding_implementation;
+	return io_x70_encoding_implementation.make_encoding(bm);
+}
 
+INLINE_FUNCTION bool
+is_io_x70_encoding (io_encoding_t const *encoding) {
+	extern EVENT_DATA io_binary_encoding_implementation_t io_x70_encoding_implementation;
+	return io_is_encoding_of_type (
+		encoding,IO_ENCODING_IMPLEMENATAION (&io_x70_encoding_implementation)
+	);
+}
+
+int32_t	io_x70_encoding_take_uint_value (const uint8_t*,const uint8_t*,uint32_t*);
+vref_t	io_x70_decoder (io_encoding_t*,io_value_memory_t*);
+
+#define X70_UINT_VALUE_BYTE	'U'
 
 //
 // int64 encoding
@@ -726,20 +827,12 @@ typedef struct PACK_STRUCTURE io_message_encoding {
 	IO_MESSAGE_ENCODING_STRUCT_MEMBERS
 } io_message_encoding_t;
 
-
 /*
  *
  * Values
  *
  */
 typedef struct io_value_implementation io_value_implementation_t;
-
-typedef struct PACK_STRUCTURE {
-	int32_t id;
-	uint8_t epoch[SHA256_SIZE];
-} io_encoding_id_t;
-
-#define decl_io_value_encoding(Idx) {.id = Idx,.epoch = IO_VALUE_ENCODING_EPOCH}
 
 typedef vref_t (*io_value_action_t) (io_t*,vref_t,vref_t const*);
 typedef bool (*io_match_argument_t) (vref_t);
@@ -760,12 +853,19 @@ typedef struct io_value_mode {
 	io_signature_t const *signature;
 } io_value_mode_t;
 
+enum {
+	IO_VALUE_ENCODING_FORMAT_X70,
+	
+	NUMBER_OF_IO_VALUE_ENCODING_FORMATS
+} io_value_encoding_format_t;
+
 #define IO_VALUE_IMPLEMENTATION_STRUCT_PROPERTIES \
 	io_value_implementation_t const *specialisation_of; \
-	io_encoding_id_t encoding; \
+	const char *name;\
 	io_value_t* (*initialise) (vref_t,vref_t); \
 	void (*free) (io_value_t*); \
 	bool (*encode) (vref_t,io_encoding_t*); \
+	vref_t (*decode[NUMBER_OF_IO_VALUE_ENCODING_FORMATS]) (io_value_memory_t *vm,uint8_t const**,const uint8_t*);\
 	vref_t (*receive) (io_t*,vref_t,uint32_t,vref_t const*); \
 	vref_t (*compare) (io_value_t const*,vref_t); \
 	io_value_mode_t const* (*get_modes) (io_value_t const*);\
@@ -801,6 +901,7 @@ io_value_t* io_value_initialise_nop (vref_t,vref_t);
 io_value_mode_t const* io_value_get_null_modes (io_value_t const*);
 vref_t io_value_compare_no_comparison(io_value_t const*,vref_t);
 vref_t	io_value_send (io_t *io,vref_t r_value,uint32_t argc,...);
+vref_t	io_decode_x70_to_invalid_value (io_value_memory_t*,uint8_t const**,const uint8_t*);
 
 //
 // inline io_value methods
@@ -1062,7 +1163,6 @@ typedef struct PACK_STRUCTURE io_cpu_dependant_clock {
 bool io_dependant_cpu_clock_start (io_cpu_clock_pointer_t);
 float64_t io_dependant_cpu_clock_get_frequency (io_cpu_clock_pointer_t);
 
-
 #define IO_CPU_CLOCK_FUNCTION_STRUCT_MEMBERS \
 	IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS\
 	io_cpu_clock_pointer_t const *outputs;\
@@ -1200,6 +1300,7 @@ typedef struct io_interrupt_handler {
 // the model for io computation is a single cpu core per io_t instance
 //
 typedef struct PACK_STRUCTURE io_implementation {
+	string_hash_table_t *value_implementation;
 	//
 	// core resources
 	//
@@ -1209,9 +1310,12 @@ typedef struct PACK_STRUCTURE io_implementation {
 	void (*do_gc) (io_t*,int32_t);
 	io_cpu_clock_pointer_t (*get_core_clock) (io_t*);
 	//
-	// security
+	// identity and security
 	//
 	uint32_t (*get_random_u32) (io_t*);
+	void (*sha256_start) (io_sha256_context_t*);
+	void (*sha256_update) (io_sha256_context_t*,uint8_t const*,uint32_t);
+	void (*sha256_finish) (io_sha256_context_t*,uint8_t[32]);
 	//
 	// communication
 	//
@@ -1268,6 +1372,7 @@ void add_io_implementation_core_methods (io_implementation_t*);
 void add_io_implementation_cpu_methods (io_implementation_t*);
 void add_io_implementation_board_methods (io_implementation_t*);
 void add_io_implementation_device_methods (io_implementation_t*);
+bool add_core_value_implementations_to_hash (string_hash_table_t*);
 
 #define IO_STRUCT_MEMBERS \
 	io_implementation_t const *implementation;\
@@ -1308,6 +1413,18 @@ io_get_short_term_value_memory (io_t *io) {
 INLINE_FUNCTION io_value_memory_t*
 io_get_long_term_value_memory (io_t *io) {
 	return io->implementation->get_long_term_value_memory(io);
+}
+
+INLINE_FUNCTION io_value_implementation_t const*
+io_get_value_implementation (io_t *io,const char *bytes,uint32_t size) {
+	string_hash_table_mapping_t v;
+	if (
+		string_hash_table_map (io->implementation->value_implementation,bytes,size,&v)
+	) {
+		return v.ro_ptr;
+	} else {
+		return NULL;
+	}
 }
 
 INLINE_FUNCTION uint32_t
@@ -1461,6 +1578,21 @@ io_dequeue_alarm (io_t *io,io_alarm_t *a) {
 	io->implementation->dequeue_alarm (io,a);
 }
 
+INLINE_FUNCTION void
+io_sha256_start (io_t *io,io_sha256_context_t *ctx) {
+	io->implementation->sha256_start (ctx);
+}
+
+INLINE_FUNCTION void
+io_sha256_update (io_t *io,io_sha256_context_t *ctx,uint8_t const *data,uint32_t size) {
+	io->implementation->sha256_update (ctx,data,size);
+}
+
+INLINE_FUNCTION void
+io_sha256_finish (io_t *io,io_sha256_context_t *ctx,uint8_t output[SHA256_SIZE]) {
+	io->implementation->sha256_finish (ctx,output);
+}
+
 
 #define ENTER_CRITICAL_SECTION(E)	\
 	{	\
@@ -1553,7 +1685,6 @@ typedef struct PACK_STRUCTURE io_binary_value {
 #define io_binary_value_rw_bytes(b)			(b)->bytes.rw
 #define io_binary_value_string(b)			(b)->bytes.str
 
-
 #define IO_VECTOR_VALUE_STRUCT_MEMBERS \
 	IO_VALUE_STRUCT_MEMBERS \
 	uint32_t arity; \
@@ -1567,6 +1698,8 @@ typedef struct PACK_STRUCTURE {
 vref_t	mk_io_vector_value (io_value_memory_t*,uint32_t,vref_t const*);
 bool		io_vector_value_get_arity (vref_t,uint32_t*);
 bool		io_vector_value_get_values (vref_t,uint32_t*,vref_t const**);
+
+#include <io_math.h>
 
 #ifdef IMPLEMENT_IO_CORE
 //-----------------------------------------------------------------------------
@@ -1752,13 +1885,21 @@ io_pin_is_always_invalid (io_t *io,io_pin_t p) {
 	return false;
 }
 
+void	io_cpu_sha256_start (io_sha256_context_t*);
+void	io_cpu_sha256_update (io_sha256_context_t*,uint8_t const*,uint32_t);
+void	io_cpu_sha256_finish (io_sha256_context_t*,uint8_t[32]);
+
 static const io_implementation_t	io_base = {
+//	.value_implementation = NULL,
 	.get_byte_memory = io_core_get_null_byte_memory,
 	.get_short_term_value_memory = io_core_get_null_value_memory,
 	.get_long_term_value_memory = io_core_get_null_value_memory,
 	.do_gc = NULL,
 	.get_core_clock = NULL,
 	.get_random_u32 = NULL,
+	.sha256_start = io_cpu_sha256_start,
+	.sha256_update = io_cpu_sha256_update,
+	.sha256_finish = io_cpu_sha256_finish,
 	.get_socket = io_core_get_null_socket,
 	.dequeue_event = dequeue_io_event,
 	.enqueue_event = enqueue_io_event,
@@ -1786,8 +1927,9 @@ static const io_implementation_t	io_base = {
 	.panic = NULL,
 };
 
+
 void 
-add_io_implementation_core_methods (io_implementation_t *io_i) {
+add_io_implementation_core_methods (io_implementation_t *io_i) {	
 	memcpy (io_i,&io_base,sizeof(io_implementation_t));
 }
 
@@ -1822,34 +1964,6 @@ decl_particular_value(cr_RESULT_CONTINUE,	io_vector_value_t,cr_result_continue_v
 
 decl_particular_value(cr_COMPARE,			io_value_t,cr_compare_v)
 decl_particular_value(cr_COMPARE_NO_COMPARISON,	io_value_t,cr_compare_no_comparison_v)
-
-typedef enum {
-	CR_NIL_ENCODING_INDEX = 0,
-	CR_UNIV_ENCODING_INDEX,
-	CR_NUMBER_ENCODING_INDEX,
-	CR_I64_INTEGER_ENCODING_INDEX,
-	CR_F64_FLOAT_ENCODING_INDEX,
-	CR_BINARY_ENCODING_INDEX,
-	CR_CONST_BINARY_ENCODING_INDEX,
-	CR_TEXT_ENCODING_INDEX,
-	CR_SYMBOL_ENCODING_INDEX,
-	CR_VECTOR_ENCODING_INDEX,
-	CR_RESULT_ENCODING_INDEX,
-	CR_RESULT_CONTINUE_ENCODING_INDEX,
-
-	CR_COMPARE_ENCODING_INDEX,
-	CR_COMPARE_NO_COMPARISON_ENCODING_INDEX,
-	CR_COMPARE_MORE_THAN_ENCODING_INDEX,
-	CR_COMPARE_LESS_THAN_ENCODING_INDEX,
-	CR_COMPARE_EQUAL_TO_ENCODING_INDEX,
-
-	CR_END_OF_SYSTEM_ENCODING_INDICES,
-
-	CR_INVALID_ENCODING_INDEX = 0x7fffffff,
-} io_value_encoding_identifier_t;
-
-extern EVENT_DATA io_value_implementation_t const* io_value_implementation_enum[];
-#define get_io_value_implementation_from_encoding_index(I) (io_value_implementation_enum[I])
 
 extern EVENT_DATA io_value_implementation_t io_symbol_value_implementation_with_const_bytes;
 #ifdef IMPLEMENT_IO_CORE
@@ -2626,6 +2740,486 @@ io_value_pipe_put_value (io_value_pipe_t *this,vref_t r_value) {
 }
 
 //
+// hash
+//
+
+uint64_t integer_hash_u64 (uint64_t key) {
+	key = ~key + (key << 21);
+	key = key ^ (key >> 24);
+	key = key + (key << 3) + (key << 8);
+	key = key ^ (key >> 14);
+	key = key + (key << 2) + (key << 4);
+	key = key ^ (key >> 28);
+	key = key + (key << 31);
+	return key;
+}
+
+#define tommy_rot(x, k) \
+	(((x) << (k)) | ((x) >> (32 - (k))))
+
+#define tommy_mix(a, b, c) \
+	do { \
+		a -= c;  a ^= tommy_rot(c, 4);  c += b; \
+		b -= a;  b ^= tommy_rot(a, 6);  a += c; \
+		c -= b;  c ^= tommy_rot(b, 8);  b += a; \
+		a -= c;  a ^= tommy_rot(c, 16);  c += b; \
+		b -= a;  b ^= tommy_rot(a, 19);  a += c; \
+		c -= b;  c ^= tommy_rot(b, 4);  b += a; \
+	} while (0)
+
+#define tommy_final(a, b, c) \
+	do { \
+		c ^= b; c -= tommy_rot(b, 14); \
+		a ^= c; a -= tommy_rot(c, 11); \
+		b ^= a; b -= tommy_rot(a, 25); \
+		c ^= b; c -= tommy_rot(b, 16); \
+		a ^= c; a -= tommy_rot(c, 4);  \
+		b ^= a; b -= tommy_rot(a, 14); \
+		c ^= b; c -= tommy_rot(b, 24); \
+	} while (0)
+
+uint32_t
+tommy_hash_u32 (uint32_t init_val,uint8_t const *key,uint32_t key_len) {
+	uint32_t a, b, c;
+
+	a = b = c = 0xdeadbeef + ((uint32_t)key_len) + init_val;
+
+	while (key_len > 12) {
+		a += read_le_uint32(key + 0);
+		b += read_le_uint32(key + 4);
+		c += read_le_uint32(key + 8);
+
+		tommy_mix(a, b, c);
+
+		key_len -= 12;
+		key += 12;
+	}
+
+	switch (key_len) {
+	case 0 :
+		return c; /* used only when called with a zero length */
+	case 12 :
+		c += read_le_uint32(key + 8);
+		b += read_le_uint32(key + 4);
+		a += read_le_uint32(key + 0);
+		break;
+	case 11 : c += ((uint32_t)key[10]) << 16; /* fallthrough */
+	case 10 : c += ((uint32_t)key[9]) << 8; /* fallthrough */
+	case 9 : c += key[8]; /* fallthrough */
+	case 8 :
+		b += read_le_uint32(key + 4);
+		a += read_le_uint32(key + 0);
+		break;
+	case 7 : b += ((uint32_t)key[6]) << 16; /* fallthrough */
+	case 6 : b += ((uint32_t)key[5]) << 8; /* fallthrough */
+	case 5 : b += key[4]; /* fallthrough */
+	case 4 :
+		a += read_le_uint32(key + 0);
+		break;
+	case 3 : a += ((uint32_t)key[2]) << 16; /* fallthrough */
+	case 2 : a += ((uint32_t)key[1]) << 8; /* fallthrough */
+	case 1 : a += key[0]; /* fallthrough */
+	}
+
+	tommy_final(a, b, c);
+
+	return c;
+}
+/*
+ * Copyright (c) 2010, Andrea Mazzoleni. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+
+string_hash_table_entry_t*
+mk_string_hash_table_entry (
+	io_byte_memory_t *bm,char const *bytes,uint32_t size,string_hash_table_mapping_t map
+) {
+	string_hash_table_entry_t *entry = io_byte_memory_allocate (
+		bm,sizeof(string_hash_table_entry_t)
+	);
+	
+	if (entry) {
+		entry->bytes = io_byte_memory_allocate (bm,size);
+		if (entry->bytes && size) {
+			entry->next_entry = NULL;
+			entry->size = size;
+			entry->mapping = map;
+			memcpy (entry->bytes,bytes,size);
+		} else {
+			io_byte_memory_free (bm,entry);
+			entry = NULL;
+		}
+	}
+	
+	return entry;
+}
+
+void
+free_string_hash_table_entry (io_byte_memory_t *bm,string_hash_table_entry_t *entry) {
+	io_byte_memory_free (bm,entry->bytes);
+	io_byte_memory_free (bm,entry);
+}
+
+string_hash_table_t*
+mk_string_hash_table (io_byte_memory_t *bm,uint32_t initial_size) {
+	string_hash_table_t *this = io_byte_memory_allocate (
+		bm,sizeof(string_hash_table_t)
+	);
+	
+	if (this) {
+		this->bm = bm;
+		this->table_size = next_prime_u32_integer (initial_size);
+		this->table_grow = this->table_size/2;
+		this->table = io_byte_memory_allocate (
+			bm,sizeof(string_hash_table_entry_t*) * this->table_size
+		);
+		if (this->table != NULL) {
+			memset (
+				this->table,0,sizeof(string_hash_table_entry_t*) * this->table_size
+			);
+		} else {
+			io_byte_memory_free (bm,this);
+			this = NULL;
+		}
+	}
+	
+	return this;
+}
+
+void
+free_string_hash_table (string_hash_table_t *this) {
+	uint32_t i;
+	
+	for (i = 0; i < this->table_size; i++) {
+		string_hash_table_entry_t *next,*cursor = this->table[i];
+		while (cursor != NULL) {
+			next = cursor->next_entry;
+			free_string_hash_table_entry (this->bm,cursor);
+			cursor = next;
+		}
+	}
+
+	io_byte_memory_free (this->bm,this->table);
+	io_byte_memory_free (this->bm,this);
+}
+
+static string_hash_table_entry_t*
+string_hash_table_get_entry (
+	string_hash_table_t *this,const char *data,uint32_t size,int index,int *depth
+) {
+	string_hash_table_entry_t *cursor = this->table[index];
+	if (depth) *depth = 0;
+	
+	while (cursor != NULL ) {
+		if (depth)  (*depth) ++;
+		if (cursor->size == size && memcmp(cursor->bytes,data,size) == 0) {
+			break;
+		}
+		cursor = cursor->next_entry;
+	}
+
+	return cursor;
+}
+
+static void string_hash_table_grow (string_hash_table_t*);
+
+bool
+string_hash_table_insert (
+	string_hash_table_t *this,const char *data,uint32_t size,string_hash_table_mapping_t map
+) {
+	uint32_t index = tommy_hash_u32 (0,(uint8_t const*) data,size) % this->table_size;
+	int depth;
+	
+	string_hash_table_entry_t *cursor = string_hash_table_get_entry (
+		this,data,size,index,&depth
+	);
+
+	if (cursor != NULL ) {
+		cursor->mapping = map;
+		return false;
+	} else {
+		if (depth > 7) {
+			string_hash_table_grow (this);
+			string_hash_table_insert (this,data,size,map);
+		} else {
+			cursor = mk_string_hash_table_entry (this->bm,data,size,map);
+			cursor->next_entry = this->table[index];
+			this->table[index] = cursor;
+		}
+		return true;
+	}
+}
+
+static void
+string_hash_table_grow (string_hash_table_t *this) {
+	string_hash_table_entry_t **old_table = this->table;
+	uint32_t old_size = this->table_size;
+	
+	this->table_size = next_prime_u32_integer (this->table_size + this->table_grow);
+	this->table = io_byte_memory_allocate (
+		this->bm,sizeof(string_hash_table_entry_t*) * this->table_size
+	);
+	memset (this->table,0,sizeof(string_hash_table_entry_t*) * this->table_size);
+	for (uint32_t i = 0; i < old_size; i++) {
+		string_hash_table_entry_t *next,*cursor = old_table[i];
+		while (cursor != NULL) {
+			uint32_t index = tommy_hash_u32 (0,(uint8_t const*) cursor->bytes,cursor->size) % this->table_size;
+			next = cursor->next_entry;
+			cursor->next_entry = this->table[index];
+			this->table[index] = cursor;
+			cursor = next;
+		}
+	}
+
+	io_byte_memory_free (this->bm,old_table);
+}
+
+bool
+string_hash_table_remove (
+	string_hash_table_t *this,const char *data,uint32_t size
+) {
+	int index = tommy_hash_u32 (0,(uint8_t const*) data,size) % this->table_size;
+	string_hash_table_entry_t **cursor = this->table + index;
+	
+	if (*cursor != NULL) {
+		while (*cursor != NULL) {
+			if (((*cursor)->size) == size &&  memcmp ((*cursor)->bytes,data,size) == 0) {
+				string_hash_table_entry_t *remove = *cursor;
+				*cursor = (*cursor)->next_entry;
+				free_string_hash_table_entry (this->bm,remove);
+				return true;
+			}
+			cursor = &((*cursor)->next_entry);
+		}
+	}
+	
+	return false;
+}
+
+bool
+string_hash_table_map (string_hash_table_t *this,const char *data,uint32_t size,string_hash_table_mapping_t *map) {
+	uint32_t index = tommy_hash_u32 (0,(uint8_t const*) data,size) % this->table_size;
+	int depth;
+	
+	string_hash_table_entry_t *cursor = string_hash_table_get_entry (
+		this,data,size,index,&depth
+	);
+
+	if (cursor != NULL ) {
+		*map = cursor->mapping;
+		return true;
+	} else {
+		return false;
+	}
+}
+
+//
+//
+//
+typedef struct vref_bucket_hash_table_entry {
+	struct vref_bucket_hash_table_entry *next_entry;
+	vref_t r_value;
+} vref_bucket_hash_table_entry_t;
+
+typedef struct PACK_STRUCTURE {
+	VREF_HASH_TABLE_STRUCT_MEMBERS
+	vref_bucket_hash_table_entry_t **table;	
+	io_byte_memory_t *bm;
+	uint32_t table_size;
+	uint32_t table_grow;
+} vref_bucket_hash_table_t;
+
+vref_hash_table_t*
+mk_vref_bucket_hash_table (io_byte_memory_t *bm,uint32_t initial_size) {
+	extern EVENT_DATA vref_hash_table_implementation_t vref_bucket_hash_implementation;
+	vref_bucket_hash_table_t *this = io_byte_memory_allocate (
+		bm,sizeof(vref_bucket_hash_table_t)
+	);
+	
+	if (this) {
+		this->implementation = &vref_bucket_hash_implementation;
+		this->bm = bm;
+		this->table_size = next_prime_u32_integer (initial_size);
+		this->table_grow = this->table_size/2;
+		this->table = io_byte_memory_allocate (
+			bm,sizeof(vref_bucket_hash_table_entry_t*) * this->table_size
+		);
+		if (this->table != NULL) {
+			memset (
+				this->table,0,sizeof(vref_bucket_hash_table_entry_t*) * this->table_size
+			);
+		} else {
+			io_byte_memory_free (bm,this);
+			this = NULL;
+		}
+	}
+	
+	return (vref_hash_table_t*) this;
+}
+
+static void
+free_vref_bucket_hash_table (vref_hash_table_t *ht) {
+	vref_bucket_hash_table_t *this = (vref_bucket_hash_table_t*) ht;
+	uint32_t i;
+	
+	for (i = 0; i < this->table_size; i++) {
+		vref_bucket_hash_table_entry_t *next,*cursor = this->table[i];
+		while (cursor != NULL) {
+			next = cursor->next_entry;
+			unreference_value (cursor->r_value);
+			io_byte_memory_free (this->bm,cursor);
+			cursor = next;
+		}
+	}
+	
+	io_byte_memory_free (this->bm,this->table);
+	io_byte_memory_free (this->bm,this);
+}
+
+uint32_t
+vref_bucket_hash (vref_bucket_hash_table_t *ht,vref_t r_value) {
+	return (
+			integer_hash_u64 (vref_get_as_builtin_integer(r_value))
+		%	ht->table_size
+	);
+}
+
+static vref_bucket_hash_table_entry_t*
+vref_bucket_hash_get_entry (
+	vref_bucket_hash_table_t *this,vref_t r_value,int index,int *depth
+) {
+	vref_bucket_hash_table_entry_t *cursor = this->table[index];
+	if (depth) *depth = 0;
+	
+	while (cursor != NULL ) {
+		if (depth)  (*depth) ++;
+		if (vref_is_equal_to ((cursor->r_value),r_value)) {
+			break;
+		}
+		cursor = cursor->next_entry;
+	}
+
+	return cursor;
+}
+
+static void	vref_bucket_hash_grow (vref_bucket_hash_table_t*);
+
+static bool
+vref_bucket_hash_insert (vref_bucket_hash_table_t *this,vref_t r_value) {
+	int depth,index = vref_bucket_hash (this,r_value);
+	vref_bucket_hash_table_entry_t *cursor = vref_bucket_hash_get_entry (
+		this,r_value,index,&depth
+	);
+
+	if (cursor != NULL ) {
+		return false;
+	} else {
+		if (depth > 7) {
+			vref_bucket_hash_grow (this);
+			return vref_bucket_hash_insert (this,r_value);
+		} else {
+			cursor = io_byte_memory_allocate (
+				this->bm,sizeof(vref_bucket_hash_table_entry_t)
+			);
+			memset (cursor,0,sizeof(vref_bucket_hash_table_entry_t));
+			cursor->next_entry = this->table[index];
+			this->table[index] = cursor;
+			cursor->r_value = reference_value (r_value);
+			return true;
+		}
+	}
+}
+
+static void
+vref_bucket_hash_grow (vref_bucket_hash_table_t *this) {
+	vref_bucket_hash_table_entry_t **old_table = this->table;
+	uint32_t old_size = this->table_size;
+	
+	this->table_size = next_prime_u32_integer (this->table_size + this->table_grow);
+	this->table = io_byte_memory_allocate (
+		this->bm,sizeof(vref_bucket_hash_table_entry_t*) * this->table_size
+	);
+	memset (this->table,0,sizeof(vref_bucket_hash_table_entry_t*) * this->table_size);
+	for (uint32_t i = 0; i < old_size; i++) {
+		vref_bucket_hash_table_entry_t *next,*cursor = old_table[i];
+		while (cursor != NULL) {
+			next = cursor->next_entry;
+			vref_bucket_hash_insert (this,cursor->r_value);
+			unreference_value (cursor->r_value);
+			io_byte_memory_free (this->bm,cursor);
+			cursor = next;
+		}
+	}
+
+	io_byte_memory_free (this->bm,old_table);
+}
+
+static bool
+vref_bucket_hash_insert_value (vref_hash_table_t *ht,vref_t r_value) {
+	vref_bucket_hash_table_t *this = (vref_bucket_hash_table_t*) ht;
+	return vref_bucket_hash_insert (this,r_value);
+}
+
+static bool
+vref_bucket_hash_contains (vref_hash_table_t *ht,vref_t r_value) {
+	vref_bucket_hash_table_t *this = (vref_bucket_hash_table_t*) ht;
+	int index = vref_bucket_hash (this,r_value);
+	return NULL != vref_bucket_hash_get_entry (this,r_value,index,NULL);
+}
+
+static bool
+vref_bucket_hash_remove (vref_hash_table_t *ht,vref_t r_value) {
+	vref_bucket_hash_table_t *this = (vref_bucket_hash_table_t*) ht;
+	int index = vref_bucket_hash (this,r_value);
+	vref_bucket_hash_table_entry_t **cursor = this->table + index;
+	
+	if (*cursor != NULL) {
+		while (*cursor != NULL) {
+			if (vref_is_equal_to (((*cursor)->r_value),r_value)) {
+				vref_bucket_hash_table_entry_t *remove = *cursor;
+				*cursor = (*cursor)->next_entry;
+				unreference_value (remove->r_value);
+				io_byte_memory_free (this->bm,remove);
+				return true;
+			}
+			cursor = &((*cursor)->next_entry);
+		}
+	}
+	
+	return false;
+}
+
+EVENT_DATA vref_hash_table_implementation_t vref_bucket_hash_implementation = {
+	.free = free_vref_bucket_hash_table,
+	.insert = vref_bucket_hash_insert_value,
+	.contains = vref_bucket_hash_contains,
+	.remove = vref_bucket_hash_remove,
+};
+
+//
 // reference to umm value
 //
 vref_t
@@ -2956,11 +3550,11 @@ mk_null_encoding (io_byte_memory_t *bm) {
 }
 
 static void
-free_null_encoding (io_encoding_t *encoder) {
+free_null_encoding (io_encoding_t *encoding) {
 }
 
 static size_t
-null_encoding_length (io_encoding_t const *encoder) {
+null_encoding_length (io_encoding_t const *encoding) {
 	return 0;
 }
 
@@ -3052,7 +3646,7 @@ io_binary_encoding_decode_to_io_value (
 }
 
 static void*
-io_text_encoding_initialise (io_binary_encoding_t *this) {
+io_binary_encoding_initialise (io_binary_encoding_t *this) {
 	this->data = io_byte_memory_allocate (
 		this->bm,TEXT_ENCODING_INITIAL_SIZE * sizeof(uint8_t)
 	);
@@ -3074,18 +3668,19 @@ io_text_encoding_new (io_byte_memory_t *bm) {
 	);
 
 	if (this != NULL) {
+		extern EVENT_DATA io_binary_encoding_implementation_t io_text_encoding_implementation;
 		this->implementation = IO_ENCODING_IMPLEMENATAION (
 			&io_text_encoding_implementation
 		);
 		this->bm = bm;
-		this = io_text_encoding_initialise(this);
+		this = io_binary_encoding_initialise(this);
 	}
 
 	return (io_encoding_t*) this;
 };
 
 static void
-io_text_encoding_free (io_encoding_t *encoding) {
+io_binary_encoding_free (io_encoding_t *encoding) {
 	if (encoding != NULL) {
 		io_binary_encoding_t *this = (io_binary_encoding_t*) encoding;
 		if (this->data) {
@@ -3117,7 +3712,7 @@ io_text_encoding_grow (io_binary_encoding_t *this) {
 }
 
 static bool
-io_text_encoding_append_byte (io_encoding_t *encoding,uint8_t byte) {
+io_binary_encoding_append_byte (io_encoding_t *encoding,uint8_t byte) {
 	io_binary_encoding_t *this = (io_binary_encoding_t*) encoding;
 	if (this->cursor == this->end) {
 		if (
@@ -3146,12 +3741,12 @@ io_binary_encoding_get_ro_bytes (
 };
 
 static size_t
-io_text_encoding_fill_bytes (
+io_binary_encoding_fill_bytes (
 	io_encoding_t *encoding,uint8_t byte,size_t size
 ) {
 	size_t len = size;
 	while (len) {
-		if (!io_text_encoding_append_byte (encoding,byte)) {
+		if (!io_binary_encoding_append_byte (encoding,byte)) {
 			break;
 		}
 		len --;
@@ -3160,41 +3755,42 @@ io_text_encoding_fill_bytes (
 }
 
 static bool
-io_text_encoding_append_bytes (
+io_binary_encoding_append_bytes (
 	io_encoding_t *this,uint8_t const *byte,size_t size
 ) {
 	uint8_t const *end = byte + size;
 	while (byte < end) {
-		if (!io_text_encoding_append_byte (this,*byte++)) {
+		if (!io_binary_encoding_append_byte (this,*byte++)) {
 			return false;
 		}
 	}
 	return true;
 }
 
-struct PACK_STRUCTURE io_text_encoding_print_data {
+struct PACK_STRUCTURE io_binary_encoding_print_data {
 	io_binary_encoding_t *this;
 	char buf[STB_SPRINTF_MIN];
 };
 char*
-io_text_encoding_print_cb (char *buf,void *user,int len) {
-	struct io_text_encoding_print_data *info = user;
-	io_text_encoding_append_bytes ((io_encoding_t*) info->this,(uint8_t const*)info->buf,len);
+io_binary_encoding_print_cb (char *buf,void *user,int len) {
+	struct io_binary_encoding_print_data *info = user;
+	io_binary_encoding_append_bytes ((io_encoding_t*) info->this,(uint8_t const*)info->buf,len);
 	return info->buf;
 }
 
 static size_t
-io_text_encoding_print (io_encoding_t *encoding,char const *fmt,va_list va) {
-	struct io_text_encoding_print_data user = {
+io_binary_encoding_print (io_encoding_t *encoding,char const *fmt,va_list va) {
+	struct io_binary_encoding_print_data user = {
 		.this = (io_binary_encoding_t*) encoding
 	};
 	return STB_SPRINTF_DECORATE(vsprintfcb) (
-		io_text_encoding_print_cb,&user,user.buf,fmt,va
+		io_binary_encoding_print_cb,&user,user.buf,fmt,va
 	);
 }
 
 bool
 is_io_text_encoding (io_encoding_t const *encoding) {
+	extern EVENT_DATA io_binary_encoding_implementation_t io_text_encoding_implementation;
 	return io_is_encoding_of_type (
 		encoding,IO_ENCODING_IMPLEMENATAION (&io_text_encoding_implementation)
 	);
@@ -3230,7 +3826,7 @@ size_t
 io_encoding_printf (io_encoding_t *encoding,const char *format, ... ) {
 	size_t r = 0;
 
-	if (is_io_text_encoding (encoding)) {
+	if (is_io_binary_encoding (encoding)) {
 		va_list va;
 		va_start(va, format);
 		r = io_encoding_print (encoding,format,va);
@@ -3250,7 +3846,7 @@ io_binary_encoding_reset (io_encoding_t *encoding) {
 // number of characters
 //
 static size_t
-io_text_encoding_length (io_encoding_t const *encoding) {
+io_binary_encoding_length (io_encoding_t const *encoding) {
 	io_binary_encoding_t const *this = (io_binary_encoding_t const*) encoding;
 	return io_binary_encoding_data_size (this);
 }
@@ -3279,14 +3875,14 @@ EVENT_DATA io_binary_encoding_implementation_t io_binary_encoding_implementation
 	.get_io = io_binary_encoding_get_io,
 	.push = NULL,
 	.pop = NULL,
-	.length = io_text_encoding_length,
+	.length = io_binary_encoding_length,
 	.limit = io_binary_encoding_nolimit,
 	.grow_increment = io_text_encoding_grow_increment,
 	.copy = NULL,
-	.fill = io_text_encoding_fill_bytes,
-	.append_byte = io_text_encoding_append_byte,
-	.append_bytes = io_text_encoding_append_bytes,
-	.print = io_text_encoding_print,
+	.fill = io_binary_encoding_fill_bytes,
+	.append_byte = io_binary_encoding_append_byte,
+	.append_bytes = io_binary_encoding_append_bytes,
+	.print = io_binary_encoding_print,
 	.reset = io_binary_encoding_reset,
 	.get_ro_bytes = io_binary_encoding_get_ro_bytes,
 };
@@ -3305,16 +3901,126 @@ EVENT_DATA io_binary_encoding_implementation_t io_text_encoding_implementation =
 	.decode_to_io_value = io_binary_encoding_decode_to_io_value,
 	.make_encoding = io_text_encoding_new,
 	.copy = NULL,
-	.free = io_text_encoding_free,
+	.free = io_binary_encoding_free,
+	.get_io = io_binary_encoding_get_io,
 	.push = NULL,
 	.pop = NULL,
-	.fill = io_text_encoding_fill_bytes,
-	.append_byte = io_text_encoding_append_byte,
-	.append_bytes = io_text_encoding_append_bytes,
-	.print = io_text_encoding_print,
+	.fill = io_binary_encoding_fill_bytes,
+	.append_byte = io_binary_encoding_append_byte,
+	.append_bytes = io_binary_encoding_append_bytes,
+	.print = io_binary_encoding_print,
 	.reset = io_binary_encoding_reset,
 	.get_ro_bytes = io_binary_encoding_get_ro_bytes,
-	.length = io_text_encoding_length,
+	.length = io_binary_encoding_length,
+	.limit = io_binary_encoding_nolimit,
+};
+
+static io_encoding_t*
+io_x70_encoding_new (io_byte_memory_t *bm) {
+	io_binary_encoding_t *this = io_byte_memory_allocate (
+		bm,sizeof(io_binary_encoding_t)
+	);
+
+	if (this != NULL) {
+		extern EVENT_DATA io_binary_encoding_implementation_t io_x70_encoding_implementation;
+		this->implementation = IO_ENCODING_IMPLEMENATAION (
+			&io_x70_encoding_implementation
+		);
+		this->bm = bm;
+		this = io_binary_encoding_initialise(this);
+	}
+
+	return (io_encoding_t*) this;
+};
+
+void
+io_x70_encoding_append_uint_value (io_encoding_t *encoding,uint32_t value) {
+	uint8_t flag;
+	io_encoding_append_byte (encoding,X70_UINT_VALUE_BYTE);
+	do {
+		flag = (value > 0x7f);
+		io_encoding_append_byte (encoding,(value & 0x7f) | (flag << 7));
+		value >>= 7;
+	} while (flag);
+}
+
+int32_t
+io_x70_encoding_take_uint_value (const uint8_t *b,const uint8_t *e,uint32_t *value) {
+	uint8_t byte;
+	int32_t c = 0;
+	
+	*value = 0;
+	do {
+		byte = *b++;
+		c++;
+		*value <<= 7;
+		*value += (byte & 0x7f);
+	} while (byte & 0x80 && b < e);
+	
+	return c;
+}
+
+void
+io_encode_value_implementation_to_x70 (io_value_t *value,io_encoding_t *encoding) {
+	uint32_t len = strlen(value->implementation->name);
+	io_x70_encoding_append_uint_value (encoding,len);
+	io_encoding_append_bytes (
+		encoding,(uint8_t const*) value->implementation->name,len
+	);
+} 
+
+vref_t
+io_x70_decoder (io_encoding_t *encoding,io_value_memory_t *vm) {
+	io_t *io = io_encoding_get_io (encoding);
+	const uint8_t *b,*e;
+	vref_t r_value = INVALID_VREF;
+	
+	io_encoding_get_ro_bytes (encoding,&b,&e);
+	
+	while (b < e) {
+		uint32_t u;
+		
+		switch (*b++) {
+			case X70_UINT_VALUE_BYTE:
+				b += io_x70_encoding_take_uint_value (b,e,&u);
+				if (b < e) {
+					io_value_implementation_t const *I;
+					I = io_get_value_implementation (io,(const char*) b,u);
+					b += u;
+					if (I) {
+						vref_t r_part = I->decode[IO_VALUE_ENCODING_FORMAT_X70] (vm,&b,e);
+						if (vref_is_valid(r_part)) {
+							r_value = r_part;
+						}
+					}
+				}
+			break;
+		}
+		
+		b++;
+	}
+	
+	return r_value;
+}
+
+EVENT_DATA io_binary_encoding_implementation_t io_x70_encoding_implementation = {
+	.specialisation_of = IO_ENCODING_IMPLEMENATAION (
+		&io_binary_encoding_implementation
+	),
+	.decode_to_io_value = io_binary_encoding_decode_to_io_value,
+	.make_encoding = io_x70_encoding_new,
+	.copy = NULL,
+	.free = io_binary_encoding_free,
+	.get_io = io_binary_encoding_get_io,
+	.push = NULL,
+	.pop = NULL,
+	.fill = io_binary_encoding_fill_bytes,
+	.append_byte = io_binary_encoding_append_byte,
+	.append_bytes = io_binary_encoding_append_bytes,
+	.print = io_binary_encoding_print,
+	.reset = io_binary_encoding_reset,
+	.get_ro_bytes = io_binary_encoding_get_ro_bytes,
+	.length = io_binary_encoding_length,
 	.limit = io_binary_encoding_nolimit,
 };
 
@@ -3371,15 +4077,23 @@ default_io_value_receive (io_t *io,vref_t r_value,uint32_t argc,vref_t const *ar
 	return cr_IO_EXCEPTION;
 }
 
+vref_t
+io_decode_x70_to_invalid_value (
+	io_value_memory_t *vm,uint8_t const**b,const uint8_t *e
+) {	
+	return INVALID_VREF;
+}
+
 //
 // universal value
 //
 
 EVENT_DATA io_value_implementation_t univ_value_implementation = {
 	.specialisation_of = NULL,
-	.encoding = decl_io_value_encoding (CR_UNIV_ENCODING_INDEX),
+	.name = "value",
 	.initialise = io_value_initialise_nop,
 	.free = io_value_free_nop,
+	.decode = {io_decode_x70_to_invalid_value},
 	.encode = default_io_value_encode,
 	.receive = default_io_value_receive,
 	.compare = NULL,
@@ -3392,9 +4106,10 @@ EVENT_DATA io_univ_value_t cr_univ_v = {
 
 EVENT_DATA io_value_implementation_t nil_value_implementation = {
 	.specialisation_of = &univ_value_implementation,
-	.encoding = decl_io_value_encoding (CR_NIL_ENCODING_INDEX),
+	.name = "nil",
 	.initialise = io_value_initialise_nop,
 	.free = io_value_free_nop,
+	.decode = {io_decode_x70_to_invalid_value},
 	.encode = default_io_value_encode,
 	.receive = default_io_value_receive,
 	.compare = NULL,
@@ -3411,9 +4126,10 @@ EVENT_DATA io_nil_value_t cr_nil_v = {
 
 EVENT_DATA io_value_implementation_t io_number_value_implementation = {
 	.specialisation_of = &univ_value_implementation,
-	.encoding = decl_io_value_encoding (CR_NUMBER_ENCODING_INDEX),
+	.name = "number",
 	.initialise = io_value_initialise_nop,
 	.free = io_value_free_nop,
+	.decode = {io_decode_x70_to_invalid_value},
 	.encode = default_io_value_encode,
 	.receive = default_io_value_receive,
 	.compare = NULL,
@@ -3440,14 +4156,20 @@ io_int64_value_initialise (vref_t r_value,vref_t r_base) {
 
 static bool
 io_int64_value_encode (vref_t r_value,io_encoding_t *encoding) {
-	bool result = false;
-
-	io_int64_value_t const *this = io_typesafe_ro_cast(
+	io_int64_value_t const *this = io_typesafe_ro_cast (
 		r_value,cr_I64_NUMBER
 	);
+	bool result = false;
+
 	if (this) {
 		if (is_io_text_encoding (encoding)) {
 			io_encoding_printf (encoding,"%lld",this->value);
+			result = true;
+		} else if (is_io_x70_encoding (encoding)) {
+			io_encode_value_implementation_to_x70 ((io_value_t*) this,encoding);
+			io_encoding_append_bytes (
+				encoding,(uint8_t const*) &this->value,sizeof(this->value)
+			);
 			result = true;
 		} else if (encoding_is_io_value_int64 (encoding)) {
 			io_value_int64_encoding_t *enc = (io_value_int64_encoding_t*) encoding;
@@ -3459,12 +4181,26 @@ io_int64_value_encode (vref_t r_value,io_encoding_t *encoding) {
 	return result;
 }
 
+static vref_t
+io_int64_decode_x70_value (
+	io_value_memory_t *vm,uint8_t const**b,const uint8_t *e
+) {	
+	if ((e - *b) >= sizeof(int64_t)) {
+		int64_t v = read_le_int64 (*b);
+		*b += sizeof(int64_t);
+		return mk_io_int64_value (vm,v);
+	} else {
+		return INVALID_VREF;
+	}
+}
+
 EVENT_DATA io_value_implementation_t i64_number_value_implementation = {
 	.specialisation_of = &io_number_value_implementation,
-	.encoding = decl_io_value_encoding (CR_I64_INTEGER_ENCODING_INDEX),
+	.name = "i64",
 	.initialise = io_int64_value_initialise,
 	.free = io_value_free_nop,
 	.encode = io_int64_value_encode,
+	.decode = {io_int64_decode_x70_value},
 	.receive = default_io_value_receive,
 	.compare = NULL,
 	.get_modes = io_value_get_null_modes,
@@ -3538,6 +4274,12 @@ io_float64_value_encode (vref_t r_value,io_encoding_t *encoding) {
 		if (is_io_text_encoding (encoding)) {
 			io_encoding_printf (encoding,"%f",this->value);
 			result = true;
+		} else if (is_io_x70_encoding (encoding)) {
+			io_encode_value_implementation_to_x70 ((io_value_t*) this,encoding);
+			io_encoding_append_bytes (
+				encoding,(uint8_t const*) &this->value,sizeof(this->value)
+			);
+			result = true;
 		} else if (encoding_is_io_value_float64 (encoding)) {
 			io_value_float64_encoding_t *enc = (io_value_float64_encoding_t*) encoding;
 			enc->encoded_value = this->value;
@@ -3548,11 +4290,25 @@ io_float64_value_encode (vref_t r_value,io_encoding_t *encoding) {
 	return result;
 }
 
+static vref_t
+io_float64_decode_x70_value (
+	io_value_memory_t *vm,uint8_t const**b,const uint8_t *e
+) {	
+	if ((e - *b) >= sizeof(float64_t)) {
+		float64_t v = read_be_float64 (*b);
+		*b += sizeof(float64_t);
+		return mk_io_float64_value (vm,v);
+	} else {
+		return INVALID_VREF;
+	}
+}
+
 EVENT_DATA io_value_implementation_t f64_number_value_implementation = {
 	.specialisation_of = &io_number_value_implementation,
-	.encoding = decl_io_value_encoding (CR_F64_FLOAT_ENCODING_INDEX),
+	.name = "f64",
 	.initialise = io_float64_value_initialise,
 	.free = io_value_free_nop,
+	.decode = {io_float64_decode_x70_value},
 	.encode = io_float64_value_encode,
 	.receive = default_io_value_receive,
 	.compare = NULL,
@@ -3732,26 +4488,47 @@ io_binary_value_initialise_nop (vref_t r_value,vref_t r_base) {
 	return vref_cast_to_rw_pointer(r_value);
 }
 
+bool
+io_binary_value_encode_x70 (io_binary_value_t const *this,io_encoding_t *encoding) {
+	io_encode_value_implementation_to_x70 ((io_value_t*) this,encoding);
+	io_x70_encoding_append_uint_value (encoding,io_binary_value_size(this));
+	io_encoding_append_bytes (
+		encoding,io_binary_value_ro_bytes(this),io_binary_value_size(this)
+	);
+	return true;
+}
+
 static bool
 io_binary_value_encode (vref_t r_value,io_encoding_t *encoding) {
+	io_binary_value_t const *this = vref_cast_to_ro_pointer(r_value);
 	bool ok = false;
 
 	if (is_io_text_encoding (encoding)) {
-		io_binary_value_t const *this = vref_cast_to_ro_pointer(r_value);
 		io_encoding_append_bytes (
 			encoding,io_binary_value_ro_bytes(this),io_binary_value_size(this)
 		);
 		ok = true;
+	} else if (is_io_x70_encoding (encoding)) {
+		ok = io_binary_value_encode_x70 (this,encoding);
 	}
 
 	return ok;
 }
 
+static vref_t
+io_binary_decode_x70_value (
+	io_value_memory_t *vm,uint8_t const**b,const uint8_t *e
+) {	
+	return INVALID_VREF;
+}
+
+
 EVENT_DATA io_value_implementation_t binary_value_implementation = {
 	.specialisation_of = &univ_value_implementation,
-	.encoding = decl_io_value_encoding (CR_BINARY_ENCODING_INDEX),
+	.name = "binary",
 	.initialise = io_binary_value_initialise_nop,
 	.free = io_value_free_nop,
+	.decode = {io_binary_decode_x70_value},
 	.encode = default_io_value_encode,
 	.receive = default_io_value_receive,
 	.compare = NULL,
@@ -3798,9 +4575,10 @@ io_binary_value_initialise_with_dynamic_bytes (vref_t r_value,vref_t r_base) {
 
 EVENT_DATA io_value_implementation_t binary_value_implementation_with_const_bytes = {
 	.specialisation_of = &binary_value_implementation,
-	.encoding = decl_io_value_encoding (CR_CONST_BINARY_ENCODING_INDEX),
+	.name = "const-binary",
 	.initialise = io_binary_value_initialise_with_const_bytes,
 	.free = io_value_free_nop,
+	.decode = {io_decode_x70_to_invalid_value},
 	.encode = io_binary_value_encode,
 	.receive = default_io_value_receive,
 	.compare = NULL,
@@ -3837,8 +4615,10 @@ mk_io_binary_value_with_const_bytes (io_value_memory_t *vm,uint8_t const *bytes,
 
 EVENT_DATA io_value_implementation_t binary_value_implementation_with_dynamic_bytes = {
 	.specialisation_of = &binary_value_implementation_with_const_bytes,
+	.name = "dynamic-binary",
 	.initialise = io_binary_value_initialise_with_dynamic_bytes,
 	.free = io_value_free_nop,
+	.decode = {io_decode_x70_to_invalid_value},
 	.encode = io_binary_value_encode,
 	.receive = default_io_value_receive,
 	.compare = NULL,
@@ -3846,7 +4626,9 @@ EVENT_DATA io_value_implementation_t binary_value_implementation_with_dynamic_by
 };
 
 static vref_t
-mk_io_binary_value_for (io_value_memory_t *vm,io_value_implementation_t const *I,uint8_t const *bytes,int32_t size) {
+mk_io_binary_value_for (
+	io_value_memory_t *vm,io_value_implementation_t const *I,uint8_t const *bytes,int32_t size
+) {
 	io_binary_value_t base = {
 		decl_io_value (I,sizeof(io_binary_value_t))
 		.bit = {
@@ -3868,16 +4650,38 @@ mk_io_binary_value (io_value_memory_t *vm,uint8_t const *bytes,int32_t size) {
 
 static bool
 io_text_value_encode (vref_t r_value,io_encoding_t *encoding) {
+	io_binary_value_t const *this = vref_cast_to_ro_pointer(r_value);
 	bool ok = false;
 
 	if (is_io_text_encoding (encoding)) {
-		io_binary_value_t const *this = vref_cast_to_ro_pointer(r_value);
 		io_encoding_append_bytes (
 			encoding,io_binary_value_ro_bytes(this),io_binary_value_size(this)
 		);
 		ok = true;
+	} else if (is_io_x70_encoding (encoding)) {
+		ok = io_binary_value_encode_x70 (this,encoding);
 	}
 	return ok;
+}
+
+static vref_t
+io_text_decode_x70_value (
+	io_value_memory_t *vm,uint8_t const**b,const uint8_t *e
+) {
+	vref_t r_value = INVALID_VREF;
+	uint32_t u;
+	
+	if (**b == X70_UINT_VALUE_BYTE) {
+		*b += 1;
+		*b += io_x70_encoding_take_uint_value (*b,e,&u);
+		
+		if (*b <= (e - u)) {
+			r_value = mk_io_text_value (vm,*b,u);
+			*b += u;
+		}
+	}
+
+	return r_value;
 }
 
 vref_t
@@ -3889,9 +4693,10 @@ io_text_to_text_value_decoder (io_encoding_t *encoding,io_value_memory_t *vm) {
 
 EVENT_DATA io_value_implementation_t io_text_value_implementation = {
 	.specialisation_of = &binary_value_implementation_with_dynamic_bytes,
-	.encoding = decl_io_value_encoding (CR_TEXT_ENCODING_INDEX),
+	.name = "text",
 	.initialise = io_binary_value_initialise_with_dynamic_bytes,
 	.free = io_value_free_nop,
+	.decode = {io_text_decode_x70_value},
 	.encode = io_text_value_encode,
 	.receive = default_io_value_receive,
 	.compare = NULL,
@@ -3911,9 +4716,10 @@ mk_io_text_value (io_value_memory_t *vm,uint8_t const *bytes,int32_t size) {
 
 EVENT_DATA io_value_implementation_t io_symbol_value_implementation_with_const_bytes = {
 	.specialisation_of = &binary_value_implementation_with_const_bytes,
-	.encoding = decl_io_value_encoding (CR_SYMBOL_ENCODING_INDEX),
+	.name = "symbol",
 	.initialise = io_binary_value_initialise_with_const_bytes,
 	.free = io_value_free_nop,
+	.decode = {io_decode_x70_to_invalid_value},
 	.encode = io_binary_value_encode,
 	.receive = default_io_value_receive,
 	.compare = NULL,
@@ -3927,10 +4733,12 @@ EVENT_DATA io_binary_value_t cr_symbol_v = {
 	.bit.const_bytes = 1,
 };
 
-EVENT_DATA io_value_implementation_t io_ion_exception_value_implementation_with_const_bytes = {
+EVENT_DATA io_value_implementation_t io_exception_value_implementation_with_const_bytes = {
 	.specialisation_of = &binary_value_implementation_with_const_bytes,
+	.name = "const-exception",
 	.initialise = io_binary_value_initialise_with_const_bytes,
 	.free = io_value_free_nop,
+	.decode = {io_decode_x70_to_invalid_value},
 	.encode = io_binary_value_encode,
 	.receive = default_io_value_receive,
 	.compare = NULL,
@@ -3938,7 +4746,7 @@ EVENT_DATA io_value_implementation_t io_ion_exception_value_implementation_with_
 };
 
 EVENT_DATA io_binary_value_t cr_io_exception_v = {
-	decl_io_value (&io_ion_exception_value_implementation_with_const_bytes,sizeof(io_binary_value_t))
+	decl_io_value (&io_exception_value_implementation_with_const_bytes,sizeof(io_binary_value_t))
 	.bytes.ro = (uint8_t const*) "exception",
 	.bit.binary_size = 9,
 	.bit.const_bytes = 1,
@@ -3972,8 +4780,10 @@ mk_io_symbol_value_with_const_bytes (io_value_memory_t *vm,uint8_t const *bytes,
 
 EVENT_DATA io_value_implementation_t io_symbol_value_implementation_with_volatile_bytes = {
 	.specialisation_of = &io_symbol_value_implementation_with_const_bytes,
+	.name = "dynamic-symbol",
 	.initialise = io_binary_value_initialise_with_const_bytes,
 	.free = io_value_free_nop,
+	.decode = {io_decode_x70_to_invalid_value},
 	.encode = io_binary_value_encode,
 	.receive = default_io_value_receive,
 	.compare = NULL,
@@ -4048,10 +4858,12 @@ typedef struct PACK_STRUCTURE ion_continuation_value {
 } ion_continuation_value_t;
 
 
-EVENT_DATA io_value_implementation_t ion_continuation_value_implementation = {
+EVENT_DATA io_value_implementation_t io_continuation_value_implementation = {
 	.specialisation_of = &univ_value_implementation,
+	.name = "continuation",
 	.initialise = io_value_initialise_nop,
 	.free = io_value_free_nop,
+	.decode = {io_decode_x70_to_invalid_value},
 	.encode = default_io_value_encode,
 	.receive = default_io_value_receive,
 	.compare = NULL,
@@ -4152,9 +4964,10 @@ io_value_send (io_t *io,vref_t r_value,uint32_t argc,...) {
 
 EVENT_DATA io_value_implementation_t io_vector_value_implementation = {
 	.specialisation_of = &univ_value_implementation,
-	.encoding = decl_io_value_encoding (CR_VECTOR_ENCODING_INDEX),
+	.name = "vector",
 	.initialise = io_vector_value_initialise,
 	.free = io_vector_value_free,
+	.decode = {io_decode_x70_to_invalid_value},
 	.encode = default_io_value_encode,
 	.receive = default_io_value_receive,
 	.compare = NULL,
@@ -4166,11 +4979,12 @@ EVENT_DATA io_vector_value_t cr_vector_v = {
 	.arity = 0,
 };
 
-#define SPECIALISE_RESULT_IMPLEMENTATION(S,E) \
+#define SPECIALISE_RESULT_IMPLEMENTATION(S,N) \
 	.specialisation_of = S, \
-	.encoding = decl_io_value_encoding (E),\
+	.name = N,	\
 	.initialise = io_value_initialise_nop, \
 	.free = io_value_free_nop, \
+	.decode = {io_decode_x70_to_invalid_value}, \
 	.encode = default_io_value_encode, \
 	.receive = default_io_value_receive, \
 	.compare = io_value_compare_no_comparison,\
@@ -4178,7 +4992,9 @@ EVENT_DATA io_vector_value_t cr_vector_v = {
 	/**/
 
 EVENT_DATA io_value_implementation_t io_result_value_implementation = {
-	SPECIALISE_RESULT_IMPLEMENTATION(&univ_value_implementation,CR_RESULT_ENCODING_INDEX)
+	SPECIALISE_RESULT_IMPLEMENTATION (
+		&univ_value_implementation,"result-of-receive"
+	)
 };
 EVENT_DATA io_vector_value_t cr_result_v = {
 	decl_io_value (&io_result_value_implementation,sizeof(io_value_t))
@@ -4186,18 +5002,21 @@ EVENT_DATA io_vector_value_t cr_result_v = {
 };
 
 EVENT_DATA io_value_implementation_t io_result_continue_value_implementation = {
-	SPECIALISE_RESULT_IMPLEMENTATION(&io_result_value_implementation,CR_RESULT_CONTINUE_ENCODING_INDEX)
+	SPECIALISE_RESULT_IMPLEMENTATION (
+		&io_result_value_implementation,"receive-result-continue"
+	)
 };
 EVENT_DATA io_vector_value_t cr_result_continue_v = {
 	decl_io_value (&io_result_continue_value_implementation,sizeof(io_value_t))
 	.arity = 0,
 };
 
-#define SPECIALISE_COMPARE_IMPLEMENTATION(S,E) \
+#define SPECIALISE_COMPARE_IMPLEMENTATION(S,N) \
 	.specialisation_of = S, \
-	.encoding = decl_io_value_encoding (E),\
+	.name = N,	\
 	.initialise = io_value_initialise_nop, \
 	.free = io_value_free_nop, \
+	.decode = {io_decode_x70_to_invalid_value},\
 	.encode = default_io_value_encode, \
 	.receive = default_io_value_receive, \
 	.compare = io_value_compare_no_comparison,\
@@ -4205,8 +5024,8 @@ EVENT_DATA io_vector_value_t cr_result_continue_v = {
 	/**/
 
 EVENT_DATA io_value_implementation_t io_compare_value_implementation = {
-	SPECIALISE_COMPARE_IMPLEMENTATION(
-		&univ_value_implementation,CR_COMPARE_ENCODING_INDEX
+	SPECIALISE_COMPARE_IMPLEMENTATION (
+		&univ_value_implementation,"ordering"
 	)
 };
 
@@ -4215,8 +5034,8 @@ EVENT_DATA io_value_t cr_compare_v = {
 };
 
 EVENT_DATA io_value_implementation_t io_compare_no_comparison_value_implementation = {
-	SPECIALISE_COMPARE_IMPLEMENTATION(
-		&io_compare_value_implementation,CR_COMPARE_NO_COMPARISON_ENCODING_INDEX
+	SPECIALISE_COMPARE_IMPLEMENTATION (
+		&io_compare_value_implementation,"ordering-none"
 	)
 };
 
@@ -4225,8 +5044,8 @@ EVENT_DATA io_value_t cr_compare_no_comparison_v = {
 };
 
 EVENT_DATA io_value_implementation_t io_compare_more_than_value_implementation = {
-	SPECIALISE_COMPARE_IMPLEMENTATION(
-		&io_compare_value_implementation,CR_COMPARE_MORE_THAN_ENCODING_INDEX
+	SPECIALISE_COMPARE_IMPLEMENTATION (
+		&io_compare_value_implementation,"ordering-more"
 	)
 };
 
@@ -4235,8 +5054,8 @@ EVENT_DATA io_value_t cr_compare_more_than_v = {
 };
 
 EVENT_DATA io_value_implementation_t io_compare_less_than_value_implementation = {
-	SPECIALISE_COMPARE_IMPLEMENTATION(
-		&io_compare_value_implementation,CR_COMPARE_LESS_THAN_ENCODING_INDEX
+	SPECIALISE_COMPARE_IMPLEMENTATION (
+		&io_compare_value_implementation,"ordering-less"
 	)
 };
 
@@ -4245,14 +5064,47 @@ EVENT_DATA io_value_t cr_compare_less_than_v = {
 };
 
 EVENT_DATA io_value_implementation_t io_compare_equal_to_value_implementation = {
-	SPECIALISE_COMPARE_IMPLEMENTATION(
-		&io_compare_value_implementation,CR_COMPARE_EQUAL_TO_ENCODING_INDEX
+	SPECIALISE_COMPARE_IMPLEMENTATION (
+		&io_compare_value_implementation,"ordering-equal"
 	)
 };
 
 EVENT_DATA io_value_t cr_compare_equal_to_v = {
 	decl_io_value (&io_compare_equal_to_value_implementation,sizeof(io_value_t))
 };
+
+bool
+add_core_value_implementations_to_hash (string_hash_table_t *hash) {
+	static io_value_implementation_t const * const imp[] = {
+		IO_VALUE_IMPLEMENTATION(&nil_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&univ_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&io_number_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&i64_number_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&f64_number_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&binary_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&binary_value_implementation_with_const_bytes),
+		IO_VALUE_IMPLEMENTATION(&io_text_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&io_symbol_value_implementation_with_const_bytes),
+		IO_VALUE_IMPLEMENTATION(&io_vector_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&io_result_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&io_result_continue_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&io_compare_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&io_compare_no_comparison_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&io_compare_more_than_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&io_compare_less_than_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&io_compare_equal_to_value_implementation),
+	};
+	bool ok = true;
+	
+	for (int i = 0; i < SIZEOF(imp) && ok; i++) {
+		ok &= string_hash_table_insert (
+			hash,imp[i]->name,strlen(imp[i]->name),def_hash_mapping_ro_ptr(imp[i])
+		);
+	}
+	
+	// will be false if duplicate name or out-of-memory
+	return ok;
+}
 
 //
 // Io language decoder
@@ -5959,9 +6811,8 @@ STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback,
       //
       // special case added to support io values
       //
-      case 'v':
-      	  {
-       		struct io_text_encoding_print_data *data = user;
+      case 'v': {
+			struct io_binary_encoding_print_data *data = user;
 			io_encoding_t *venc = mk_io_text_encoding (io_binary_encoding_byte_memory(data->this));
 			vref_t r_value = va_arg(va, vref_t);
 			if (io_value_encode (r_value,venc)) {
@@ -5989,8 +6840,8 @@ STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback,
 				*/
 			}
 			io_encoding_free(venc);
-      	  }
-          break;
+		}
+		break;
 
       case 'u': // unsigned
       case 'i':
@@ -6799,28 +7650,431 @@ static stbsp__int32 stbsp__real_to_str(char const **start, stbsp__uint32 *len, c
 #undef STBSP__UNALIGNED
 
 #endif // STB_SPRINTF_IMPLEMENTATION
+
 //
-// order MUST match declaration order in io_value_encoding_identifier_t
+// sha256
 //
-EVENT_DATA io_value_implementation_t const* io_value_implementation_enum[] = {
-	IO_VALUE_IMPLEMENTATION(&nil_value_implementation),
-	IO_VALUE_IMPLEMENTATION(&univ_value_implementation),
-	IO_VALUE_IMPLEMENTATION(&io_number_value_implementation),
-	IO_VALUE_IMPLEMENTATION(&i64_number_value_implementation),
-	IO_VALUE_IMPLEMENTATION(&f64_number_value_implementation),
-	IO_VALUE_IMPLEMENTATION(&binary_value_implementation),
-	IO_VALUE_IMPLEMENTATION(&binary_value_implementation_with_const_bytes),
-	IO_VALUE_IMPLEMENTATION(&io_text_value_implementation),
-	IO_VALUE_IMPLEMENTATION(&io_symbol_value_implementation_with_const_bytes),
-	IO_VALUE_IMPLEMENTATION(&io_vector_value_implementation),
-	IO_VALUE_IMPLEMENTATION(&io_result_value_implementation),
-	IO_VALUE_IMPLEMENTATION(&io_result_continue_value_implementation),
-	IO_VALUE_IMPLEMENTATION(&io_compare_value_implementation),
-	IO_VALUE_IMPLEMENTATION(&io_compare_no_comparison_value_implementation),
-	IO_VALUE_IMPLEMENTATION(&io_compare_more_than_value_implementation),
-	IO_VALUE_IMPLEMENTATION(&io_compare_less_than_value_implementation),
-	IO_VALUE_IMPLEMENTATION(&io_compare_equal_to_value_implementation),
+
+#define SHA256_VALIDATE_RET(cond) 
+#define SHA256_VALIDATE(cond) 
+
+/*
+ * 32-bit integer manipulation macros (big endian)
+ */
+#ifndef GET_UINT32_BE
+#define GET_UINT32_BE(n,b,i)                            \
+do {                                                    \
+    (n) = ( (uint32_t) (b)[(i)    ] << 24 )             \
+        | ( (uint32_t) (b)[(i) + 1] << 16 )             \
+        | ( (uint32_t) (b)[(i) + 2] <<  8 )             \
+        | ( (uint32_t) (b)[(i) + 3]       );            \
+} while( 0 )
+#endif
+
+#ifndef PUT_UINT32_BE
+#define PUT_UINT32_BE(n,b,i)                            \
+do {                                                    \
+    (b)[(i)    ] = (unsigned char) ( (n) >> 24 );       \
+    (b)[(i) + 1] = (unsigned char) ( (n) >> 16 );       \
+    (b)[(i) + 2] = (unsigned char) ( (n) >>  8 );       \
+    (b)[(i) + 3] = (unsigned char) ( (n)       );       \
+} while( 0 )
+#endif
+
+void io_tls_sha256_init( io_sha256_context_t *ctx )
+{
+    SHA256_VALIDATE( ctx != NULL );
+
+    memset( ctx, 0, sizeof( io_sha256_context_t ) );
+}
+
+void io_tls_sha256_free( io_sha256_context_t *ctx )
+{
+    if( ctx == NULL )
+        return;
+
+    memset (ctx,0,sizeof (io_sha256_context_t));
+}
+
+void
+io_tls_sha256_clone (io_sha256_context_t *dst,const io_sha256_context_t *src) {
+    *dst = *src;
+}
+
+int io_tls_sha256_starts_ret( io_sha256_context_t *ctx, int is224 )
+{
+    SHA256_VALIDATE_RET( ctx != NULL );
+    SHA256_VALIDATE_RET( is224 == 0 || is224 == 1 );
+
+    ctx->total[0] = 0;
+    ctx->total[1] = 0;
+
+    if( is224 == 0 )
+    {
+        /* SHA-256 */
+        ctx->state[0] = 0x6A09E667;
+        ctx->state[1] = 0xBB67AE85;
+        ctx->state[2] = 0x3C6EF372;
+        ctx->state[3] = 0xA54FF53A;
+        ctx->state[4] = 0x510E527F;
+        ctx->state[5] = 0x9B05688C;
+        ctx->state[6] = 0x1F83D9AB;
+        ctx->state[7] = 0x5BE0CD19;
+    }
+    else
+    {
+        /* SHA-224 */
+        ctx->state[0] = 0xC1059ED8;
+        ctx->state[1] = 0x367CD507;
+        ctx->state[2] = 0x3070DD17;
+        ctx->state[3] = 0xF70E5939;
+        ctx->state[4] = 0xFFC00B31;
+        ctx->state[5] = 0x68581511;
+        ctx->state[6] = 0x64F98FA7;
+        ctx->state[7] = 0xBEFA4FA4;
+    }
+
+    ctx->is224 = is224;
+
+    return( 0 );
+}
+
+static const uint32_t K[] =
+{
+    0x428A2F98, 0x71374491, 0xB5C0FBCF, 0xE9B5DBA5,
+    0x3956C25B, 0x59F111F1, 0x923F82A4, 0xAB1C5ED5,
+    0xD807AA98, 0x12835B01, 0x243185BE, 0x550C7DC3,
+    0x72BE5D74, 0x80DEB1FE, 0x9BDC06A7, 0xC19BF174,
+    0xE49B69C1, 0xEFBE4786, 0x0FC19DC6, 0x240CA1CC,
+    0x2DE92C6F, 0x4A7484AA, 0x5CB0A9DC, 0x76F988DA,
+    0x983E5152, 0xA831C66D, 0xB00327C8, 0xBF597FC7,
+    0xC6E00BF3, 0xD5A79147, 0x06CA6351, 0x14292967,
+    0x27B70A85, 0x2E1B2138, 0x4D2C6DFC, 0x53380D13,
+    0x650A7354, 0x766A0ABB, 0x81C2C92E, 0x92722C85,
+    0xA2BFE8A1, 0xA81A664B, 0xC24B8B70, 0xC76C51A3,
+    0xD192E819, 0xD6990624, 0xF40E3585, 0x106AA070,
+    0x19A4C116, 0x1E376C08, 0x2748774C, 0x34B0BCB5,
+    0x391C0CB3, 0x4ED8AA4A, 0x5B9CCA4F, 0x682E6FF3,
+    0x748F82EE, 0x78A5636F, 0x84C87814, 0x8CC70208,
+    0x90BEFFFA, 0xA4506CEB, 0xBEF9A3F7, 0xC67178F2,
 };
+
+#define  SHR(x,n) (((x) & 0xFFFFFFFF) >> (n))
+#define ROTR(x,n) (SHR(x,n) | ((x) << (32 - (n))))
+
+#define S0(x) (ROTR(x, 7) ^ ROTR(x,18) ^  SHR(x, 3))
+#define S1(x) (ROTR(x,17) ^ ROTR(x,19) ^  SHR(x,10))
+
+#define S2(x) (ROTR(x, 2) ^ ROTR(x,13) ^ ROTR(x,22))
+#define S3(x) (ROTR(x, 6) ^ ROTR(x,11) ^ ROTR(x,25))
+
+#define F0(x,y,z) (((x) & (y)) | ((z) & ((x) | (y))))
+#define F1(x,y,z) ((z) ^ ((x) & ((y) ^ (z))))
+
+#define R(t)                                    \
+    (                                           \
+        W[t] = S1(W[(t) -  2]) + W[(t) -  7] +  \
+               S0(W[(t) - 15]) + W[(t) - 16]    \
+    )
+
+#define P(a,b,c,d,e,f,g,h,x,K)                          \
+    do                                                  \
+    {                                                   \
+        temp1 = (h) + S3(e) + F1((e),(f),(g)) + (K) + (x); \
+        temp2 = S2(a) + F0((a),(b),(c));                   \
+        (d) += temp1; (h) = temp1 + temp2;              \
+    } while( 0 )
+
+int mbedtls_internal_sha256_process( io_sha256_context_t *ctx,
+                                const unsigned char data[64] )
+{
+    uint32_t temp1, temp2, W[64];
+    uint32_t A[8];
+    unsigned int i;
+
+    SHA256_VALIDATE_RET( ctx != NULL );
+    SHA256_VALIDATE_RET( (const unsigned char *)data != NULL );
+
+    for( i = 0; i < 8; i++ )
+        A[i] = ctx->state[i];
+
+#if defined(MBEDTLS_SHA256_SMALLER)
+    for( i = 0; i < 64; i++ )
+    {
+        if( i < 16 )
+            GET_UINT32_BE( W[i], data, 4 * i );
+        else
+            R( i );
+
+        P( A[0], A[1], A[2], A[3], A[4], A[5], A[6], A[7], W[i], K[i] );
+
+        temp1 = A[7]; A[7] = A[6]; A[6] = A[5]; A[5] = A[4]; A[4] = A[3];
+        A[3] = A[2]; A[2] = A[1]; A[1] = A[0]; A[0] = temp1;
+    }
+#else /* MBEDTLS_SHA256_SMALLER */
+    for( i = 0; i < 16; i++ )
+        GET_UINT32_BE( W[i], data, 4 * i );
+
+    for( i = 0; i < 16; i += 8 )
+    {
+        P( A[0], A[1], A[2], A[3], A[4], A[5], A[6], A[7], W[i+0], K[i+0] );
+        P( A[7], A[0], A[1], A[2], A[3], A[4], A[5], A[6], W[i+1], K[i+1] );
+        P( A[6], A[7], A[0], A[1], A[2], A[3], A[4], A[5], W[i+2], K[i+2] );
+        P( A[5], A[6], A[7], A[0], A[1], A[2], A[3], A[4], W[i+3], K[i+3] );
+        P( A[4], A[5], A[6], A[7], A[0], A[1], A[2], A[3], W[i+4], K[i+4] );
+        P( A[3], A[4], A[5], A[6], A[7], A[0], A[1], A[2], W[i+5], K[i+5] );
+        P( A[2], A[3], A[4], A[5], A[6], A[7], A[0], A[1], W[i+6], K[i+6] );
+        P( A[1], A[2], A[3], A[4], A[5], A[6], A[7], A[0], W[i+7], K[i+7] );
+    }
+
+    for( i = 16; i < 64; i += 8 )
+    {
+        P( A[0], A[1], A[2], A[3], A[4], A[5], A[6], A[7], R(i+0), K[i+0] );
+        P( A[7], A[0], A[1], A[2], A[3], A[4], A[5], A[6], R(i+1), K[i+1] );
+        P( A[6], A[7], A[0], A[1], A[2], A[3], A[4], A[5], R(i+2), K[i+2] );
+        P( A[5], A[6], A[7], A[0], A[1], A[2], A[3], A[4], R(i+3), K[i+3] );
+        P( A[4], A[5], A[6], A[7], A[0], A[1], A[2], A[3], R(i+4), K[i+4] );
+        P( A[3], A[4], A[5], A[6], A[7], A[0], A[1], A[2], R(i+5), K[i+5] );
+        P( A[2], A[3], A[4], A[5], A[6], A[7], A[0], A[1], R(i+6), K[i+6] );
+        P( A[1], A[2], A[3], A[4], A[5], A[6], A[7], A[0], R(i+7), K[i+7] );
+    }
+#endif /* MBEDTLS_SHA256_SMALLER */
+
+    for( i = 0; i < 8; i++ )
+        ctx->state[i] += A[i];
+
+    return( 0 );
+}
+
+#if !defined(MBEDTLS_DEPRECATED_REMOVED)
+void io_tls_sha256_process( io_sha256_context_t *ctx,
+                             const unsigned char data[64] )
+{
+    mbedtls_internal_sha256_process( ctx, data );
+}
+#endif
+
+/*
+ * SHA-256 process buffer
+ */
+int io_tls_sha256_update_ret( io_sha256_context_t *ctx,
+                               const unsigned char *input,
+                               size_t ilen )
+{
+    int ret;
+    size_t fill;
+    uint32_t left;
+
+    SHA256_VALIDATE_RET( ctx != NULL );
+    SHA256_VALIDATE_RET( ilen == 0 || input != NULL );
+
+    if( ilen == 0 )
+        return( 0 );
+
+    left = ctx->total[0] & 0x3F;
+    fill = 64 - left;
+
+    ctx->total[0] += (uint32_t) ilen;
+    ctx->total[0] &= 0xFFFFFFFF;
+
+    if( ctx->total[0] < (uint32_t) ilen )
+        ctx->total[1]++;
+
+    if( left && ilen >= fill )
+    {
+        memcpy( (void *) (ctx->buffer + left), input, fill );
+
+        if( ( ret = mbedtls_internal_sha256_process( ctx, ctx->buffer ) ) != 0 )
+            return( ret );
+
+        input += fill;
+        ilen  -= fill;
+        left = 0;
+    }
+
+    while( ilen >= 64 )
+    {
+        if( ( ret = mbedtls_internal_sha256_process( ctx, input ) ) != 0 )
+            return( ret );
+
+        input += 64;
+        ilen  -= 64;
+    }
+
+    if( ilen > 0 )
+        memcpy( (void *) (ctx->buffer + left), input, ilen );
+
+    return( 0 );
+}
+
+#if !defined(MBEDTLS_DEPRECATED_REMOVED)
+void io_tls_sha256_update( io_sha256_context_t *ctx,
+                            const unsigned char *input,
+                            size_t ilen )
+{
+    io_tls_sha256_update_ret( ctx, input, ilen );
+}
+#endif
+
+/*
+ * SHA-256 final digest
+ */
+int io_tls_sha256_finish_ret( io_sha256_context_t *ctx,
+                               unsigned char output[32] )
+{
+    int ret;
+    uint32_t used;
+    uint32_t high, low;
+
+    SHA256_VALIDATE_RET( ctx != NULL );
+    SHA256_VALIDATE_RET( (unsigned char *)output != NULL );
+
+    /*
+     * Add padding: 0x80 then 0x00 until 8 bytes remain for the length
+     */
+    used = ctx->total[0] & 0x3F;
+
+    ctx->buffer[used++] = 0x80;
+
+    if( used <= 56 )
+    {
+        /* Enough room for padding + length in current block */
+        memset( ctx->buffer + used, 0, 56 - used );
+    }
+    else
+    {
+        /* We'll need an extra block */
+        memset( ctx->buffer + used, 0, 64 - used );
+
+        if( ( ret = mbedtls_internal_sha256_process( ctx, ctx->buffer ) ) != 0 )
+            return( ret );
+
+        memset( ctx->buffer, 0, 56 );
+    }
+
+    /*
+     * Add message length
+     */
+    high = ( ctx->total[0] >> 29 )
+         | ( ctx->total[1] <<  3 );
+    low  = ( ctx->total[0] <<  3 );
+
+    PUT_UINT32_BE( high, ctx->buffer, 56 );
+    PUT_UINT32_BE( low,  ctx->buffer, 60 );
+
+    if( ( ret = mbedtls_internal_sha256_process( ctx, ctx->buffer ) ) != 0 )
+        return( ret );
+
+    /*
+     * Output final state
+     */
+    PUT_UINT32_BE( ctx->state[0], output,  0 );
+    PUT_UINT32_BE( ctx->state[1], output,  4 );
+    PUT_UINT32_BE( ctx->state[2], output,  8 );
+    PUT_UINT32_BE( ctx->state[3], output, 12 );
+    PUT_UINT32_BE( ctx->state[4], output, 16 );
+    PUT_UINT32_BE( ctx->state[5], output, 20 );
+    PUT_UINT32_BE( ctx->state[6], output, 24 );
+
+    if( ctx->is224 == 0 )
+        PUT_UINT32_BE( ctx->state[7], output, 28 );
+
+    return( 0 );
+}
+
+#if !defined(MBEDTLS_DEPRECATED_REMOVED)
+void io_tls_sha256_finish( io_sha256_context_t *ctx,
+                            unsigned char output[32] )
+{
+    io_tls_sha256_finish_ret( ctx, output );
+}
+#endif
+
+/*
+ * output = SHA-256( input buffer )
+ */
+int io_tls_sha256_ret( const unsigned char *input,
+                        size_t ilen,
+                        unsigned char output[32],
+                        int is224 )
+{
+    int ret;
+    io_sha256_context_t ctx;
+
+    SHA256_VALIDATE_RET( is224 == 0 || is224 == 1 );
+    SHA256_VALIDATE_RET( ilen == 0 || input != NULL );
+    SHA256_VALIDATE_RET( (unsigned char *)output != NULL );
+
+    io_tls_sha256_init( &ctx );
+
+    if( ( ret = io_tls_sha256_starts_ret( &ctx, is224 ) ) != 0 )
+        goto exit;
+
+    if( ( ret = io_tls_sha256_update_ret( &ctx, input, ilen ) ) != 0 )
+        goto exit;
+
+    if( ( ret = io_tls_sha256_finish_ret( &ctx, output ) ) != 0 )
+        goto exit;
+
+exit:
+    io_tls_sha256_free( &ctx );
+
+    return( ret );
+}
+
+#undef SHR
+#undef ROTR
+#undef S0
+#undef S1
+#undef S2
+#undef S3
+#undef F0
+#undef F1
+#undef R
+#undef P
+
+// end of sha256
+
+
+/*
+ * Common and shared functions used by multiple modules in the Mbed TLS
+ * library.
+ *
+ *  Copyright (C) 2018, Arm Limited, All Rights Reserved
+ *  SPDX-License-Identifier: Apache-2.0
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License"); you may
+ *  not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ *  WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ *  This file is part of Mbed TLS (https://tls.mbed.org)
+ */
+
+void
+io_cpu_sha256_start (io_sha256_context_t *ctx) {
+
+	memset (ctx,0,sizeof(io_sha256_context_t));
+	io_tls_sha256_starts_ret (ctx,0);
+}
+
+void
+io_cpu_sha256_update (io_sha256_context_t *ctx,uint8_t const *data,uint32_t size) {
+	io_tls_sha256_update_ret (ctx,data,size);
+}
+
+void
+io_cpu_sha256_finish (io_sha256_context_t *ctx,uint8_t output[32]) {
+	io_tls_sha256_finish_ret (ctx,output);
+}
+
 #endif /* IMPLEMENT_IO_CORE */
 #ifdef IMPLEMENT_VERIFY_IO_CORE
 #include <verify_io.h>

@@ -34,10 +34,128 @@ typedef int64_t	q64f32_t;
 #define Q64F32(v) Q64fN(v,32)
 
 
+uint32_t		next_prime_u32_integer (uint32_t);
+bool			is_u32_integer_prime (uint32_t);
+uint32_t		read_le_uint32 (uint8_t const*);
+int64_t		read_le_int64 (uint8_t const*);
+float64_t	read_le_float64 (uint8_t const*);
+float64_t	read_be_float64 (uint8_t const*);
 
 typedef int32_t	q32f31_t;
 #ifdef IMPLEMENT_IO_CORE
+//-----------------------------------------------------------------------------
+//
+// io core implementation
+//
+//-----------------------------------------------------------------------------
+uint32_t
+read_le_uint32 (uint8_t const* ptr) {
+	uint8_t const* ptr8 = (uint8_t const*) ptr;
+	return (
+			(uint32_t) ptr8[0] 
+		+	((uint32_t)ptr8[1] << 8)
+		+	((uint32_t)ptr8[2] << 16) 
+		+	((uint32_t)ptr8[3] << 24)
+	);
+}
 
+int64_t
+read_le_int64 (uint8_t const *ptr8) {
+	return (int64_t) (
+			(uint64_t)ptr8[0]
+		+	((uint64_t)ptr8[1] << 8ULL) 
+		+	((uint64_t)ptr8[2] << 16ULL) 
+		+	((uint64_t)ptr8[3] << 24ULL)
+		+	((uint64_t)ptr8[4] << 32ULL)
+		+	((uint64_t)ptr8[5] << 40ULL)
+		+	((uint64_t)ptr8[6] << 48ULL)
+		+	((uint64_t)ptr8[7] << 56ULL)
+	);
+}
+
+float64_t
+read_le_float64 (uint8_t const *ptr8) {
+	union {
+		uint8_t b[8];
+		float64_t f;
+	} conv = {0};
+	memcpy (conv.b,ptr8,8);
+	return conv.f;
+}
+
+float64_t
+read_be_float64 (uint8_t const *ptr8) {
+	union {
+		uint8_t b[8];
+		float64_t f;
+	} conv = {0};
+	conv.b[0] = ptr8[7];
+	conv.b[1] = ptr8[6];
+	conv.b[2] = ptr8[5];
+	conv.b[3] = ptr8[4];
+	conv.b[4] = ptr8[3];
+	conv.b[5] = ptr8[2];
+	conv.b[6] = ptr8[1];
+	conv.b[7] = ptr8[0];
+	return conv.f;
+}
+
+//
+// prime
+//
+
+bool
+is_u32_integer_prime (uint32_t x) {
+	if (x == 2) {
+		return true;
+	} else if (x < 2 || ((x & 0x1) == 0)) {
+		return false;
+	} else {
+		for (size_t i = 3; true; i+=2) {
+			size_t q = x / i;
+			if (q < i) {
+				return true;
+			}
+			if (x == q * i) {
+				return false;
+			}
+		}
+		return true;
+	}
+}
+
+uint32_t
+next_prime_u32_integer (uint32_t x) {
+	if (is_u32_integer_prime(x)) {
+		x += 1;
+	}
+	switch (x) {
+		case 0:
+		case 1:
+		case 2:
+			return 2;
+		case 3:
+			return 3;
+		case 4:
+		case 5:
+			return 5;
+		default: {
+			uint32_t k = x / 6;
+			uint32_t i = x - 6 * k;
+			uint32_t o = i < 2 ? 1 : 5;
+			x = 6 * k + o;
+			for (i = (3 + o) / 2; !is_u32_integer_prime (x); x += i) {
+				i ^= 6;
+			}
+			
+			return x;
+		}
+	}
+}
+
+//
+// float
+//
 #define io_math_float_abs(a)	fabs(a)
 
 bool
@@ -63,8 +181,8 @@ io_math_compare_float64_with_epsilon (float64_t a,float64_t b,float64_t epsilon)
 		return (a < b) ? -1 : 1;
 	}
 }
-
 #endif /* IMPLEMENT_IO_CORE */
+// NB: math tests are located in verify_io.h
 #endif /* io_math_H_ */
 /*
 ------------------------------------------------------------------------------
