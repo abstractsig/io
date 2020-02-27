@@ -26,7 +26,7 @@
  *
  * COMMING SOON
  * ============
- * Collection values: vector, list and map
+ * Collection values: list and map
  * Add cycle detection to garbage collection
  * Layered communication sockets
  * Persistent storage of io_values
@@ -136,7 +136,6 @@ void	io_byte_memory_get_info (io_byte_memory_t*,memory_info_t *info);
 #define io_byte_memory_allocate umm_malloc
 #define io_byte_memory_free umm_free
 #define io_byte_memory_reallocate umm_realloc
-
 
 /*
  *
@@ -1080,12 +1079,72 @@ void umm_value_memory_free_memory (io_value_memory_t*);
 /*
  *-----------------------------------------------------------------------------
  *
- * Io clocks are frequency references, e.g oscillators and dividers.
- *
- * Changing speed needs to traverse the full clock tree
+ * power and clocks
  *
  *-----------------------------------------------------------------------------
  */
+//
+// power domain
+//
+typedef struct io_cpu_power_domain io_cpu_power_domain_t;
+typedef struct io_cpu_power_domain_pointer io_cpu_power_domain_pointer_t;
+
+typedef struct io_cpu_power_domain_pointer_implementation {
+	io_cpu_power_domain_t const* (*get_as_read_only) (io_cpu_power_domain_pointer_t);
+	io_cpu_power_domain_t* (*get_as_read_write) (io_cpu_power_domain_pointer_t);
+} io_cpu_power_domain_pointer_implementation_t;
+
+struct io_cpu_power_domain_pointer {
+	io_cpu_power_domain_pointer_implementation_t const *implementation;
+	union {
+		io_cpu_power_domain_t const *ro;
+		io_cpu_power_domain_t *rw;
+	} ptr;
+};
+
+//
+// inline clock implementation
+//
+INLINE_FUNCTION io_cpu_power_domain_t const*
+io_cpu_power_domain_ro_pointer (io_cpu_power_domain_pointer_t p) {
+	return p.implementation->get_as_read_only(p);
+}
+
+INLINE_FUNCTION io_cpu_power_domain_t*
+io_cpu_power_domain_rw_pointer (io_cpu_power_domain_pointer_t p) {
+	return p.implementation->get_as_read_write(p);
+}
+
+extern EVENT_DATA io_cpu_power_domain_pointer_implementation_t 
+read_only_power_domain_implementation;
+
+#define def_io_cpu_power_domain_pointer(C)	((io_cpu_power_domain_pointer_t) {\
+																.implementation = &read_only_power_domain_implementation,\
+																.ptr.ro = (io_cpu_power_domain_t const*) (C)}\
+															)
+
+#define io_cpu_power_domain_pointer_ro(p) 	(p).ptr.ro
+#define io_cpu_power_domain_pointer_rw(p) 	(p).ptr.rw
+#define io_cpu_power_domain_is_valid(p) 		((p).ptr.ro != NULL)
+
+typedef struct PACK_STRUCTURE io_cpu_power_domain_implementation {
+	struct io_cpu_power_domain_implementation const *specialisation_of;
+	void (*turn_off) (io_t*,io_cpu_power_domain_pointer_t);
+	void (*turn_on) (io_t*,io_cpu_power_domain_pointer_t);
+} io_cpu_power_domain_implementation_t;
+
+#define IO_CPU_POWER_DOMAIN_STRUCT_MEMBERS \
+	io_cpu_power_domain_implementation_t const *implementation;\
+	uint32_t reference_count;	\
+	/**/
+
+struct PACK_STRUCTURE io_cpu_power_domain {
+    IO_CPU_POWER_DOMAIN_STRUCT_MEMBERS
+};
+
+//
+// clock
+//
 typedef struct io_cpu_clock io_cpu_clock_t;
 
 typedef union {
@@ -1096,12 +1155,13 @@ typedef union {
 typedef struct io_cpu_clock_implementation io_cpu_clock_implementation_t;
 
 #define IO_CPU_CLOCK_IMPLEMENTATION_STRUCT_MEMBERS \
-	io_cpu_clock_implementation_t const *specialisation_of;					\
-	float64_t (*get_frequency) (io_cpu_clock_pointer_t);						\
+	io_cpu_clock_implementation_t const *specialisation_of; \
+	float64_t (*get_frequency) (io_cpu_clock_pointer_t); \
+	io_cpu_power_domain_pointer_t (*get_power_domain) (io_cpu_clock_pointer_t); \
 	bool (*link_input_to_output) (io_cpu_clock_pointer_t,io_cpu_clock_pointer_t);	\
 	bool (*link_output_to_input) (io_cpu_clock_pointer_t,io_cpu_clock_pointer_t);	\
-	bool (*start) (io_cpu_clock_pointer_t);										\
-	void (*stop) (io_cpu_clock_pointer_t);										\
+	bool (*start) (io_t*,io_cpu_clock_pointer_t); \
+	void (*stop) (io_cpu_clock_pointer_t); \
 	/**/
 
 struct PACK_STRUCTURE io_cpu_clock_implementation {
@@ -1109,23 +1169,25 @@ struct PACK_STRUCTURE io_cpu_clock_implementation {
 };
 
 #define IO_CPU_CLOCK_STRUCT_MEMBERS \
-	io_cpu_clock_implementation_t const *implementation;		\
+	io_cpu_clock_implementation_t const *implementation; \
 	/**/
 
 struct PACK_STRUCTURE io_cpu_clock {
 	IO_CPU_CLOCK_STRUCT_MEMBERS
 };
 
-#define NULL_IO_CLOCK					((io_cpu_clock_pointer_t){NULL})
-#define IO_CPU_CLOCK(C)					((io_cpu_clock_pointer_t){(io_cpu_clock_t const*) (C)})
+#define NULL_IO_CLOCK						((io_cpu_clock_pointer_t){NULL})
+#define IO_CPU_CLOCK(C)						((io_cpu_clock_pointer_t){(io_cpu_clock_t const*) (C)})
 #define decl_io_cpu_clock_pointer(C)	{(io_cpu_clock_t const*) (C)}
+#define def_io_cpu_clock_pointer(C)		((io_cpu_clock_pointer_t){(io_cpu_clock_t const*) (C)})
+
 #define io_cpu_clock_ro_pointer(c) 		(c).ro
 
 bool	io_cpu_clock_link_output_to_input (io_cpu_clock_pointer_t output,io_cpu_clock_pointer_t input);
 bool	io_cpu_clock_link_input_to_output (io_cpu_clock_pointer_t input,io_cpu_clock_pointer_t output);
 void	io_cpu_clock_stop (io_cpu_clock_pointer_t);
 bool	io_cpu_clock_has_implementation (io_cpu_clock_pointer_t,io_cpu_clock_implementation_t const*);
-bool	io_cpu_dependant_clock_start_input (io_cpu_clock_pointer_t);
+bool	io_cpu_dependant_clock_start_input (io_t*,io_cpu_clock_pointer_t);
 
 //
 // inline clock implementation
@@ -1135,9 +1197,14 @@ io_cpu_clock_get_frequency (io_cpu_clock_pointer_t c) {
 	return io_cpu_clock_ro_pointer(c)->implementation->get_frequency(c);
 }
 
+INLINE_FUNCTION io_cpu_power_domain_pointer_t
+io_cpu_clock_power_domain (io_cpu_clock_pointer_t c) {
+	return io_cpu_clock_ro_pointer(c)->implementation->get_power_domain(c);
+}
+
 INLINE_FUNCTION bool
-io_cpu_clock_start (io_cpu_clock_pointer_t c) {
-	return io_cpu_clock_ro_pointer(c)->implementation->start(c);
+io_cpu_clock_start (io_t *io,io_cpu_clock_pointer_t c) {
+	return io_cpu_clock_ro_pointer(c)->implementation->start(io,c);
 }
 
 extern EVENT_DATA io_cpu_clock_implementation_t io_cpu_clock_implementation;
@@ -1160,7 +1227,7 @@ typedef struct PACK_STRUCTURE io_cpu_dependant_clock {
 	IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
 } io_cpu_dependant_clock_t;
 
-bool io_dependant_cpu_clock_start (io_cpu_clock_pointer_t);
+bool io_dependant_cpu_clock_start (io_t*,io_cpu_clock_pointer_t);
 float64_t io_dependant_cpu_clock_get_frequency (io_cpu_clock_pointer_t);
 
 #define IO_CPU_CLOCK_FUNCTION_STRUCT_MEMBERS \
@@ -1196,7 +1263,7 @@ typedef struct PACK_STRUCTURE io_socket_constructor {
 	io_socket_t* (*new) (io_t*,io_socket_constructor_t const*);\
 	io_socket_t* (*initialise) (io_socket_t*,io_t*,io_socket_constructor_t const*);\
 	void (*free) (io_socket_t*);\
-	bool (*open) (io_socket_t*);\
+	bool (*open) (io_t*,io_socket_t*);\
 	void (*close) (io_socket_t*);\
 	io_t*	(*get_io) (io_socket_t*); \
 	io_pipe_t* (*bindt) (io_socket_t*,io_event_t*);\
@@ -1240,8 +1307,8 @@ io_socket_initialise (io_socket_t *socket,io_t *io,io_socket_constructor_t const
 }
 
 INLINE_FUNCTION bool
-io_socket_open (io_socket_t *socket) {
-	return socket->implementation->open(socket);
+io_socket_open (io_t *io,io_socket_t *socket) {
+	return socket->implementation->open (io,socket);
 }
 
 INLINE_FUNCTION void
@@ -1708,6 +1775,22 @@ bool		io_vector_value_get_values (vref_t,uint32_t*,vref_t const**);
 //
 //-----------------------------------------------------------------------------
 
+static io_cpu_power_domain_t const*
+ro_pd_get_as_read_only (io_cpu_power_domain_pointer_t pd) {
+	return io_cpu_power_domain_pointer_ro (pd);
+}
+
+static io_cpu_power_domain_t*
+ro_pd_get_as_read_write (io_cpu_power_domain_pointer_t pd) {
+	return NULL;
+}
+
+EVENT_DATA io_cpu_power_domain_pointer_implementation_t 
+read_only_power_domain_implementation = {
+	.get_as_read_only = ro_pd_get_as_read_only,
+	.get_as_read_write = ro_pd_get_as_read_write,
+};
+
 //
 // io socket base
 //
@@ -1730,7 +1813,7 @@ io_socket_free_panic (io_socket_t *socket) {
 }
 
 static bool
-io_socket_open_nop (io_socket_t *socket) {
+io_socket_open_nop (io_t *io,io_socket_t *socket) {
 	return false;
 }
 
@@ -2283,13 +2366,13 @@ io_printf (io_t *io,const char *fmt,...) {
 //
 
 bool
-io_cpu_dependant_clock_start_input (io_cpu_clock_pointer_t clock) {
+io_cpu_dependant_clock_start_input (io_t *io,io_cpu_clock_pointer_t clock) {
 	io_cpu_dependant_clock_t const *this = (
 		(io_cpu_dependant_clock_t const*) io_cpu_clock_ro_pointer (clock)
 	);
 
 	if (io_cpu_clock_ro_pointer (this->input)) {
-		if (io_cpu_clock_start (this->input)) {
+		if (io_cpu_clock_start (io,this->input)) {
 			return io_cpu_clock_link_output_to_input (this->input,clock);
 		} else {
 			return false;
@@ -2362,7 +2445,7 @@ io_cpu_clock_get_frequency_base (io_cpu_clock_pointer_t clock) {
 }
 
 static bool
-io_cpu_clock_start_base (io_cpu_clock_pointer_t clock) {
+io_cpu_clock_start_base (io_t *io,io_cpu_clock_pointer_t clock) {
 	return false;
 }
 
@@ -2400,11 +2483,11 @@ io_dependant_cpu_clock_get_frequency (io_cpu_clock_pointer_t clock) {
 }
 
 bool
-io_dependant_cpu_clock_start (io_cpu_clock_pointer_t clock) {
+io_dependant_cpu_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
 	io_cpu_dependant_clock_t const *this = (io_cpu_dependant_clock_t const*) (
 		io_cpu_clock_ro_pointer (clock)
 	);
-	return io_cpu_clock_start (this->input);
+	return io_cpu_clock_start (io,this->input);
 }
 
 //
