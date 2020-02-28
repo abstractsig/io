@@ -23,6 +23,7 @@ int32_t io_math_compare_float64_with_epsilon (float64_t a,float64_t b,float64_t 
 #define io_math_compare_float64_eq(a,b) (io_math_compare_float64 (a,b) == 0)
 #define io_math_compare_float64_ge(a,b) (io_math_compare_float64 (a,b) >= 0)
 #define io_math_compare_float64_gt(a,b) (io_math_compare_float64 (a,b) > 0)
+#define io_math_compare_float64_lt(a,b) (io_math_compare_float64 (a,b) < 0)
 
 //
 // will drag in the dsp stuff here

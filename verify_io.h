@@ -346,9 +346,14 @@ TEST_END
 TEST_BEGIN(test_io_constant_values_1) {
 
 	VERIFY(vref_is_valid(cr_UNIV),NULL);
+	VERIFY (io_value_is_equal (cr_UNIV,cr_UNIV),NULL);
 
 	VERIFY(vref_is_valid(cr_NIL),NULL);
 	VERIFY (io_typesafe_ro_cast(cr_NIL,cr_NIL) != NULL,NULL);
+	VERIFY (io_value_is_equal (cr_NIL,cr_NIL),NULL);
+
+	VERIFY (io_value_is_more (cr_UNIV,cr_NIL),NULL);
+	VERIFY (io_value_is_less (cr_NIL,cr_UNIV),NULL);
 
 	VERIFY(vref_is_valid(cr_BINARY),NULL);
 	VERIFY (io_typesafe_ro_cast(cr_BINARY,cr_BINARY) != NULL,NULL);
@@ -372,6 +377,7 @@ TEST_BEGIN(test_io_constant_values_1) {
 	extern EVENT_DATA io_value_implementation_t f64_number_value_implementation;
 	extern EVENT_DATA io_value_implementation_t binary_value_implementation;
 	extern EVENT_DATA io_value_implementation_t io_text_value_implementation;
+	extern EVENT_DATA io_value_implementation_t io_cons_value_implementation;
 	io_value_implementation_t const* expect[] = {
 		&univ_value_implementation,
 		&nil_value_implementation,
@@ -380,6 +386,7 @@ TEST_BEGIN(test_io_constant_values_1) {
 		&f64_number_value_implementation,
 		&binary_value_implementation,
 		&io_text_value_implementation,
+		&io_cons_value_implementation,
 	};
 	bool ok = true;
 	for (int i = 0; i < SIZEOF(expect) && ok; i++) {
@@ -417,6 +424,8 @@ TEST_BEGIN(test_io_int64_value_1) {
 			(io_encoding_t*) &enc,io_integer_to_integer_value_decoder,vm
 		);
 		if (VERIFY (vref_is_valid (r_decoded),NULL)) {
+			vref_t r_small = mk_io_int64_value (vm,-2);
+			
 			int64_t i64_value;
 
 			reference_value (r_decoded);
@@ -433,6 +442,11 @@ TEST_BEGIN(test_io_int64_value_1) {
 
 			VERIFY (io_value_get_as_int64(r_decoded,&i64_value) && i64_value == 42,NULL);
 
+			VERIFY (io_value_is_equal (r_decoded,r_value),NULL);
+			VERIFY (io_value_is_more (r_decoded,r_small),NULL);
+			VERIFY (io_value_is_less (r_small,r_value),NULL);
+			VERIFY (io_value_not_equal (cr_NIL,r_value),NULL);
+			
 			unreference_value (r_decoded);
 		}
 	}
@@ -529,7 +543,7 @@ TEST_BEGIN(test_io_int64_value_3) {
 			) {
 				int64_t i64_value;
 				VERIFY (
-						io_value_get_as_int64 (r_value,&i64_value)
+						io_value_get_as_int64 (r_decoded,&i64_value)
 					&&	i64_value == 42,
 					NULL
 				);
@@ -655,12 +669,16 @@ TEST_BEGIN(test_io_float64_value_3) {
 					NULL
 				)
 			) {
+				vref_t r_small = mk_io_float64_value (vm,12.1);
 				float64_t f64_value;
 				VERIFY (
-						io_value_get_as_float64 (r_value,&f64_value)
+						io_value_get_as_float64 (r_decoded,&f64_value)
 					&&	io_math_compare_float64_eq (f64_value,42.1),
 					NULL
 				);
+				VERIFY (io_value_is_equal (r_decoded,r_value),NULL);
+				VERIFY (io_value_is_less (r_small,r_value),NULL);
+				VERIFY (io_value_is_more (r_value,r_small),NULL);
 			}
 		}
 
@@ -824,13 +842,18 @@ TEST_BEGIN(test_io_text_value_2) {
 				) {
 					io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
 					io_encoding_t *e1 = mk_io_text_encoding (bm);
-
+					vref_t r_long = mk_io_text_value (vm,(uint8_t const*)"abcd",4);
+					
 					if (VERIFY (io_value_encode (r_decoded,e1),NULL)) {
 						const uint8_t *b,*e;
 						io_encoding_get_ro_bytes (e1,&b,&e);
 						VERIFY ((e - b) == 3 && memcmp(b,"abc",3) == 0,NULL);
 					}
 
+					VERIFY (io_value_is_equal (r_decoded,r_value),NULL);
+					VERIFY (io_value_is_less (r_decoded,r_long),NULL);
+					VERIFY (io_value_is_more (r_long,r_value),NULL);
+					
 					io_encoding_free(e1);
 				}
 			}
@@ -908,6 +931,45 @@ TEST_BEGIN(test_vector_value_2) {
 }
 TEST_END
 
+TEST_BEGIN(test_cons_value_1) {
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
+	memory_info_t vm_begin,vm_end;
+	vref_t r_value,r_car;
+	
+	io_value_memory_get_info (vm,&vm_begin);
+
+	r_value = mk_io_cons_value (vm,cr_NIL,cr_NIL);
+	if (VERIFY(vref_is_valid(r_value),NULL)) {
+		vref_t r_part;
+		
+		VERIFY (io_typesafe_ro_cast (r_value,cr_CONS) != NULL,NULL);
+
+		r_part = cr_UNIV;
+		VERIFY (io_cons_value_get_car (r_value,&r_part) && vref_is_nil(r_part),NULL);
+		r_part = cr_UNIV;
+		VERIFY (io_cons_value_get_cdr (r_value,&r_part) && vref_is_nil(r_part),NULL);
+
+	}
+
+	r_car =  mk_io_int64_value (vm,-2);
+	r_value = mk_io_cons_value (vm,r_car,cr_NIL);
+	if (VERIFY(vref_is_valid(r_value),NULL)) {
+		vref_t r_part;
+		VERIFY (io_typesafe_ro_cast (r_value,cr_CONS) != NULL,NULL);
+		
+		VERIFY (io_value_is_equal (r_value,r_value),NULL);
+		r_part = cr_UNIV;
+		VERIFY (io_cons_value_get_car (r_value,&r_part) && vref_is_equal_to(r_part,r_car),NULL);
+		r_part = cr_UNIV;
+		VERIFY (io_cons_value_get_cdr (r_value,&r_part) && vref_is_nil(r_part),NULL);
+	}
+
+	io_value_memory_do_gc (vm,-1);
+	io_value_memory_get_info (vm,&vm_end);
+	VERIFY (vm_end.used_bytes == vm_begin.used_bytes,NULL);
+}
+TEST_END
+
 UNIT_SETUP(setup_io_core_values_unit_test) {
 	io_byte_memory_get_info (io_get_byte_memory (TEST_IO),TEST_MEMORY_INFO);
 	io_value_memory_get_info (io_get_short_term_value_memory (TEST_IO),TEST_MEMORY_INFO + 1);
@@ -945,6 +1007,7 @@ io_core_values_unit_test (V_unit_test_t *unit) {
 		test_stack_vector_value_1,
 		test_vector_value_1,
 		test_vector_value_2,
+		test_cons_value_1,
 		0
 	};
 	unit->name = "io_values";

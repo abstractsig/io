@@ -137,6 +137,49 @@ void	io_byte_memory_get_info (io_byte_memory_t*,memory_info_t *info);
 #define io_byte_memory_free umm_free
 #define io_byte_memory_reallocate umm_realloc
 
+#define IO_UID_BYTE_LENGTH				16
+#define IO_UID_WORDS_LENGTH			(IO_UID_BYTE_LENGTH/sizeof(uint32_t))
+#define IO_UID_RESERVED_LIMIT			0xffff
+
+typedef union PACK_STRUCTURE {
+	uint32_t words[IO_UID_BYTE_LENGTH/sizeof(uint32_t)];
+	uint8_t bytes[IO_UID_BYTE_LENGTH];
+} io_uid_t;
+
+
+#define IO_AUTHENTICATION_KEY_BYTE_LENGTH			32	// bytes
+#define IO_AUTHENTICATION_KEY_WORD_LENGTH			(IO_AUTHENTICATION_KEY_BYTE_LENGTH/sizeof(uint32_t))
+#define IO_AUTHENTICATION_KEY_LONG_WORD_LENGTH	(IO_AUTHENTICATION_KEY_BYTE_LENGTH/sizeof(uint64_t))
+
+typedef union PACK_STRUCTURE io_authentication_key {
+	uint64_t long_words[IO_AUTHENTICATION_KEY_LONG_WORD_LENGTH];
+	uint32_t words[IO_AUTHENTICATION_KEY_WORD_LENGTH];
+	uint8_t bytes[IO_AUTHENTICATION_KEY_BYTE_LENGTH];
+	struct PACK_STRUCTURE {
+		uint8_t lower_half[IO_AUTHENTICATION_KEY_BYTE_LENGTH/2];
+		uint8_t upper_half[IO_AUTHENTICATION_KEY_BYTE_LENGTH/2];
+	} part;
+} io_authentication_key_t;
+
+#define IO_RETAINED_STATE_STRUCT_MEMBERS \
+	uint32_t	first_run_flag;							\
+	uint32_t	power_cycles;								\
+	io_uid_t uid;											\
+	io_authentication_key_t secret;					\
+	io_authentication_key_t shared;					\
+	/**/
+
+typedef struct PACK_STRUCTURE {
+	IO_RETAINED_STATE_STRUCT_MEMBERS
+} io_retained_state_t;
+
+#define IO_FIRST_RUN_SET		0xaaaaaaaa
+#define IO_FIRST_RUN_CLEAR		0xbbbbbbbb
+
+#define io_config_u32_ptr(c)	(&(c).first_run_flag)
+#define io_config_u32_size()	(sizeof(io_nvconfig_t)/sizeof(uint32_t))
+
+
 /*
  *
  * Events
@@ -497,6 +540,10 @@ extern EVENT_DATA io_value_reference_implementation_t reference_to_constant_valu
 #define vref_is_equal_to(a,b)		(\
 													(vref_implementation(a) == vref_implementation(b)) \
 												&& (vref_expando(a).ptr == vref_expando(b).ptr) \
+											)
+#define vref_not_equal_to(a,b)	(\
+													(vref_implementation(a) != vref_implementation(b)) \
+												|| (vref_expando(a).ptr != vref_expando(b).ptr) \
 											)
 #define vref_is_nil(r)				vref_is_equal_to(r,cr_NIL)
 #define vref_not_nil(r)				(!vref_is_equal_to(r,cr_NIL))
@@ -893,6 +940,7 @@ struct PACK_STRUCTURE io_value {
 #define io_value_size(v)				((v)->size_)
 
 void const*	io_typesafe_ro_cast (vref_t,vref_t);
+void const* io_typesafe_ro_cast_to_type (io_value_t const*,io_value_implementation_t const*);
 void io_value_free_nop (io_value_t*);
 bool default_io_value_encode (vref_t,io_encoding_t*);
 vref_t	default_io_value_receive (io_t*,vref_t,uint32_t,vref_t const*);
@@ -936,6 +984,12 @@ io_value_get_modes (io_value_t const* v) {
 INLINE_FUNCTION vref_t
 io_value_compare (io_value_t const *v,vref_t r_other) {
 	return v->implementation->compare(v,r_other);
+}
+
+INLINE_FUNCTION vref_t
+compare_io_values (vref_t r_value,vref_t r_other) {
+	io_value_t const *v = vref_cast_to_ro_pointer (r_value);
+	return io_value_compare (v,r_other);
 }
 
 INLINE_FUNCTION io_value_implementation_t const*
@@ -987,7 +1041,7 @@ io_value_mode_t const* io_modal_value_get_modes (io_value_t const*);
 	.free = io_value_free_nop,	\
 	.encode = default_io_value_encode,	\
 	.receive = io_modal_value_receive,\
-	.compare = NULL, \
+	.compare = io_value_compare_no_comparison, \
 	.get_modes = io_modal_value_get_modes,\
 	.modes = MODES,\
 	/**/
@@ -1785,6 +1839,30 @@ vref_t	mk_io_vector_value (io_value_memory_t*,uint32_t,vref_t const*);
 bool		io_vector_value_get_arity (vref_t,uint32_t*);
 bool		io_vector_value_get_values (vref_t,uint32_t*,vref_t const**);
 
+typedef struct PACK_STRUCTURE {
+	IO_VALUE_STRUCT_MEMBERS
+	vref_t r_car;
+	vref_t r_cdr;
+} io_cons_value_t;
+
+vref_t	mk_io_cons_value (io_value_memory_t*,vref_t,vref_t);
+bool		io_cons_value_get_car (vref_t,vref_t*);
+bool		io_cons_value_get_cdr (vref_t,vref_t*);
+
+#define IO_LIST_VALUE_STRUCT_MEMBERS \
+	IO_VALUE_STRUCT_MEMBERS \
+	vref_t r_head; \
+	/**/
+
+typedef struct PACK_STRUCTURE {
+	IO_LIST_VALUE_STRUCT_MEMBERS
+} io_list_value_t;
+
+typedef struct PACK_STRUCTURE {
+	IO_VALUE_STRUCT_MEMBERS
+} io_map_value_t;
+
+
 #include <io_math.h>
 
 #ifdef IMPLEMENT_IO_CORE
@@ -2066,7 +2144,18 @@ decl_particular_value(cr_RESULT,				io_vector_value_t,cr_result_v)
 decl_particular_value(cr_RESULT_CONTINUE,	io_vector_value_t,cr_result_continue_v)
 
 decl_particular_value(cr_COMPARE,			io_value_t,cr_compare_v)
+decl_particular_value(cr_COMPARE_MORE,		io_value_t,cr_compare_more_than_v)
+decl_particular_value(cr_COMPARE_LESS,		io_value_t,cr_compare_less_than_v)
+decl_particular_value(cr_COMPARE_EQUAL,	io_value_t,cr_compare_equal_to_v)
 decl_particular_value(cr_COMPARE_NO_COMPARISON,	io_value_t,cr_compare_no_comparison_v)
+
+decl_particular_value(cr_COLLECTION,		io_value_t,cr_collection_v)
+decl_particular_value(cr_CONS,				io_cons_value_t,cr_cons_v)
+
+#define io_value_is_equal(a,b) vref_is_equal_to (compare_io_values (a,b),cr_COMPARE_EQUAL)
+#define io_value_not_equal(a,b) vref_not_equal_to (compare_io_values (a,b),cr_COMPARE_EQUAL)
+#define io_value_is_more(a,b) vref_is_equal_to (compare_io_values (a,b),cr_COMPARE_MORE)
+#define io_value_is_less(a,b) vref_is_equal_to (compare_io_values (a,b),cr_COMPARE_LESS)
 
 extern EVENT_DATA io_value_implementation_t io_symbol_value_implementation_with_const_bytes;
 #ifdef IMPLEMENT_IO_CORE
@@ -4132,9 +4221,7 @@ EVENT_DATA io_binary_encoding_implementation_t io_x70_encoding_implementation = 
 //
 
 void const*
-io_typesafe_ro_cast (vref_t r_value,vref_t r_type) {
-	io_value_t const *downcast = vref_cast_to_ro_pointer (r_value);
-	io_value_implementation_t const *I = get_io_value_implementation (r_type);
+io_typesafe_ro_cast_to_type (io_value_t const *downcast,io_value_implementation_t const *I) {
 
 	if (downcast) {
 		io_value_implementation_t const *S = io_value_implementation (downcast);
@@ -4152,6 +4239,13 @@ io_typesafe_ro_cast (vref_t r_value,vref_t r_type) {
 	return downcast;
 }
 
+void const*
+io_typesafe_ro_cast (vref_t r_value,vref_t r_type) {
+	io_value_t const *downcast = vref_cast_to_ro_pointer (r_value);
+	io_value_implementation_t const *I = get_io_value_implementation (r_type);
+	return io_typesafe_ro_cast_to_type(downcast,I);
+}
+
 void
 io_value_free_nop (io_value_t *value) {
 }
@@ -4162,7 +4256,7 @@ io_value_initialise_nop (vref_t r_value,vref_t r_base) {
 }
 
 vref_t
-io_value_compare_no_comparison(io_value_t const *this,vref_t r_other) {
+io_value_compare_no_comparison (io_value_t const *this,vref_t r_other) {
 	return cr_COMPARE_NO_COMPARISON;
 }
 
@@ -4187,6 +4281,16 @@ io_decode_x70_to_invalid_value (
 	return INVALID_VREF;
 }
 
+static vref_t
+io_value_compare_with_univ (io_value_t const *this,vref_t r_other) {
+	io_value_t const *other = vref_cast_to_ro_pointer (r_other);
+	if (other->implementation == this->implementation) {
+		return cr_COMPARE_EQUAL;
+	} else {
+		return cr_COMPARE_MORE;
+	}
+}
+
 //
 // universal value
 //
@@ -4199,13 +4303,22 @@ EVENT_DATA io_value_implementation_t univ_value_implementation = {
 	.decode = {io_decode_x70_to_invalid_value},
 	.encode = default_io_value_encode,
 	.receive = default_io_value_receive,
-	.compare = NULL,
+	.compare = io_value_compare_with_univ,
 	.get_modes = io_value_get_null_modes,
 };
 
 EVENT_DATA io_univ_value_t cr_univ_v = {
 	decl_io_value (&univ_value_implementation,sizeof(io_univ_value_t))
 };
+
+static vref_t
+io_value_compare_with_nil (io_value_t const *this,vref_t r_other) {
+	if (io_typesafe_ro_cast (r_other,cr_NIL)) {
+		return cr_COMPARE_EQUAL;
+	} else {
+		return cr_COMPARE_LESS;
+	}
+}
 
 EVENT_DATA io_value_implementation_t nil_value_implementation = {
 	.specialisation_of = &univ_value_implementation,
@@ -4215,7 +4328,7 @@ EVENT_DATA io_value_implementation_t nil_value_implementation = {
 	.decode = {io_decode_x70_to_invalid_value},
 	.encode = default_io_value_encode,
 	.receive = default_io_value_receive,
-	.compare = NULL,
+	.compare = io_value_compare_with_nil,
 	.get_modes = io_value_get_null_modes,
 };
 
@@ -4235,7 +4348,7 @@ EVENT_DATA io_value_implementation_t io_number_value_implementation = {
 	.decode = {io_decode_x70_to_invalid_value},
 	.encode = default_io_value_encode,
 	.receive = default_io_value_receive,
-	.compare = NULL,
+	.compare = io_value_compare_no_comparison,
 	.get_modes = io_value_get_null_modes,
 };
 
@@ -4297,6 +4410,31 @@ io_int64_decode_x70_value (
 	}
 }
 
+INLINE_FUNCTION vref_t
+to_comparison_value (int32_t comparison) {
+	return (
+		(comparison == 0) 
+		? cr_COMPARE_EQUAL
+		: (comparison > 0)
+		? cr_COMPARE_MORE
+		: cr_COMPARE_LESS
+	);
+}
+
+static vref_t
+compare_with_i64_number (io_value_t const *v,vref_t r_other) {
+	io_value_t const *other = vref_cast_to_ro_pointer (r_other);
+	if (io_typesafe_ro_cast_to_type (other,v->implementation)) {
+		io_int64_value_t const *this = (io_int64_value_t const*) v;
+		io_int64_value_t const *o = (io_int64_value_t const*) other;
+		return to_comparison_value (this->value - o->value);
+	} else {
+		return to_comparison_value (
+			strcmp (v->implementation->name,other->implementation->name)
+		);
+	}
+}
+
 EVENT_DATA io_value_implementation_t i64_number_value_implementation = {
 	.specialisation_of = &io_number_value_implementation,
 	.name = "i64",
@@ -4305,7 +4443,7 @@ EVENT_DATA io_value_implementation_t i64_number_value_implementation = {
 	.encode = io_int64_value_encode,
 	.decode = {io_int64_decode_x70_value},
 	.receive = default_io_value_receive,
-	.compare = NULL,
+	.compare = compare_with_i64_number,
 	.get_modes = io_value_get_null_modes,
 };
 
@@ -4351,7 +4489,6 @@ io_value_get_as_int64 (vref_t r_value,int64_t *value) {
 //
 // float64
 //
-
 static io_value_t*
 io_float64_value_initialise (vref_t r_value,vref_t r_base) {
 	io_float64_value_t *this =  vref_cast_to_rw_pointer (r_value);
@@ -4398,11 +4535,31 @@ io_float64_decode_x70_value (
 	io_value_memory_t *vm,uint8_t const**b,const uint8_t *e
 ) {	
 	if ((e - *b) >= sizeof(float64_t)) {
-		float64_t v = read_be_float64 (*b);
+		float64_t v = read_le_float64 (*b);
 		*b += sizeof(float64_t);
 		return mk_io_float64_value (vm,v);
 	} else {
 		return INVALID_VREF;
+	}
+}
+
+static vref_t
+compare_with_f64_number (io_value_t const *v,vref_t r_other) {
+	io_value_t const *other = vref_cast_to_ro_pointer (r_other);
+	if (io_typesafe_ro_cast_to_type (other,v->implementation)) {
+		io_float64_value_t const *this = (io_float64_value_t const*) v;
+		io_float64_value_t const *o = (io_float64_value_t const*) other;
+		if (io_math_compare_float64_eq (this->value,o->value)) {
+			return cr_COMPARE_EQUAL;
+		} else if (io_math_compare_float64_lt (this->value,o->value)) {
+			return cr_COMPARE_LESS;
+		} else {
+			return cr_COMPARE_MORE;
+		}
+	} else {
+		return to_comparison_value (
+			strcmp (v->implementation->name,other->implementation->name)
+		);
 	}
 }
 
@@ -4414,7 +4571,7 @@ EVENT_DATA io_value_implementation_t f64_number_value_implementation = {
 	.decode = {io_float64_decode_x70_value},
 	.encode = io_float64_value_encode,
 	.receive = default_io_value_receive,
-	.compare = NULL,
+	.compare = compare_with_f64_number,
 	.get_modes = io_value_get_null_modes,
 };
 
@@ -4625,6 +4782,32 @@ io_binary_decode_x70_value (
 	return INVALID_VREF;
 }
 
+static vref_t
+compare_binary_with_other (io_value_t const *v,vref_t r_other) {
+	io_value_t const *other = vref_cast_to_ro_pointer (r_other);
+	if (io_typesafe_ro_cast_to_type (other,v->implementation)) {
+		io_binary_value_t const *this = (io_binary_value_t const*) v;
+		io_binary_value_t const *o = (io_binary_value_t const*) other;
+		
+		if (io_binary_value_size(this) == io_binary_value_size(o)) {
+			return to_comparison_value (
+				memcmp (
+					io_binary_value_ro_bytes(this),
+					io_binary_value_ro_bytes(o),
+					io_binary_value_size(this)
+				)
+			);
+		} else if (io_binary_value_size(this) > io_binary_value_size(o)) {
+			return cr_COMPARE_MORE;
+		} else {
+			return cr_COMPARE_LESS;
+		}
+	} else {
+		return to_comparison_value (
+			strcmp (v->implementation->name,other->implementation->name)
+		);
+	}
+}
 
 EVENT_DATA io_value_implementation_t binary_value_implementation = {
 	.specialisation_of = &univ_value_implementation,
@@ -4634,7 +4817,7 @@ EVENT_DATA io_value_implementation_t binary_value_implementation = {
 	.decode = {io_binary_decode_x70_value},
 	.encode = default_io_value_encode,
 	.receive = default_io_value_receive,
-	.compare = NULL,
+	.compare = compare_binary_with_other,
 	.get_modes = io_value_get_null_modes,
 };
 
@@ -4684,7 +4867,7 @@ EVENT_DATA io_value_implementation_t binary_value_implementation_with_const_byte
 	.decode = {io_decode_x70_to_invalid_value},
 	.encode = io_binary_value_encode,
 	.receive = default_io_value_receive,
-	.compare = NULL,
+	.compare = io_value_compare_no_comparison,
 	.get_modes = io_value_get_null_modes,
 };
 
@@ -4724,7 +4907,7 @@ EVENT_DATA io_value_implementation_t binary_value_implementation_with_dynamic_by
 	.decode = {io_decode_x70_to_invalid_value},
 	.encode = io_binary_value_encode,
 	.receive = default_io_value_receive,
-	.compare = NULL,
+	.compare = io_value_compare_no_comparison,
 	.get_modes = io_value_get_null_modes,
 };
 
@@ -4802,7 +4985,7 @@ EVENT_DATA io_value_implementation_t io_text_value_implementation = {
 	.decode = {io_text_decode_x70_value},
 	.encode = io_text_value_encode,
 	.receive = default_io_value_receive,
-	.compare = NULL,
+	.compare = compare_binary_with_other,
 	.get_modes = io_value_get_null_modes,
 };
 EVENT_DATA io_binary_value_t cr_text_v = {
@@ -4825,7 +5008,7 @@ EVENT_DATA io_value_implementation_t io_symbol_value_implementation_with_const_b
 	.decode = {io_decode_x70_to_invalid_value},
 	.encode = io_binary_value_encode,
 	.receive = default_io_value_receive,
-	.compare = NULL,
+	.compare = io_value_compare_no_comparison,
 	.get_modes = io_value_get_null_modes,
 };
 
@@ -4844,7 +5027,7 @@ EVENT_DATA io_value_implementation_t io_exception_value_implementation_with_cons
 	.decode = {io_decode_x70_to_invalid_value},
 	.encode = io_binary_value_encode,
 	.receive = default_io_value_receive,
-	.compare = NULL,
+	.compare = io_value_compare_no_comparison,
 	.get_modes = io_value_get_null_modes,
 };
 
@@ -4889,7 +5072,7 @@ EVENT_DATA io_value_implementation_t io_symbol_value_implementation_with_volatil
 	.decode = {io_decode_x70_to_invalid_value},
 	.encode = io_binary_value_encode,
 	.receive = default_io_value_receive,
-	.compare = NULL,
+	.compare = io_value_compare_no_comparison,
 	.get_modes = io_value_get_null_modes,
 };
 
@@ -4935,6 +5118,152 @@ io_modal_value_receive (io_t *io,vref_t r_this,uint32_t argc,vref_t const *args)
 	return cr_NIL;  // cr_CONTINUE_NO_MATCH;
 }
 
+EVENT_DATA io_value_implementation_t io_collection_value_implementation = {
+	.specialisation_of = &univ_value_implementation,
+	.name = "collection",
+	.initialise = io_value_initialise_nop,
+	.free = io_value_free_nop,
+	.decode = {io_decode_x70_to_invalid_value},
+	.encode = default_io_value_encode,
+	.receive = default_io_value_receive,
+	.compare = io_value_compare_no_comparison,
+	.get_modes = io_value_get_null_modes,
+};
+
+EVENT_DATA io_value_t cr_collection_v = {
+	decl_io_value (&io_collection_value_implementation,sizeof(io_value_t))
+};
+
+static io_value_t*
+io_cons_value_initialise (vref_t r_value,vref_t r_base) {
+	io_cons_value_t *this = vref_cast_to_rw_pointer(r_value);
+	io_cons_value_t const *base = io_typesafe_ro_cast(r_base,cr_CONS);
+
+	if (base != NULL) {
+		this->r_car = reference_value (base->r_car);
+		this->r_cdr = reference_value (base->r_cdr);
+	} else {
+		this = NULL;
+	}
+
+	return (io_value_t*) this;
+}
+
+static void
+io_cons_value_free (io_value_t *value) {
+	io_cons_value_t *this = (io_cons_value_t*) (value);
+	unreference_value (this->r_car);
+	unreference_value (this->r_cdr);
+}
+
+static vref_t
+compare_cons_value_to (io_value_t const *v,vref_t r_other) {
+	io_value_t const *other = vref_cast_to_ro_pointer (r_other);
+	if (io_typesafe_ro_cast_to_type (other,v->implementation)) {
+		io_cons_value_t const *this = (io_cons_value_t const*) v;
+		io_cons_value_t const *o = (io_cons_value_t const*) other;
+		vref_t r_cmp = compare_io_values (this->r_car,o->r_car);
+		if (vref_is_equal_to (r_cmp,cr_COMPARE_EQUAL)) {
+			return compare_io_values (this->r_cdr,o->r_cdr);
+		} else {
+			return r_cmp;
+		}
+	} else {
+		return to_comparison_value (
+			strcmp (v->implementation->name,other->implementation->name)
+		);
+	}
+}
+
+bool
+io_cons_value_get_car (vref_t r_this,vref_t *r_car) {
+	io_cons_value_t const *this = io_typesafe_ro_cast (r_this,cr_CONS);
+	if (this != NULL) {
+		*r_car = this->r_car;
+		return true;
+	} else {
+		return false;
+	}
+}
+
+bool
+io_cons_value_get_cdr (vref_t r_this,vref_t *r_cdr) {
+	io_cons_value_t const *this = io_typesafe_ro_cast (r_this,cr_CONS);
+	if (this != NULL) {
+		*r_cdr = this->r_cdr;
+		return true;
+	} else {
+		return false;
+	}
+}
+
+EVENT_DATA io_value_implementation_t io_cons_value_implementation = {
+	.specialisation_of = &univ_value_implementation,
+	.name = "cons",
+	.initialise = io_cons_value_initialise,
+	.free = io_cons_value_free,
+	.decode = {io_decode_x70_to_invalid_value},
+	.encode = default_io_value_encode,
+	.receive = default_io_value_receive,
+	.compare = compare_cons_value_to,
+	.get_modes = io_value_get_null_modes,
+};
+
+EVENT_DATA io_cons_value_t cr_cons_v = {
+	decl_io_value (&io_cons_value_implementation,sizeof(io_cons_value_t))
+	.r_car = cr_NIL,
+	.r_cdr = cr_NIL,
+};
+
+vref_t
+mk_io_cons_value (io_value_memory_t *vm,vref_t r_car,vref_t r_cdr) {
+	io_cons_value_t base = {
+		decl_io_value (
+			&io_cons_value_implementation,sizeof(io_cons_value_t)
+		)
+		.r_car = r_car,
+		.r_cdr = r_cdr,
+	};
+	return io_value_memory_new_value (
+		vm,
+		&io_cons_value_implementation,
+		sizeof (io_cons_value_t),
+		def_vref (&reference_to_c_stack_value,&base)
+	);
+}
+
+EVENT_DATA io_value_implementation_t io_list_value_implementation = {
+	.specialisation_of = &io_collection_value_implementation,
+	.name = "list",
+	.initialise = io_value_initialise_nop,
+	.free = io_value_free_nop,
+	.decode = {io_decode_x70_to_invalid_value},
+	.encode = default_io_value_encode,
+	.receive = default_io_value_receive,
+	.compare = io_value_compare_no_comparison,
+	.get_modes = io_value_get_null_modes,
+};
+
+EVENT_DATA io_list_value_t cr_list_v = {
+	decl_io_value (&io_list_value_implementation,sizeof(io_list_value_t))
+};
+
+EVENT_DATA io_value_implementation_t io_map_value_implementation = {
+	.specialisation_of = &io_collection_value_implementation,
+	.name = "list",
+	.initialise = io_value_initialise_nop,
+	.free = io_value_free_nop,
+	.decode = {io_decode_x70_to_invalid_value},
+	.encode = default_io_value_encode,
+	.receive = default_io_value_receive,
+	.compare = io_value_compare_no_comparison,
+	.get_modes = io_value_get_null_modes,
+};
+
+EVENT_DATA io_map_value_t cr_map_v = {
+	decl_io_value (&io_map_value_implementation,sizeof(io_map_value_t))
+};
+
 /*
  *
  * Continuation (a value)
@@ -4969,7 +5298,7 @@ EVENT_DATA io_value_implementation_t io_continuation_value_implementation = {
 	.decode = {io_decode_x70_to_invalid_value},
 	.encode = default_io_value_encode,
 	.receive = default_io_value_receive,
-	.compare = NULL,
+	.compare = io_value_compare_no_comparison,
 	.get_modes = io_value_get_null_modes,
 };
 
@@ -5073,7 +5402,7 @@ EVENT_DATA io_value_implementation_t io_vector_value_implementation = {
 	.decode = {io_decode_x70_to_invalid_value},
 	.encode = default_io_value_encode,
 	.receive = default_io_value_receive,
-	.compare = NULL,
+	.compare = io_value_compare_no_comparison,
 	.get_modes = io_value_get_null_modes,
 };
 
@@ -5138,7 +5467,7 @@ EVENT_DATA io_value_t cr_compare_v = {
 
 EVENT_DATA io_value_implementation_t io_compare_no_comparison_value_implementation = {
 	SPECIALISE_COMPARE_IMPLEMENTATION (
-		&io_compare_value_implementation,"ordering-none"
+		&io_compare_value_implementation,"no-ordering"
 	)
 };
 
@@ -5148,7 +5477,7 @@ EVENT_DATA io_value_t cr_compare_no_comparison_v = {
 
 EVENT_DATA io_value_implementation_t io_compare_more_than_value_implementation = {
 	SPECIALISE_COMPARE_IMPLEMENTATION (
-		&io_compare_value_implementation,"ordering-more"
+		&io_compare_value_implementation,"gt"
 	)
 };
 
@@ -5158,7 +5487,7 @@ EVENT_DATA io_value_t cr_compare_more_than_v = {
 
 EVENT_DATA io_value_implementation_t io_compare_less_than_value_implementation = {
 	SPECIALISE_COMPARE_IMPLEMENTATION (
-		&io_compare_value_implementation,"ordering-less"
+		&io_compare_value_implementation,"lt"
 	)
 };
 
@@ -5168,7 +5497,7 @@ EVENT_DATA io_value_t cr_compare_less_than_v = {
 
 EVENT_DATA io_value_implementation_t io_compare_equal_to_value_implementation = {
 	SPECIALISE_COMPARE_IMPLEMENTATION (
-		&io_compare_value_implementation,"ordering-equal"
+		&io_compare_value_implementation,"eq"
 	)
 };
 
@@ -5196,6 +5525,8 @@ add_core_value_implementations_to_hash (string_hash_table_t *hash) {
 		IO_VALUE_IMPLEMENTATION(&io_compare_more_than_value_implementation),
 		IO_VALUE_IMPLEMENTATION(&io_compare_less_than_value_implementation),
 		IO_VALUE_IMPLEMENTATION(&io_compare_equal_to_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&io_cons_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&io_list_value_implementation),
 	};
 	bool ok = true;
 	
