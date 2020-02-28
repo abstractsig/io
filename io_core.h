@@ -1263,7 +1263,7 @@ typedef struct PACK_STRUCTURE io_socket_constructor {
 	io_socket_t* (*new) (io_t*,io_socket_constructor_t const*);\
 	io_socket_t* (*initialise) (io_socket_t*,io_t*,io_socket_constructor_t const*);\
 	void (*free) (io_socket_t*);\
-	bool (*open) (io_t*,io_socket_t*);\
+	bool (*open) (io_socket_t*);\
 	void (*close) (io_socket_t*);\
 	io_t*	(*get_io) (io_socket_t*); \
 	io_pipe_t* (*bindt) (io_socket_t*,io_event_t*);\
@@ -1307,8 +1307,8 @@ io_socket_initialise (io_socket_t *socket,io_t *io,io_socket_constructor_t const
 }
 
 INLINE_FUNCTION bool
-io_socket_open (io_t *io,io_socket_t *socket) {
-	return socket->implementation->open (io,socket);
+io_socket_open (io_socket_t *socket) {
+	return socket->implementation->open (socket);
 }
 
 INLINE_FUNCTION void
@@ -1380,6 +1380,8 @@ typedef struct PACK_STRUCTURE io_implementation {
 	// identity and security
 	//
 	uint32_t (*get_random_u32) (io_t*);
+	uint32_t (*get_next_prbs_u32) (io_t*);
+
 	void (*sha256_start) (io_sha256_context_t*);
 	void (*sha256_update) (io_sha256_context_t*,uint8_t const*,uint32_t);
 	void (*sha256_finish) (io_sha256_context_t*,uint8_t[32]);
@@ -1427,6 +1429,7 @@ typedef struct PACK_STRUCTURE io_implementation {
 	void (*write_to_io_pin) (io_t*,io_pin_t,int32_t);
 	void (*toggle_io_pin) (io_t*,io_pin_t);
 	bool (*valid_pin) (io_t*,io_pin_t);
+	void (*release_io_pin) (io_t*,io_pin_t);
 	//
 	// external notifications
 	//
@@ -1499,6 +1502,10 @@ io_get_random_u32 (io_t *io) {
 	return io->implementation->get_random_u32(io);
 }
 
+INLINE_FUNCTION uint32_t
+io_get_next_prbs_u32 (io_t *io) {
+	return io->implementation->get_next_prbs_u32(io);
+}
 INLINE_FUNCTION void
 io_log (io_t *io,char const *fmt,va_list va) {
 	io->implementation->log(io,fmt,va);
@@ -1561,8 +1568,10 @@ io_dequeue_event (io_t *io,io_event_t *ev) {
 
 INLINE_FUNCTION void
 io_enqueue_event (io_t *io,io_event_t *ev) {
-	io->implementation->enqueue_event (io,ev);
-	io->implementation->signal_event_pending (io);
+	if (io_event_is_valid (ev)) {
+		io->implementation->enqueue_event (io,ev);
+		io->implementation->signal_event_pending (io);
+	}
 }
 
 INLINE_FUNCTION void
@@ -1601,6 +1610,11 @@ io_set_pin_to_input (io_t *io,io_pin_t p) {
 }
 
 INLINE_FUNCTION void
+io_set_pin_to_alternate (io_t *io,io_pin_t p) {
+	io->implementation->set_io_pin_alternate (io,p);
+}
+
+INLINE_FUNCTION void
 io_set_pin_to_interrupt (io_t *io,io_pin_t p) {
 	io->implementation->set_io_pin_interrupt (io,p);
 }
@@ -1623,6 +1637,11 @@ io_read_pin (io_t *io,io_pin_t p) {
 INLINE_FUNCTION bool
 io_pin_is_valid (io_t *io,io_pin_t p) {
 	return io->implementation->valid_pin (io,p);
+}
+
+INLINE_FUNCTION void
+release_io_pin (io_t *io,io_pin_t p) {
+	io->implementation->release_io_pin (io,p);
 }
 
 INLINE_FUNCTION bool
@@ -1813,7 +1832,7 @@ io_socket_free_panic (io_socket_t *socket) {
 }
 
 static bool
-io_socket_open_nop (io_t *io,io_socket_t *socket) {
+io_socket_open_nop (io_socket_t *socket) {
 	return false;
 }
 
@@ -1973,7 +1992,7 @@ void	io_cpu_sha256_update (io_sha256_context_t*,uint8_t const*,uint32_t);
 void	io_cpu_sha256_finish (io_sha256_context_t*,uint8_t[32]);
 
 static const io_implementation_t	io_base = {
-//	.value_implementation = NULL,
+	.value_implementation = NULL,
 	.get_byte_memory = io_core_get_null_byte_memory,
 	.get_short_term_value_memory = io_core_get_null_value_memory,
 	.get_long_term_value_memory = io_core_get_null_value_memory,
@@ -2002,6 +2021,7 @@ static const io_implementation_t	io_base = {
 	.set_io_pin_input = io_pin_nop,
 	.set_io_pin_interrupt = io_pin_nop,
 	.set_io_pin_alternate = io_pin_nop,
+	.release_io_pin = io_pin_nop,
 	.read_from_io_pin = read_from_io_pin_nop,
 	.write_to_io_pin = write_to_io_pin_nop,
 	.toggle_io_pin = io_pin_nop,
