@@ -26,7 +26,6 @@
  *
  * COMMING SOON
  * ============
- * Collection values: list and map
  * Add cycle detection to garbage collection
  * Layered communication sockets
  * Persistent storage of io_values
@@ -171,13 +170,13 @@ typedef union PACK_STRUCTURE io_authentication_key {
 
 typedef struct PACK_STRUCTURE {
 	IO_RETAINED_STATE_STRUCT_MEMBERS
-} io_retained_state_t;
+} io_persistant_state_t;
 
 #define IO_FIRST_RUN_SET		0xaaaaaaaa
 #define IO_FIRST_RUN_CLEAR		0xbbbbbbbb
 
 #define io_config_u32_ptr(c)	(&(c).first_run_flag)
-#define io_config_u32_size()	(sizeof(io_nvconfig_t)/sizeof(uint32_t))
+#define io_config_u32_size()	(sizeof(io_persistant_state_t)/sizeof(uint32_t))
 
 
 /*
@@ -537,14 +536,23 @@ extern EVENT_DATA io_value_reference_implementation_t reference_to_constant_valu
 #define INVALID_VREF 				def_vref (NULL,NULL)
 #define vref_is_valid(v)			(vref_implementation(v) != NULL)
 #define vref_is_invalid(v)			(vref_implementation(v) == NULL)
-#define vref_is_equal_to(a,b)		(\
-													(vref_implementation(a) == vref_implementation(b)) \
-												&& (vref_expando(a).ptr == vref_expando(b).ptr) \
-											)
-#define vref_not_equal_to(a,b)	(\
-													(vref_implementation(a) != vref_implementation(b)) \
-												|| (vref_expando(a).ptr != vref_expando(b).ptr) \
-											)
+
+INLINE_FUNCTION bool
+vref_is_equal_to (vref_t r_a,vref_t r_b) {
+	return (
+			(vref_implementation(r_a) == vref_implementation(r_b))
+		&&	(vref_expando(r_a).ptr == vref_expando(r_b).ptr)
+	);
+}
+
+INLINE_FUNCTION bool
+vref_not_equal_to (vref_t r_a,vref_t r_b) {
+	return (
+			(vref_implementation(r_a) != vref_implementation(r_b))
+		||	(vref_expando(r_a).ptr != vref_expando(r_b).ptr)
+	);
+}
+
 #define vref_is_nil(r)				vref_is_equal_to(r,cr_NIL)
 #define vref_not_nil(r)				(!vref_is_equal_to(r,cr_NIL))
 
@@ -736,6 +744,7 @@ io_encoding_length (io_encoding_t const *encoding) {
 	size_t (*fill) (io_encoding_t*,uint8_t,size_t);\
 	bool (*append_byte) (io_encoding_t*,uint8_t);\
 	bool (*append_bytes) (io_encoding_t*,uint8_t const*,size_t);\
+	bool (*pop_last_byte) (io_encoding_t*,uint8_t*);\
 	size_t (*print) (io_encoding_t*,char const*,va_list);\
 	void (*reset) (io_encoding_t*);\
 	void (*get_ro_bytes) (io_encoding_t const*,uint8_t const**,uint8_t const**);\
@@ -796,12 +805,31 @@ io_encoding_append_bytes (io_encoding_t *encoding,uint8_t const* bytes,size_t si
 	return ((io_binary_encoding_implementation_t const *) encoding->implementation)->append_bytes (encoding,bytes,size);
 }
 
+INLINE_FUNCTION bool
+io_encoding_append_string (io_encoding_t *encoding,char const* bytes,size_t size) {
+	if (is_io_binary_encoding (encoding)) {
+		return ((io_binary_encoding_implementation_t const *) encoding->implementation)->append_bytes (encoding,(uint8_t const*)bytes,size);
+	} else {
+		return false;
+	}
+}
+
+INLINE_FUNCTION bool
+io_encoding_pop_last_byte (io_encoding_t *encoding,uint8_t *byte) {
+	return ((io_binary_encoding_implementation_t const *) encoding->implementation)->pop_last_byte (encoding,byte);
+}
+
 //
 // text encoding: a human readable encoding of values
 //
 typedef int32_t io_character_t;
 
 typedef bool (*io_character_iterator_t) (io_character_t,void*);
+
+typedef struct PACK_STRUCTURE {
+	IO_BINARY_ENCODING_STRUCT_MEMBERS
+	vref_hash_table_t *visited;
+} io_text_encoding_t;
 
 bool	is_io_text_encoding (io_encoding_t const*);
 bool	io_text_encoding_iterate_characters (io_encoding_t const*,io_character_iterator_t,void*);
@@ -1430,6 +1458,10 @@ typedef struct PACK_STRUCTURE io_implementation {
 	io_value_memory_t* (*get_long_term_value_memory) (io_t*);
 	void (*do_gc) (io_t*,int32_t);
 	io_cpu_clock_pointer_t (*get_core_clock) (io_t*);
+	bool (*is_first_run) (io_t*);
+	bool (*clear_first_run) (io_t*);
+	io_uid_t const* (*uid) (io_t*); 
+
 	//
 	// identity and security
 	//
@@ -1648,6 +1680,17 @@ io_get_core_clock (io_t *io) {
 	return io->implementation->get_core_clock (io);
 }
 
+INLINE_FUNCTION bool
+io_is_first_run (io_t *io) {
+	return io->implementation->is_first_run (io);
+}
+
+INLINE_FUNCTION bool
+io_clear_first_run (io_t *io) {
+	return io->implementation->clear_first_run (io);
+}
+
+io_uid_t const* (*uid) (io_t*); 
 INLINE_FUNCTION io_socket_t*
 io_get_socket (io_t *io,int32_t s) {
 	return io->implementation->get_socket (io,s);
@@ -1677,6 +1720,11 @@ INLINE_FUNCTION void
 write_to_io_pin (io_t *io,io_pin_t p,int32_t s) {
 	io->implementation->write_to_io_pin (io,p,s);
 }
+
+INLINE_FUNCTION io_uid_t const*
+io_uid (io_t *io) {
+	return io->implementation->uid (io);
+} 
 
 INLINE_FUNCTION void
 toggle_io_pin (io_t *io,io_pin_t p) {
@@ -1843,24 +1891,65 @@ typedef struct PACK_STRUCTURE {
 	IO_VALUE_STRUCT_MEMBERS
 	vref_t r_car;
 	vref_t r_cdr;
+	vref_t r_cpr;
 } io_cons_value_t;
 
-vref_t	mk_io_cons_value (io_value_memory_t*,vref_t,vref_t);
+vref_t	mk_io_cons_value (io_value_memory_t*,vref_t,vref_t,vref_t);
 bool		io_cons_value_get_car (vref_t,vref_t*);
 bool		io_cons_value_get_cdr (vref_t,vref_t*);
 
-#define IO_LIST_VALUE_STRUCT_MEMBERS \
-	IO_VALUE_STRUCT_MEMBERS \
-	vref_t r_head; \
-	/**/
-
 typedef struct PACK_STRUCTURE {
-	IO_LIST_VALUE_STRUCT_MEMBERS
+	IO_VALUE_STRUCT_MEMBERS
+	vref_t r_head;
+	vref_t r_tail;
 } io_list_value_t;
+
+vref_t	mk_io_list_value (io_value_memory_t*);
+void		io_list_value_append_value (vref_t,vref_t);
+bool		io_list_value_iterate_elements(vref_t,bool (*) (vref_t,void*),void*);
+uint32_t	io_list_value_count (vref_t);
+bool		io_list_pop_first (vref_t,vref_t*);
+bool		io_list_pop_last (vref_t,vref_t*);
 
 typedef struct PACK_STRUCTURE {
 	IO_VALUE_STRUCT_MEMBERS
+	vref_t r_key;
+	vref_t r_mapped;
+} io_map_slot_value_t;
+
+#define io_map_slot_value_key(s)			(s)->r_key
+#define io_map_slot_value_mapping(s)	(s)->r_mapped
+
+INLINE_FUNCTION vref_t
+io_map_slot_value_get_key (vref_t r_this) {
+	io_map_slot_value_t const *this = vref_cast_to_ro_pointer (r_this);
+	return this->r_key;
+}
+
+INLINE_FUNCTION vref_t
+io_map_slot_value_get_mapped_value (vref_t r_this) {
+	io_map_slot_value_t const *this = vref_cast_to_ro_pointer (r_this);
+	return this->r_mapped;
+}
+
+typedef struct PACK_STRUCTURE {
+	IO_VALUE_STRUCT_MEMBERS
+	vref_t r_tree;
+	vref_t r_head;
+	struct PACK_STRUCTURE {
+		uint16_t maximum;
+		uint16_t current;
+	} depth;
 } io_map_value_t;
+
+#define io_map_value_maximum_depth(s)	(s)->depth.maximum
+#define io_map_value_current_depth(s)	(s)->depth.current
+
+vref_t	mk_io_map_value (io_value_memory_t*,uint16_t);
+bool		io_map_value_map (vref_t,vref_t,vref_t);
+vref_t	io_map_value_unmap (vref_t,vref_t);
+bool		io_map_value_iterate (vref_t,bool (*) (vref_t,void*),void*);
+bool		io_map_value_get_mapping (vref_t,vref_t,vref_t*);
 
 
 #include <io_math.h>
@@ -2077,6 +2166,8 @@ static const io_implementation_t	io_base = {
 	.do_gc = NULL,
 	.get_core_clock = NULL,
 	.get_random_u32 = NULL,
+	.is_first_run = NULL,
+	.clear_first_run = NULL,
 	.sha256_start = io_cpu_sha256_start,
 	.sha256_update = io_cpu_sha256_update,
 	.sha256_finish = io_cpu_sha256_finish,
@@ -2151,6 +2242,9 @@ decl_particular_value(cr_COMPARE_NO_COMPARISON,	io_value_t,cr_compare_no_compari
 
 decl_particular_value(cr_COLLECTION,		io_value_t,cr_collection_v)
 decl_particular_value(cr_CONS,				io_cons_value_t,cr_cons_v)
+decl_particular_value(cr_LIST,				io_list_value_t,cr_list_v)
+decl_particular_value(cr_SLOT,				io_map_slot_value_t,cr_map_slot_v)
+decl_particular_value(cr_MAP,					io_map_value_t,cr_map_v)
 
 #define io_value_is_equal(a,b) vref_is_equal_to (compare_io_values (a,b),cr_COMPARE_EQUAL)
 #define io_value_not_equal(a,b) vref_not_equal_to (compare_io_values (a,b),cr_COMPARE_EQUAL)
@@ -3853,37 +3947,17 @@ io_binary_encoding_initialise (io_binary_encoding_t *this) {
 	return this;
 };
 
-static io_encoding_t*
-io_text_encoding_new (io_byte_memory_t *bm) {
-	io_binary_encoding_t *this = io_byte_memory_allocate (
-		bm,sizeof(io_binary_encoding_t)
-	);
-
-	if (this != NULL) {
-		extern EVENT_DATA io_binary_encoding_implementation_t io_text_encoding_implementation;
-		this->implementation = IO_ENCODING_IMPLEMENATAION (
-			&io_text_encoding_implementation
-		);
-		this->bm = bm;
-		this = io_binary_encoding_initialise(this);
-	}
-
-	return (io_encoding_t*) this;
-};
-
 static void
 io_binary_encoding_free (io_encoding_t *encoding) {
 	if (encoding != NULL) {
 		io_binary_encoding_t *this = (io_binary_encoding_t*) encoding;
-		if (this->data) {
-			io_byte_memory_free (this->bm,this->data);
-		}
+		io_byte_memory_free (this->bm,this->data);
 		io_byte_memory_free (this->bm,this);
 	}
 }
 
 static bool
-io_text_encoding_grow (io_binary_encoding_t *this) {
+io_binary_encoding_grow (io_binary_encoding_t *this) {
 	uint32_t old_size = io_binary_encoding_allocation_size (this);
 	uint32_t new_size = (
 			old_size 
@@ -3911,7 +3985,7 @@ io_binary_encoding_append_byte (io_encoding_t *encoding,uint8_t byte) {
 				io_encoding_limit (encoding) < 0
 			||	io_binary_encoding_data_size (this) < io_encoding_limit (encoding)
 		) {
-			io_text_encoding_grow (this);
+			io_binary_encoding_grow (this);
 		}
 	}
 
@@ -3959,10 +4033,23 @@ io_binary_encoding_append_bytes (
 	return true;
 }
 
+static bool
+io_binary_encoding_pop_last_byte (io_encoding_t *encoding,uint8_t *byte) {
+	io_binary_encoding_t *this = (io_binary_encoding_t*) encoding;
+	if (this->cursor > this->data) {
+		this->cursor --;
+		*byte = *this->cursor;
+		return true;
+	} else {
+		return false;
+	}
+}
+
 struct PACK_STRUCTURE io_binary_encoding_print_data {
 	io_binary_encoding_t *this;
 	char buf[STB_SPRINTF_MIN];
 };
+
 char*
 io_binary_encoding_print_cb (char *buf,void *user,int len) {
 	struct io_binary_encoding_print_data *info = user;
@@ -4074,6 +4161,7 @@ EVENT_DATA io_binary_encoding_implementation_t io_binary_encoding_implementation
 	.fill = io_binary_encoding_fill_bytes,
 	.append_byte = io_binary_encoding_append_byte,
 	.append_bytes = io_binary_encoding_append_bytes,
+	.pop_last_byte = io_binary_encoding_pop_last_byte,
 	.print = io_binary_encoding_print,
 	.reset = io_binary_encoding_reset,
 	.get_ro_bytes = io_binary_encoding_get_ro_bytes,
@@ -4086,6 +4174,35 @@ is_io_binary_encoding (io_encoding_t const *encoding) {
 	);
 }
 
+static io_encoding_t* 
+io_text_encoding_new (io_byte_memory_t *bm) {
+	io_text_encoding_t *this = io_byte_memory_allocate (
+		bm,sizeof(io_text_encoding_t)
+	);
+
+	if (this != NULL) {
+		extern EVENT_DATA io_binary_encoding_implementation_t io_text_encoding_implementation;
+		this->implementation = IO_ENCODING_IMPLEMENATAION (
+			&io_text_encoding_implementation
+		);
+		this->bm = bm;
+		this = io_binary_encoding_initialise ((io_binary_encoding_t*) this);
+		this->visited = mk_vref_bucket_hash_table (bm,17);
+	}
+
+	return (io_encoding_t*) this;
+};
+
+static void
+io_text_encoding_free (io_encoding_t *encoding) {
+	if (encoding != NULL) {
+		io_text_encoding_t *this = (io_text_encoding_t*) encoding;
+		io_byte_memory_free (this->bm,this->data);
+		free_vref_bucket_hash_table (this->visited);
+		io_byte_memory_free (this->bm,this);
+	}
+}
+
 EVENT_DATA io_binary_encoding_implementation_t io_text_encoding_implementation = {
 	.specialisation_of = IO_ENCODING_IMPLEMENATAION (
 		&io_binary_encoding_implementation
@@ -4093,13 +4210,14 @@ EVENT_DATA io_binary_encoding_implementation_t io_text_encoding_implementation =
 	.decode_to_io_value = io_binary_encoding_decode_to_io_value,
 	.make_encoding = io_text_encoding_new,
 	.copy = NULL,
-	.free = io_binary_encoding_free,
+	.free = io_text_encoding_free,
 	.get_io = io_binary_encoding_get_io,
 	.push = NULL,
 	.pop = NULL,
 	.fill = io_binary_encoding_fill_bytes,
 	.append_byte = io_binary_encoding_append_byte,
 	.append_bytes = io_binary_encoding_append_bytes,
+	.pop_last_byte = io_binary_encoding_pop_last_byte,
 	.print = io_binary_encoding_print,
 	.reset = io_binary_encoding_reset,
 	.get_ro_bytes = io_binary_encoding_get_ro_bytes,
@@ -4153,7 +4271,9 @@ io_x70_encoding_take_uint_value (const uint8_t *b,const uint8_t *e,uint32_t *val
 }
 
 void
-io_encode_value_implementation_to_x70 (io_value_t *value,io_encoding_t *encoding) {
+io_encode_value_implementation_to_x70 (
+	io_value_t const *value,io_encoding_t *encoding
+) {
 	uint32_t len = strlen(value->implementation->name);
 	io_x70_encoding_append_uint_value (encoding,len);
 	io_encoding_append_bytes (
@@ -4209,6 +4329,7 @@ EVENT_DATA io_binary_encoding_implementation_t io_x70_encoding_implementation = 
 	.fill = io_binary_encoding_fill_bytes,
 	.append_byte = io_binary_encoding_append_byte,
 	.append_bytes = io_binary_encoding_append_bytes,
+	.pop_last_byte = io_binary_encoding_pop_last_byte,
 	.print = io_binary_encoding_print,
 	.reset = io_binary_encoding_reset,
 	.get_ro_bytes = io_binary_encoding_get_ro_bytes,
@@ -4295,13 +4416,36 @@ io_value_compare_with_univ (io_value_t const *this,vref_t r_other) {
 // universal value
 //
 
+static bool
+io_univ_value_encode (vref_t r_value,io_encoding_t *encoding) {
+	bool result = false;
+
+	if (is_io_text_encoding (encoding)) {
+		io_encoding_append_byte (encoding,'.');
+		result = true;
+	} else if (is_io_x70_encoding (encoding)) {
+		io_value_t const *this = vref_cast_to_ro_pointer (r_value);
+		io_encode_value_implementation_to_x70 (this,encoding);
+		result = true;
+	}
+
+	return result;
+}
+
+static vref_t
+io_univ_decode_x70_value (
+	io_value_memory_t *vm,uint8_t const**b,const uint8_t *e
+) {	
+	return cr_UNIV;
+}
+
 EVENT_DATA io_value_implementation_t univ_value_implementation = {
 	.specialisation_of = NULL,
 	.name = "value",
 	.initialise = io_value_initialise_nop,
 	.free = io_value_free_nop,
-	.decode = {io_decode_x70_to_invalid_value},
-	.encode = default_io_value_encode,
+	.decode = {io_univ_decode_x70_value},
+	.encode = io_univ_value_encode,
 	.receive = default_io_value_receive,
 	.compare = io_value_compare_with_univ,
 	.get_modes = io_value_get_null_modes,
@@ -4320,13 +4464,36 @@ io_value_compare_with_nil (io_value_t const *this,vref_t r_other) {
 	}
 }
 
+static bool
+io_nil_value_encode (vref_t r_value,io_encoding_t *encoding) {
+	bool result = false;
+
+	if (is_io_text_encoding (encoding)) {
+		io_encoding_append_string (encoding,"()",2);
+		result = true;
+	} else if (is_io_x70_encoding (encoding)) {
+		io_value_t const *this = vref_cast_to_ro_pointer (r_value);
+		io_encode_value_implementation_to_x70 (this,encoding);
+		result = true;
+	}
+
+	return result;
+}
+
+static vref_t
+io_nil_decode_x70_value (
+	io_value_memory_t *vm,uint8_t const**b,const uint8_t *e
+) {	
+	return cr_NIL;
+}
+
 EVENT_DATA io_value_implementation_t nil_value_implementation = {
 	.specialisation_of = &univ_value_implementation,
 	.name = "nil",
 	.initialise = io_value_initialise_nop,
 	.free = io_value_free_nop,
-	.decode = {io_decode_x70_to_invalid_value},
-	.encode = default_io_value_encode,
+	.decode = {io_nil_decode_x70_value},
+	.encode = io_nil_value_encode,
 	.receive = default_io_value_receive,
 	.compare = io_value_compare_with_nil,
 	.get_modes = io_value_get_null_modes,
@@ -4382,7 +4549,7 @@ io_int64_value_encode (vref_t r_value,io_encoding_t *encoding) {
 			io_encoding_printf (encoding,"%lld",this->value);
 			result = true;
 		} else if (is_io_x70_encoding (encoding)) {
-			io_encode_value_implementation_to_x70 ((io_value_t*) this,encoding);
+			io_encode_value_implementation_to_x70 ((io_value_t const*) this,encoding);
 			io_encoding_append_bytes (
 				encoding,(uint8_t const*) &this->value,sizeof(this->value)
 			);
@@ -4750,7 +4917,7 @@ io_binary_value_initialise_nop (vref_t r_value,vref_t r_base) {
 
 bool
 io_binary_value_encode_x70 (io_binary_value_t const *this,io_encoding_t *encoding) {
-	io_encode_value_implementation_to_x70 ((io_value_t*) this,encoding);
+	io_encode_value_implementation_to_x70 ((io_value_t const*) this,encoding);
 	io_x70_encoding_append_uint_value (encoding,io_binary_value_size(this));
 	io_encoding_append_bytes (
 		encoding,io_binary_value_ro_bytes(this),io_binary_value_size(this)
@@ -5142,6 +5309,7 @@ io_cons_value_initialise (vref_t r_value,vref_t r_base) {
 	if (base != NULL) {
 		this->r_car = reference_value (base->r_car);
 		this->r_cdr = reference_value (base->r_cdr);
+		this->r_cpr = base->r_cpr;
 	} else {
 		this = NULL;
 	}
@@ -5197,13 +5365,80 @@ io_cons_value_get_cdr (vref_t r_this,vref_t *r_cdr) {
 	}
 }
 
+INLINE_FUNCTION vref_t
+io_cons_value_car (vref_t r_this) {
+	io_cons_value_t const *this = vref_cast_to_ro_pointer (r_this);
+	return this->r_car;
+}
+
+INLINE_FUNCTION vref_t
+io_cons_value_set_car (vref_t r_this,vref_t r_value) {
+	io_cons_value_t *this = vref_cast_to_rw_pointer (r_this);
+	unreference_value (this->r_car);
+	this->r_car = reference_value (r_value);
+	return r_value;
+}
+
+INLINE_FUNCTION vref_t
+io_cons_value_cdr (vref_t r_this) {
+	io_cons_value_t const *this = vref_cast_to_ro_pointer (r_this);
+	return this->r_cdr;
+}
+
+INLINE_FUNCTION vref_t
+io_cons_value_set_cdr (vref_t r_this,vref_t r_value) {
+	io_cons_value_t *this = vref_cast_to_rw_pointer (r_this);
+	unreference_value (this->r_cdr);
+	this->r_cdr = reference_value (r_value);
+	return r_value;
+}
+
+INLINE_FUNCTION vref_t
+io_cons_value_cpr (vref_t r_this) {
+	io_cons_value_t const *this = vref_cast_to_ro_pointer (r_this);
+	return this->r_cpr;
+}
+
+INLINE_FUNCTION vref_t
+io_cons_value_set_cpr (vref_t r_this,vref_t r_value) {
+	io_cons_value_t *this = vref_cast_to_rw_pointer (r_this);
+	this->r_cpr = r_value;	// cpr is not referenced
+	return r_value;
+}
+
+static bool
+io_cons_value_encode (vref_t r_value,io_encoding_t *encoding) {
+	io_cons_value_t const *this = vref_cast_to_ro_pointer (r_value);
+	bool result = false;
+
+	if (is_io_text_encoding (encoding)) {
+		result = true;
+		result &= io_value_encode (this->r_car,encoding);
+		result &= io_encoding_append_byte (encoding,' ');
+		result &= io_value_encode (this->r_cdr,encoding);
+	} else if (is_io_x70_encoding (encoding)) {
+		io_encode_value_implementation_to_x70 ((io_value_t const*) this,encoding);
+		
+		result = true;
+	}
+
+	return result;
+}
+
+static vref_t
+io_cons_value_decode_x70_value (
+	io_value_memory_t *vm,uint8_t const**b,const uint8_t *e
+) {	
+	return cr_NIL;
+}
+
 EVENT_DATA io_value_implementation_t io_cons_value_implementation = {
-	.specialisation_of = &univ_value_implementation,
+	.specialisation_of = &io_collection_value_implementation,
 	.name = "cons",
 	.initialise = io_cons_value_initialise,
 	.free = io_cons_value_free,
-	.decode = {io_decode_x70_to_invalid_value},
-	.encode = default_io_value_encode,
+	.decode = {io_cons_value_decode_x70_value},
+	.encode = io_cons_value_encode,
 	.receive = default_io_value_receive,
 	.compare = compare_cons_value_to,
 	.get_modes = io_value_get_null_modes,
@@ -5213,16 +5448,18 @@ EVENT_DATA io_cons_value_t cr_cons_v = {
 	decl_io_value (&io_cons_value_implementation,sizeof(io_cons_value_t))
 	.r_car = cr_NIL,
 	.r_cdr = cr_NIL,
+	.r_cpr = cr_NIL,
 };
 
 vref_t
-mk_io_cons_value (io_value_memory_t *vm,vref_t r_car,vref_t r_cdr) {
+mk_io_cons_value (io_value_memory_t *vm,vref_t r_car,vref_t r_cdr,vref_t r_cpr) {
 	io_cons_value_t base = {
 		decl_io_value (
 			&io_cons_value_implementation,sizeof(io_cons_value_t)
 		)
 		.r_car = r_car,
 		.r_cdr = r_cdr,
+		.r_cpr = r_cpr,
 	};
 	return io_value_memory_new_value (
 		vm,
@@ -5232,13 +5469,80 @@ mk_io_cons_value (io_value_memory_t *vm,vref_t r_car,vref_t r_cdr) {
 	);
 }
 
+static bool
+io_list_value_initialise_iterator (vref_t r_value,void *user_value) {
+	vref_t *r_list = user_value;
+	io_list_value_append_value (*r_list,r_value);
+	return true;
+}
+
+static io_value_t*
+io_list_value_initialise (vref_t r_value,vref_t r_base) {
+	io_list_value_t *this = vref_cast_to_rw_pointer(r_value);
+	io_list_value_t const *base = io_typesafe_ro_cast(r_base,cr_LIST);
+
+	if (base != NULL) {
+		this->r_head = cr_NIL;
+		this->r_tail = cr_NIL;
+		io_list_value_iterate_elements (
+			r_base,io_list_value_initialise_iterator,&r_value
+		);
+	} else {
+		this = NULL;
+	}
+
+	return (io_value_t*) this;
+}
+
+static void
+io_list_value_free (io_value_t *value) {
+	io_list_value_t *this = (io_list_value_t*) (value);
+	unreference_value (this->r_head);
+	unreference_value (this->r_tail);
+}
+
+static bool
+io_list_value_text_encode (vref_t r_value,void *user_value) {
+	io_encoding_t *encoding = user_value;
+	if (
+			io_value_encode (r_value,encoding)
+		&&	io_encoding_append_byte (encoding,' ')
+	) {
+		return true;
+	} else {
+		return false;
+	}
+}
+
+static bool
+io_list_value_encode (vref_t r_value,io_encoding_t *encoding) {
+	bool ok = false;
+
+	if (is_io_text_encoding (encoding)) {
+		uint32_t len;
+		ok = true;
+		ok &= io_encoding_append_byte (encoding,'(');
+		len = io_encoding_length (encoding);
+		io_list_value_iterate_elements (r_value,io_list_value_text_encode,encoding);
+		if (io_encoding_length (encoding) > len) {
+			uint8_t byte;
+			io_encoding_pop_last_byte (encoding,&byte);
+		}
+		ok &= io_encoding_append_byte (encoding,')');
+	} else if (is_io_x70_encoding (encoding)) {
+
+	}
+
+	return ok;
+}
+
 EVENT_DATA io_value_implementation_t io_list_value_implementation = {
 	.specialisation_of = &io_collection_value_implementation,
 	.name = "list",
-	.initialise = io_value_initialise_nop,
-	.free = io_value_free_nop,
+	.initialise = io_list_value_initialise,
+	.free = io_list_value_free,
 	.decode = {io_decode_x70_to_invalid_value},
-	.encode = default_io_value_encode,
+	.encode = io_list_value_encode,
 	.receive = default_io_value_receive,
 	.compare = io_value_compare_no_comparison,
 	.get_modes = io_value_get_null_modes,
@@ -5246,13 +5550,291 @@ EVENT_DATA io_value_implementation_t io_list_value_implementation = {
 
 EVENT_DATA io_list_value_t cr_list_v = {
 	decl_io_value (&io_list_value_implementation,sizeof(io_list_value_t))
+	.r_head = cr_NIL,
+	.r_tail = cr_NIL,
 };
+
+vref_t
+mk_io_list_value (io_value_memory_t *vm) {
+	io_list_value_t base = {
+		decl_io_value (
+			&io_list_value_implementation,sizeof (io_list_value_t)
+		)
+		.r_head = cr_NIL,
+		.r_tail = cr_NIL,
+	};
+	return io_value_memory_new_value (
+		vm,
+		&io_list_value_implementation,
+		sizeof (io_list_value_t),
+		def_vref (&reference_to_c_stack_value,&base)
+	);
+}
+
+INLINE_FUNCTION vref_t
+io_list_value_set_head (io_list_value_t *this,vref_t r_value) {
+	unreference_value (this->r_head);
+	this->r_head = reference_value (r_value);
+	return r_value;
+}
+
+INLINE_FUNCTION vref_t
+io_list_value_set_tail (io_list_value_t *this ,vref_t r_value) {
+	unreference_value (this->r_tail);
+	this->r_tail = reference_value (r_value);
+	return r_value;
+}
+
+void
+io_list_value_append_value (vref_t r_this,vref_t r_value) {
+	io_list_value_t *this = vref_cast_to_rw_pointer(r_this);
+	vref_t r_newtail = mk_io_cons_value (
+		vref_get_containing_memory (r_this),r_value,cr_NIL,this->r_tail
+	);
+	if (vref_is_nil (this->r_head)) {
+		this->r_head = reference_value (r_newtail);
+	} else {
+		io_cons_value_set_cdr (this->r_tail,r_newtail);
+	}
+	io_list_value_set_tail (this,r_newtail);
+}
+
+bool
+io_list_value_iterate_elements (
+	vref_t r_this,bool (*cb) (vref_t,void*),void *user_data
+) {
+	io_list_value_t const *this = vref_cast_to_ro_pointer (r_this);
+	vref_t r_cons = this->r_head;
+	while (vref_not_nil (r_cons)) {
+		io_cons_value_t const *cons = vref_cast_to_ro_pointer (r_cons);
+		if(!cb(cons->r_car,user_data)) {
+			return false;
+		}
+		r_cons = cons->r_cdr;
+	}
+	return true;
+}
+
+static bool
+io_list_value_counter (vref_t r_cons,void *user_value) {
+	(*((uint32_t*) user_value)) ++;
+	return true;
+}
+
+uint32_t
+io_list_value_count (vref_t r_this) {
+	uint32_t count = 0;
+	io_list_value_iterate_elements (r_this,io_list_value_counter,&count);
+	return count;
+}
+
+bool
+io_list_pop_first (vref_t r_this,vref_t *r_first) {
+	io_list_value_t *this = vref_cast_to_rw_pointer (r_this);
+	if (vref_not_nil (this->r_head)) {
+		*r_first = io_cons_value_car (this->r_head);
+		if (vref_is_equal_to (this->r_head,this->r_tail)) {
+			io_list_value_set_head (this,cr_NIL);
+			io_list_value_set_tail (this,cr_NIL);
+		} else {
+			io_list_value_set_head (this,io_cons_value_cdr(this->r_head));
+			io_cons_value_set_cpr (this->r_head,cr_NIL);
+		}
+		return true;
+	} else {
+		return false;
+	}
+}
+
+bool
+io_list_pop_last (vref_t r_this,vref_t *r_last) {
+	io_list_value_t *this = vref_cast_to_rw_pointer(r_this);
+	vref_t r_tail = this->r_tail;
+
+	if (vref_not_nil (r_tail)) {
+		*r_last = io_cons_value_car (r_tail);
+		if (vref_is_nil (io_cons_value_cpr (r_tail))) {
+			io_list_value_set_head (this,cr_NIL);
+		} else {
+			io_cons_value_set_cdr (r_tail,cr_NIL);
+		}
+		io_list_value_set_tail (this,io_cons_value_cpr (r_tail));
+		return true;
+	} else {
+		return false;
+	}
+}
+
+static io_value_t*
+io_map_slot_value_initialise (vref_t r_value,vref_t r_base) {
+	io_map_slot_value_t *this = vref_cast_to_rw_pointer(r_value);
+	io_map_slot_value_t const *base = io_typesafe_ro_cast(r_base,cr_SLOT);
+
+	if (base != NULL) {
+		this->r_key = reference_value (base->r_key);
+		this->r_mapped = reference_value (base->r_mapped);
+	} else {
+		this = NULL;
+	}
+
+	return (io_value_t*) this;
+}
+
+static void
+io_map_slot_value_free (io_value_t *value) {
+	io_map_slot_value_t *this = (io_map_slot_value_t*) (value);
+	unreference_value (this->r_key);
+	unreference_value (this->r_mapped);
+}
+
+static bool
+io_map_slot_value_encode (vref_t r_value,io_encoding_t *encoding) {
+	io_map_slot_value_t const *this = vref_cast_to_ro_pointer (r_value);
+	bool result = false;
+
+	if (is_io_text_encoding (encoding)) {
+		result = true;
+		result &= io_value_encode (this->r_key,encoding);
+		result &= io_encoding_append_byte (encoding,' ');
+		result &= io_value_encode (this->r_mapped,encoding);
+	} else if (is_io_x70_encoding (encoding)) {
+		io_encode_value_implementation_to_x70 ((io_value_t const*) this,encoding);
+		
+		result = true;
+	}
+
+	return result;
+}
+
+static vref_t
+io_map_slot_value_decode_x70_value (
+	io_value_memory_t *vm,uint8_t const**b,const uint8_t *e
+) {	
+	return cr_NIL;
+}
+
+EVENT_DATA io_value_implementation_t io_map_slot_value_implementation = {
+	.specialisation_of = &io_collection_value_implementation,
+	.name = "slot",
+	.initialise = io_map_slot_value_initialise,
+	.free = io_map_slot_value_free,
+	.decode = {io_map_slot_value_decode_x70_value},
+	.encode = io_map_slot_value_encode,
+	.receive = default_io_value_receive,
+	.compare = io_value_compare_no_comparison,
+	.get_modes = io_value_get_null_modes,
+};
+
+EVENT_DATA io_map_slot_value_t cr_map_slot_v = {
+	decl_io_value (&io_map_slot_value_implementation,sizeof(io_map_slot_value_t))
+	.r_key = cr_NIL,
+	.r_mapped = cr_NIL,
+};
+
+INLINE_FUNCTION vref_t
+io_map_slot_value_set_key (vref_t r_this,vref_t r_value) {
+	io_map_slot_value_t *this = vref_cast_to_rw_pointer (r_this);
+	unreference_value (this->r_key);
+	this->r_key = reference_value (r_value);
+	return r_value;
+}
+
+
+vref_t 
+mk_io_map_slot_value (io_value_memory_t *vm,vref_t r_key,vref_t r_mapping) {
+	io_map_slot_value_t base = {
+		decl_io_value (
+			&io_map_slot_value_implementation,sizeof(io_map_slot_value_t)
+		)
+		.r_key = r_key,
+		.r_mapped = r_mapping,
+	};
+	return io_value_memory_new_value (
+		vm,
+		&io_map_slot_value_implementation,
+		sizeof (io_map_slot_value_t),
+		def_vref (&reference_to_c_stack_value,&base)
+	);
+}
+
+/*
+ *
+ *
+ * map value
+ *
+ *  level      1            2            3 ...
+ *
+ *  +---+ tree
+ *  |   |--------------------------------+
+ *  |   |------+                         |
+ *  +---+ head |                         |
+ *             v                         v
+ *           +---+  left  +---+  left  +---+
+ *     |<--- | # |<-------| # |<-------| # |
+ *           |   |        |   |        |   |
+ *           +---+        +---+        +---+
+ *             | right      | right      | right
+ *             |            |            |
+ *             v            v            v
+ *     left  +---+  left  +---+  left  +---+
+ *   <-------|   |<-------|   |<-------|   |
+ *           |   |        |   |        |   |
+ *           +---+        +---+        +---+
+ *             |            | right      | right
+ *             v            |            v
+ *           +---+          |           ---
+ *           |   |          |
+ *           |   |          |
+ *           +---+          |
+ *             |            |
+ *             v            v
+ *           +---+  left  +---+
+ *           |   |<-------|   |
+ *           |   |        |   |
+ *           +---+        +---+
+ *             |            | right
+ *             v            v 
+ *            ---          ---
+ * 
+ * All nodes are cons values.
+ * 
+ * At level 1, store key on left, value in slot.  At level > 1,
+ * store key in slot, value on left. Hence both key and value
+ * are reachable from tree block.
+ *
+ */
+static io_value_t*
+io_map_value_initialise (vref_t r_value,vref_t r_base) {
+	io_map_value_t *this = vref_cast_to_rw_pointer(r_value);
+	io_map_value_t const *base = io_typesafe_ro_cast(r_base,cr_MAP);
+	
+	if (base != NULL) {
+		this->r_head = reference_value (base->r_head);
+		this->r_tree = reference_value (base->r_tree);
+		this->depth.maximum = base->depth.maximum;
+		this->depth.current = 1;
+		
+		// iterate r_base
+		
+	} else {
+		this = NULL;
+	}
+
+	return (io_value_t*) this;
+}
+
+static void
+io_map_value_free (io_value_t *value) {
+	io_map_value_t *this = (io_map_value_t*) (value);
+	unreference_value (this->r_head);
+	unreference_value (this->r_tree);
+}
 
 EVENT_DATA io_value_implementation_t io_map_value_implementation = {
 	.specialisation_of = &io_collection_value_implementation,
-	.name = "list",
-	.initialise = io_value_initialise_nop,
-	.free = io_value_free_nop,
+	.name = "map",
+	.initialise = io_map_value_initialise,
+	.free = io_map_value_free,
 	.decode = {io_decode_x70_to_invalid_value},
 	.encode = default_io_value_encode,
 	.receive = default_io_value_receive,
@@ -5262,7 +5844,231 @@ EVENT_DATA io_value_implementation_t io_map_value_implementation = {
 
 EVENT_DATA io_map_value_t cr_map_v = {
 	decl_io_value (&io_map_value_implementation,sizeof(io_map_value_t))
+	.r_tree = cr_NIL,
+	.r_head = cr_NIL,
 };
+
+//
+// map value nodes are cons values
+//
+#define io_map_value_node_left(n)		((n)->r_car)
+#define io_map_value_node_right(n)		((n)->r_cdr)
+#define io_map_value_node_get_right		io_cons_value_cdr
+#define io_map_value_node_set_right		io_cons_value_set_cdr
+#define io_map_value_node_key(n)			((n)->r_cpr)
+#define io_map_value_node_slot(n)		((n)->r_cpr)
+
+vref_t
+mk_io_map_value (io_value_memory_t *vm,uint16_t maximum_depth) {
+	vref_t r_node = mk_io_cons_value (vm,cr_NIL,cr_NIL,cr_NIL);
+	io_map_value_t base = {
+		decl_io_value (
+			&io_map_value_implementation,sizeof (io_map_value_t)
+		)
+		.r_head = r_node,
+		.r_tree = r_node,
+		.depth.maximum = maximum_depth,
+		.depth.current = 1,
+	};
+	return io_value_memory_new_value (
+		vm,
+		&io_map_value_implementation,
+		sizeof (io_map_value_t),
+		def_vref (&reference_to_c_stack_value,&base)
+	);
+}
+
+INLINE_FUNCTION vref_t
+io_map_value_set_tree (io_map_value_t *this ,vref_t r_value) {
+	unreference_value (this->r_tree);
+	this->r_tree = reference_value (r_value);
+	return r_value;
+}
+
+static vref_t
+io_map_value_search (io_map_value_t const *this,vref_t r_key,vref_t path[]) {
+	int16_t i = io_map_value_current_depth(this) - 1;
+	vref_t r_node = cr_NIL,r_temp = this->r_tree;
+	io_cons_value_t const *node;
+	
+	do {
+	loop:
+		node = vref_cast_to_ro_pointer(r_temp);
+		if (vref_not_nil (io_map_value_node_right(node))) {
+			io_cons_value_t const *right = vref_cast_to_ro_pointer (
+				io_map_value_node_right (node)
+			);
+			if (io_value_is_less(io_map_value_node_key (right),r_key)) {
+				r_temp = io_map_value_node_right (node);
+				goto loop;
+			}
+		}
+		if (path) path[i] = r_temp; else r_node = r_temp;
+		r_temp = io_map_value_node_left (node);
+		i--;
+	} while ( i >= 0);
+	
+	return r_node;
+}
+
+bool
+io_map_value_map (vref_t r_this,vref_t r_key,vref_t r_value) {
+	io_map_value_t const *this = vref_cast_to_ro_pointer (r_this);
+	io_value_memory_t *vm = vref_get_containing_memory (r_this);
+	vref_t path[io_map_value_maximum_depth (this)];
+	io_cons_value_t const *node;
+	uint16_t new_level = 1;
+	
+	io_map_value_search (this,r_key,path);
+
+	node = vref_cast_to_ro_pointer (path[0]);
+	if (vref_not_nil (io_map_value_node_right (node))) {
+		io_cons_value_t const *right = vref_cast_to_ro_pointer (
+			io_map_value_node_right (node)
+		);
+		if (io_value_is_equal (io_map_value_node_key (right),r_key)) {
+			io_map_slot_value_t *left = vref_cast_to_rw_pointer (
+				io_map_value_node_left (right)
+			);
+			unreference_value (io_map_slot_value_mapping(left));
+			io_map_slot_value_mapping (left) = reference_value (r_value);
+			return false;
+		}
+	}
+
+	io_t *io = io_value_memory_get_io(vm);
+	while (
+			new_level < io_map_value_maximum_depth (this) 
+		&& io_get_next_prbs_u32 (io) < ((UINT32_MAX * 2) / 3)
+	) {
+		new_level ++;
+	}
+
+	io_cons_value_t *nn = vref_cast_to_rw_pointer (path[0]);
+	vref_t r_node = mk_io_cons_value (
+		vm,
+		mk_io_map_slot_value (vm,r_key,r_value),
+		io_map_value_node_right (nn),
+		r_key
+	);
+	io_map_value_node_set_right (path[0],r_node);
+	
+	if (io_map_value_current_depth(this) < new_level) {
+		io_map_value_t *this = vref_cast_to_rw_pointer (r_this);
+		for (uint32_t i = io_map_value_current_depth (this); i < new_level; i++) {
+			io_map_value_set_tree (
+				this,mk_io_cons_value (vm,this->r_tree,cr_NIL,cr_NIL)
+			);
+		}
+		io_map_value_current_depth (this) = new_level;
+	}
+
+	return true;
+}
+
+static vref_t
+io_map_value_get_slot (vref_t r_this,vref_t r_key) {
+	io_map_value_t const *this = vref_cast_to_ro_pointer (r_this);
+	vref_t r_preceeding = io_map_value_search (this,r_key,NULL);
+	io_cons_value_t const *node = vref_cast_to_ro_pointer (r_preceeding);
+
+	if (vref_not_nil (io_map_value_node_right (node))) {
+		io_cons_value_t const *right = vref_cast_to_ro_pointer (
+			io_map_value_node_right (node)
+		);
+		if (io_value_is_equal(io_map_value_node_key (right),r_key)) {
+			return io_map_value_node_left (right);
+		}
+	}
+
+	return cr_NIL;
+}
+
+bool
+io_map_value_get_mapping (vref_t r_this,vref_t r_key,vref_t *r_mapped) {
+	vref_t r_slot = io_map_value_get_slot (r_this,r_key);
+
+	if (vref_not_nil (r_slot)) {
+		*r_mapped = io_map_slot_value_get_mapped_value (r_slot);
+		return true;
+	} else {
+		return false;
+	}
+}
+
+bool
+io_map_value_iterate (
+	vref_t r_this,bool (*cb) (vref_t,void*),void *user_data
+) {
+	io_map_value_t const *this = vref_cast_to_ro_pointer (r_this);
+	vref_t r_node = io_map_value_node_get_right (this->r_head);
+	while (vref_not_nil(r_node)) {
+		io_cons_value_t const *node = vref_cast_to_ro_pointer(r_node);
+		r_node =  io_map_value_node_right (node);
+		if (!cb(io_map_value_node_left (node),user_data)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static vref_t
+io_map_value_remove_helper (
+	vref_t r_list,
+	io_map_value_t *list,
+	vref_t path[],
+	vref_t r_key
+) {
+	io_cons_value_t const *node = vref_cast_to_ro_pointer(path[0]);
+	
+	if (vref_not_nil (io_map_value_node_right (node))) {
+		io_cons_value_t const *temp = vref_cast_to_ro_pointer (
+			io_map_value_node_right(node)
+		);
+		if (io_value_is_equal(io_map_value_node_key (temp),r_key)) {
+			io_map_value_t *mlist = NULL;
+			vref_t r_removed = io_map_slot_value_get_mapped_value (
+				io_map_value_node_left(temp)
+			);
+			vref_t b = cr_NIL;
+			int i;
+
+			/* adjust forward pointers */
+			for (i = 0; i < io_map_value_current_depth (list); i++) {
+				io_cons_value_t *prev = vref_cast_to_rw_pointer(path[i]);
+				node = vref_cast_to_ro_pointer (io_map_value_node_right(prev));
+				if (i > 0 && !vref_is_equal_to(io_map_value_node_left(node),b)) break;
+				b = io_map_value_node_right(prev);	// node being deleted at this level
+				io_map_value_node_set_right (path[i],io_map_value_node_right(node));
+			}
+
+			/* adjust header level */
+			while (i > 1) {
+				node = vref_cast_to_ro_pointer (list->r_tree);
+				if (vref_is_nil(io_map_value_node_right(node))) {
+					if (mlist == NULL) mlist = vref_cast_to_rw_pointer(r_list);
+					io_map_value_current_depth (mlist) --;
+					io_map_value_set_tree (list,io_map_value_node_left (node));
+				} else {
+					break;
+				}
+				i--;
+			}
+			
+			return r_removed;
+		}
+	}
+	
+	return INVALID_VREF;
+}
+
+vref_t
+io_map_value_unmap (vref_t r_this,vref_t r_key) {
+	io_map_value_t *this = vref_cast_to_rw_pointer(r_this);
+	vref_t path[io_map_value_maximum_depth(this)];
+	io_map_value_search (this,r_key,path);
+	return io_map_value_remove_helper (r_this,this,path,r_key);
+}
 
 /*
  *
@@ -5527,6 +6333,8 @@ add_core_value_implementations_to_hash (string_hash_table_t *hash) {
 		IO_VALUE_IMPLEMENTATION(&io_compare_equal_to_value_implementation),
 		IO_VALUE_IMPLEMENTATION(&io_cons_value_implementation),
 		IO_VALUE_IMPLEMENTATION(&io_list_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&io_map_slot_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&io_map_value_implementation),
 	};
 	bool ok = true;
 	

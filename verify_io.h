@@ -282,7 +282,8 @@ TEST_BEGIN(test_io_text_encoding_1) {
 
 	if (VERIFY(encoding != NULL,NULL)) {
 		const uint8_t *b,*e;
-
+		uint8_t byte;
+		
 		reference_io_encoding (encoding);
 		VERIFY (is_io_text_encoding (encoding),NULL);
 		VERIFY (is_io_binary_encoding (encoding),NULL);
@@ -294,7 +295,8 @@ TEST_BEGIN(test_io_text_encoding_1) {
 		io_encoding_get_ro_bytes (encoding,&b,&e);
 		VERIFY ((e - b) == 3,NULL);
 		VERIFY (memcmp ("abc",b,3) == 0,NULL);
-
+		byte = 0;
+		VERIFY (io_encoding_pop_last_byte (encoding,&byte) && byte == 'c',NULL);
 		io_encoding_reset (encoding);
 		VERIFY (io_encoding_length (encoding) == 0,NULL);
 
@@ -345,6 +347,8 @@ TEST_END
 
 TEST_BEGIN(test_io_constant_values_1) {
 
+	VERIFY(vref_get_containing_memory (cr_NIL) == NULL,NULL);
+
 	VERIFY(vref_is_valid(cr_UNIV),NULL);
 	VERIFY (io_value_is_equal (cr_UNIV,cr_UNIV),NULL);
 
@@ -378,6 +382,9 @@ TEST_BEGIN(test_io_constant_values_1) {
 	extern EVENT_DATA io_value_implementation_t binary_value_implementation;
 	extern EVENT_DATA io_value_implementation_t io_text_value_implementation;
 	extern EVENT_DATA io_value_implementation_t io_cons_value_implementation;
+	extern EVENT_DATA io_value_implementation_t io_list_value_implementation;
+	extern EVENT_DATA io_value_implementation_t io_map_slot_value_implementation;
+	extern EVENT_DATA io_value_implementation_t io_map_value_implementation;
 	io_value_implementation_t const* expect[] = {
 		&univ_value_implementation,
 		&nil_value_implementation,
@@ -387,6 +394,9 @@ TEST_BEGIN(test_io_constant_values_1) {
 		&binary_value_implementation,
 		&io_text_value_implementation,
 		&io_cons_value_implementation,
+		&io_list_value_implementation,
+		&io_map_slot_value_implementation,
+		&io_map_value_implementation,
 	};
 	bool ok = true;
 	for (int i = 0; i < SIZEOF(expect) && ok; i++) {
@@ -394,6 +404,28 @@ TEST_BEGIN(test_io_constant_values_1) {
 	}
 	VERIFY(ok,"value implementations match");
 
+}
+TEST_END
+
+TEST_BEGIN(test_io_constant_values_2) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	io_encoding_t *encoding;
+	const uint8_t *b,*e;
+
+	encoding = mk_io_text_encoding (bm);
+
+	VERIFY (io_encoding_printf (encoding,"%v",cr_NIL) == 2,NULL);
+	io_encoding_get_ro_bytes (encoding,&b,&e);
+	VERIFY ((e - b) == 2,NULL);
+	VERIFY (memcmp ("()",b,2) == 0,NULL);
+
+	io_encoding_reset (encoding);
+	VERIFY (io_encoding_printf (encoding,"%v",cr_UNIV) == 1,NULL);
+	io_encoding_get_ro_bytes (encoding,&b,&e);
+	VERIFY ((e - b) == 1,NULL);
+	VERIFY (memcmp (".",b,1) == 0,NULL);
+	
+	io_encoding_free (encoding);
 }
 TEST_END
 
@@ -413,6 +445,7 @@ TEST_BEGIN(test_io_int64_value_1) {
 
 		VERIFY (v != NULL,NULL);
 		VERIFY (io_typesafe_ro_cast (r_value,cr_NUMBER) != NULL,NULL);
+		VERIFY(vref_get_containing_memory (r_value) == vm,NULL);
 
 		VERIFY (
 				io_value_encode (r_value,(io_encoding_t*) &enc)
@@ -938,7 +971,7 @@ TEST_BEGIN(test_cons_value_1) {
 	
 	io_value_memory_get_info (vm,&vm_begin);
 
-	r_value = mk_io_cons_value (vm,cr_NIL,cr_NIL);
+	r_value = mk_io_cons_value (vm,cr_NIL,cr_NIL,cr_NIL);
 	if (VERIFY(vref_is_valid(r_value),NULL)) {
 		vref_t r_part;
 		
@@ -952,7 +985,7 @@ TEST_BEGIN(test_cons_value_1) {
 	}
 
 	r_car =  mk_io_int64_value (vm,-2);
-	r_value = mk_io_cons_value (vm,r_car,cr_NIL);
+	r_value = mk_io_cons_value (vm,r_car,cr_NIL,cr_NIL);
 	if (VERIFY(vref_is_valid(r_value),NULL)) {
 		vref_t r_part;
 		VERIFY (io_typesafe_ro_cast (r_value,cr_CONS) != NULL,NULL);
@@ -962,6 +995,206 @@ TEST_BEGIN(test_cons_value_1) {
 		VERIFY (io_cons_value_get_car (r_value,&r_part) && vref_is_equal_to(r_part,r_car),NULL);
 		r_part = cr_UNIV;
 		VERIFY (io_cons_value_get_cdr (r_value,&r_part) && vref_is_nil(r_part),NULL);
+	}
+
+	io_value_memory_do_gc (vm,-1);
+	io_value_memory_get_info (vm,&vm_end);
+	VERIFY (vm_end.used_bytes == vm_begin.used_bytes,NULL);
+}
+TEST_END
+
+TEST_BEGIN(test_list_value_1) {
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
+	memory_info_t vm_begin,vm_end;
+	vref_t r_value;
+	
+	io_value_memory_get_info (vm,&vm_begin);
+
+	r_value = mk_io_list_value (vm);
+	if (VERIFY(vref_is_valid(r_value),NULL)) {
+		vref_t r_pop;
+		
+		VERIFY (io_typesafe_ro_cast (r_value,cr_LIST) != NULL,NULL);
+		VERIFY (vref_get_containing_memory (r_value) == vm,NULL);
+		
+		VERIFY (io_list_value_count (r_value) == 0,NULL);
+		
+		{
+			io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+			io_encoding_t *encoding;
+			encoding = mk_io_text_encoding (bm);
+			if (VERIFY (io_encoding_printf (encoding,"%v",r_value) == 2,NULL)) {
+				const uint8_t *b,*e;
+				io_encoding_get_ro_bytes (encoding,&b,&e);
+				VERIFY (memcmp(b,"()",2) == 0,NULL);
+			}
+			
+			io_encoding_free(encoding);
+		}
+		
+		io_list_value_append_value (r_value,cr_NIL);
+		VERIFY (io_list_value_count (r_value) == 1,NULL);
+		r_pop = cr_LIST;
+		VERIFY (io_list_pop_last (r_value,&r_pop) && vref_is_nil (r_pop),NULL);
+		VERIFY (io_list_value_count (r_value) == 0,NULL);
+
+		io_list_value_append_value (r_value,cr_NIL);
+		VERIFY (io_list_value_count (r_value) == 1,NULL);
+		r_pop = cr_LIST;
+		VERIFY (io_list_pop_first (r_value,&r_pop) && vref_is_nil (r_pop),NULL);
+		VERIFY (io_list_value_count (r_value) == 0,NULL);
+	}
+
+	io_value_memory_do_gc (vm,-1);
+	io_value_memory_get_info (vm,&vm_end);
+	VERIFY (vm_end.used_bytes == vm_begin.used_bytes,NULL);
+}
+TEST_END
+
+TEST_BEGIN(test_list_value_2) {
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
+	memory_info_t vm_begin,vm_end;
+	vref_t r_list;
+	
+	io_value_memory_get_info (vm,&vm_begin);
+
+	r_list = mk_io_list_value (vm);
+
+	io_list_value_append_value (r_list,mk_io_int64_value (vm,42));
+
+	{
+		io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+		io_encoding_t *encoding;
+		encoding = mk_io_text_encoding (bm);
+		if (VERIFY (io_encoding_printf (encoding,"%v",r_list) == 4,NULL)) {
+			const uint8_t *b,*e;
+			io_encoding_get_ro_bytes (encoding,&b,&e);
+			VERIFY (memcmp(b,"(42)",4) == 0,NULL);
+		}
+		
+		io_encoding_free(encoding);
+	}
+	
+	io_value_memory_do_gc (vm,-1);
+	io_value_memory_get_info (vm,&vm_end);
+	VERIFY (vm_end.used_bytes == vm_begin.used_bytes,NULL);
+}
+TEST_END
+
+static bool
+test_io_map_value_count_cb (vref_t r_slot,void *result) {
+	(*((int*) result))++;
+	return true;
+}
+
+TEST_BEGIN(test_map_value_1) {
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
+	memory_info_t vm_begin,vm_end;
+	vref_t r_map;
+	
+	io_value_memory_get_info (vm,&vm_begin);
+
+	r_map = mk_io_map_value (vm,3);
+	if (VERIFY(vref_is_valid(r_map),NULL)) {
+		vref_t r_mapped;
+		int result;
+		
+		VERIFY (io_typesafe_ro_cast (r_map,cr_MAP) != NULL,NULL);
+		VERIFY (vref_get_containing_memory (r_map) == vm,NULL);
+
+		result = 0;
+		io_map_value_iterate (r_map,test_io_map_value_count_cb,&result);
+		VERIFY(result == 0,NULL);
+
+		VERIFY (io_map_value_map (r_map,cr_NIL,cr_NIL),NULL);
+		VERIFY (
+			(
+					io_map_value_get_mapping (r_map,cr_NIL,&r_mapped) 
+				&& vref_is_nil(r_mapped)
+			),
+			NULL
+		);
+		result = 0;
+		io_map_value_iterate (r_map,test_io_map_value_count_cb,&result);
+		VERIFY(result == 1,NULL);
+		
+		r_mapped = io_map_value_unmap (r_map,cr_NIL);
+		VERIFY (vref_is_nil (r_mapped),NULL);
+
+		result = 0;
+		io_map_value_iterate (r_map,test_io_map_value_count_cb,&result);
+		VERIFY(result == 0,NULL);
+	}
+
+	io_value_memory_do_gc (vm,-1);
+	io_value_memory_get_info (vm,&vm_end);
+	VERIFY (vm_end.used_bytes == vm_begin.used_bytes,NULL);
+}
+TEST_END
+
+/*
+				int64_t i64_value;
+				VERIFY (
+						io_value_get_as_int64 (r_decoded,&i64_value)
+					&&	i64_value == 42,
+					NULL
+				);
+
+*/
+static bool
+test_io_map_value_3_cb (vref_t r_slot,void *result) {
+	int64_t v;
+	if (io_value_get_as_int64 (io_map_slot_value_get_key(r_slot),&v)) {
+		int **a = result;
+		*(*a) = v;
+		(*a)++;
+	}
+	return true;
+}
+
+TEST_BEGIN(test_map_value_2) {
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
+	memory_info_t vm_begin,vm_end;
+	vref_t r_map;
+	
+	io_value_memory_get_info (vm,&vm_begin);
+
+	r_map = mk_io_map_value (vm,3);
+	if (VERIFY(vref_is_valid(r_map),NULL)) {
+		vref_t r_key[8];
+		bool ok;
+		int count;
+		
+		ok = true;
+		for (int i = SIZEOF(r_key) - 1; i >= 0; i--) {
+			r_key[i] = mk_io_int64_value (vm,i);
+			ok &= io_map_value_map (r_map,r_key[i],cr_NIL);
+		}
+		VERIFY(ok,"all new slots");
+
+		count = 0;
+		io_map_value_iterate (r_map,test_io_map_value_count_cb,&count);
+		VERIFY(count == SIZEOF(r_key),NULL);
+
+		int rr[SIZEOF(r_key)] = {0},*c = rr;
+		io_map_value_iterate (r_map,test_io_map_value_3_cb,&c);
+
+		ok = true;
+		for (int i = 0; i < SIZEOF(r_key); i++) {
+			ok &= (rr[i] == i);
+		}
+		VERIFY (ok,"increasing order");
+
+		ok = true;
+		for (int i = SIZEOF(r_key) - 1; i >= 0; i--) {
+			vref_t r_removed = io_map_value_unmap (r_map,r_key[i]);
+			ok &= vref_is_nil(r_removed);
+		}
+		VERIFY(ok,"all slots unmaped");
+
+		count = 0;
+		io_map_value_iterate (r_map,test_io_map_value_count_cb,&count);
+		VERIFY(count == 0,NULL);
 	}
 
 	io_value_memory_do_gc (vm,-1);
@@ -994,6 +1227,7 @@ io_core_values_unit_test (V_unit_test_t *unit) {
 		test_io_text_encoding_1,
 		test_io_x70_encoding_1,
 		test_io_constant_values_1,
+		test_io_constant_values_2,
 		test_io_int64_value_1,
 		test_io_int64_value_2,
 		test_io_int64_value_3,
@@ -1008,6 +1242,10 @@ io_core_values_unit_test (V_unit_test_t *unit) {
 		test_vector_value_1,
 		test_vector_value_2,
 		test_cons_value_1,
+		test_list_value_1,
+		test_list_value_2,
+		test_map_value_1,
+		test_map_value_2,
 		0
 	};
 	unit->name = "io_values";
