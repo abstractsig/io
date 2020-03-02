@@ -255,6 +255,7 @@ io_event_cast_to_pipe (io_event_t *ev) {
 
 typedef union PACK_STRUCTURE io_time {
 	int64_t nanoseconds;
+	int64_t ns;
 	uint64_t u64;
 	uint8_t bytes[8];
 	struct {
@@ -1224,6 +1225,9 @@ struct PACK_STRUCTURE io_cpu_power_domain {
     IO_CPU_POWER_DOMAIN_STRUCT_MEMBERS
 };
 
+void io_power_domain_no_operation (io_t *io,io_cpu_power_domain_pointer_t);
+extern EVENT_DATA io_cpu_power_domain_t always_on_io_power_domain;
+
 //
 // clock
 //
@@ -1270,6 +1274,8 @@ bool	io_cpu_clock_link_input_to_output (io_cpu_clock_pointer_t input,io_cpu_cloc
 void	io_cpu_clock_stop (io_cpu_clock_pointer_t);
 bool	io_cpu_clock_has_implementation (io_cpu_clock_pointer_t,io_cpu_clock_implementation_t const*);
 bool	io_cpu_dependant_clock_start_input (io_t*,io_cpu_clock_pointer_t);
+
+io_cpu_power_domain_pointer_t get_always_on_io_power_domain (io_cpu_clock_pointer_t);
 
 //
 // inline clock implementation
@@ -1459,7 +1465,6 @@ typedef struct PACK_STRUCTURE io_implementation {
 	void (*do_gc) (io_t*,int32_t);
 	io_cpu_clock_pointer_t (*get_core_clock) (io_t*);
 	bool (*is_first_run) (io_t*);
-	bool (*clear_first_run) (io_t*);
 	io_uid_t const* (*uid) (io_t*); 
 
 	//
@@ -1685,12 +1690,11 @@ io_is_first_run (io_t *io) {
 	return io->implementation->is_first_run (io);
 }
 
-INLINE_FUNCTION bool
-io_clear_first_run (io_t *io) {
-	return io->implementation->clear_first_run (io);
+INLINE_FUNCTION io_uid_t const*
+io_uid (io_t *io) {
+	return io->implementation->uid(io);
 }
 
-io_uid_t const* (*uid) (io_t*); 
 INLINE_FUNCTION io_socket_t*
 io_get_socket (io_t *io,int32_t s) {
 	return io->implementation->get_socket (io,s);
@@ -1720,11 +1724,6 @@ INLINE_FUNCTION void
 write_to_io_pin (io_t *io,io_pin_t p,int32_t s) {
 	io->implementation->write_to_io_pin (io,p,s);
 }
-
-INLINE_FUNCTION io_uid_t const*
-io_uid (io_t *io) {
-	return io->implementation->uid (io);
-} 
 
 INLINE_FUNCTION void
 toggle_io_pin (io_t *io,io_pin_t p) {
@@ -1796,6 +1795,7 @@ enum {
 	IO_PANIC_SOMETHING_BAD_HAPPENED,
 	IO_PANIC_DEVICE_ERROR,
 	IO_PANIC_OUT_OF_MEMORY,
+	IO_PANIC_TIME_CLOCK_ERROR,
 };
 
 /*
@@ -2164,10 +2164,10 @@ static const io_implementation_t	io_base = {
 	.get_short_term_value_memory = io_core_get_null_value_memory,
 	.get_long_term_value_memory = io_core_get_null_value_memory,
 	.do_gc = NULL,
+	.is_first_run = NULL,
 	.get_core_clock = NULL,
 	.get_random_u32 = NULL,
 	.is_first_run = NULL,
-	.clear_first_run = NULL,
 	.sha256_start = io_cpu_sha256_start,
 	.sha256_update = io_cpu_sha256_update,
 	.sha256_finish = io_cpu_sha256_finish,
@@ -2565,8 +2565,28 @@ io_printf (io_t *io,const char *fmt,...) {
 }
 
 //
-// clock
+// clock and power
 //
+void
+io_power_domain_no_operation (
+	io_t *io,io_cpu_power_domain_pointer_t pd
+) {
+}
+
+EVENT_DATA io_cpu_power_domain_implementation_t
+always_on_io_power_domain_implementation = {
+	.turn_off = io_power_domain_no_operation,
+	.turn_on = io_power_domain_no_operation,
+};
+
+EVENT_DATA io_cpu_power_domain_t always_on_io_power_domain = {
+	.implementation = &always_on_io_power_domain_implementation,
+};
+
+io_cpu_power_domain_pointer_t
+get_always_on_io_power_domain (io_cpu_clock_pointer_t clock) {
+	return def_io_cpu_power_domain_pointer (&always_on_io_power_domain);
+}
 
 bool
 io_cpu_dependant_clock_start_input (io_t *io,io_cpu_clock_pointer_t clock) {
