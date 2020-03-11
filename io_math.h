@@ -22,6 +22,7 @@ int32_t io_math_compare_float64_with_epsilon (float64_t a,float64_t b,float64_t 
 
 #define io_math_compare_float64_eq(a,b) (io_math_compare_float64 (a,b) == 0)
 #define io_math_compare_float64_ge(a,b) (io_math_compare_float64 (a,b) >= 0)
+#define io_math_compare_float64_le(a,b) (io_math_compare_float64 (a,b) <= 0)
 #define io_math_compare_float64_gt(a,b) (io_math_compare_float64 (a,b) > 0)
 #define io_math_compare_float64_lt(a,b) (io_math_compare_float64 (a,b) < 0)
 
@@ -37,6 +38,10 @@ typedef int64_t	q64f32_t;
 
 uint32_t		next_prime_u32_integer (uint32_t);
 bool			is_u32_integer_prime (uint32_t);
+
+uint32_t		gcd_uint32 (uint32_t, uint32_t);
+uint32_t		gcd_uint32_reduce (uint32_t*,uint32_t);
+
 uint32_t		read_le_uint32 (uint8_t const*);
 int64_t		read_le_int64 (uint8_t const*);
 float64_t	read_le_float64 (uint8_t const*);
@@ -153,6 +158,73 @@ next_prime_u32_integer (uint32_t x) {
 		}
 	}
 }
+
+uint32_t
+gcd_uint32 (uint32_t u, uint32_t v) {
+	int shift;
+
+	/* GCD(0,v) == v; GCD(u,0) == u, GCD(0,0) == 0 */
+	if (u == 0) return v;
+	if (v == 0) return u;
+
+	/* Let shift := lg K, where K is the greatest power of 2
+		  dividing both u and v. */
+	for (shift = 0; ((u | v) & 1) == 0; ++shift) {
+			u >>= 1;
+			v >>= 1;
+	}
+
+	while ((u & 1) == 0) {
+		u >>= 1;
+	}
+	
+	/* From here on, u is always odd. */
+	do {
+		 /* remove all factors of 2 in v -- they are not common */
+		 /*   note: v is not zero, so while will terminate */
+		 while ((v & 1) == 0)  /* Loop X */
+			  v >>= 1;
+
+		 /* Now u and v are both odd. Swap if necessary so u <= v,
+			 then set v = v - u (which is even). For bignums, the
+			 swapping is just pointer movement, and the subtraction
+			 can be done in-place. */
+		 if (u > v) {
+			unsigned int t = v; v = u; u = t;}  // Swap u and v.
+		 v = v - u;                       // Here v >= u.
+	  } while (v != 0);
+
+	/* restore common factors of 2 */
+	return u << shift;
+}
+
+uint32_t
+gcd_uint32_reduce (uint32_t *number,uint32_t len) {
+	uint32_t gcd = 0;
+
+	switch(len) {
+		case 0:
+			// nothing to do
+		break;
+		
+		case 1:
+			gcd = *number;
+		break;
+		
+		default:
+			gcd = gcd_uint32 (number[0],number[1]);
+			len -= 2;
+			number += 2;
+			while (len) {
+				gcd = gcd_uint32 (gcd,*number++);
+				len--;
+			}
+		break;
+	}
+	
+	return gcd;
+}
+
 
 //
 // float

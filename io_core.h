@@ -1242,10 +1242,9 @@ typedef struct io_cpu_clock_implementation io_cpu_clock_implementation_t;
 
 #define IO_CPU_CLOCK_IMPLEMENTATION_STRUCT_MEMBERS \
 	io_cpu_clock_implementation_t const *specialisation_of; \
-	float64_t (*get_frequency) (io_cpu_clock_pointer_t); \
+	float64_t (*get_current_frequency) (io_cpu_clock_pointer_t); \
+	float64_t (*get_expected_frequency) (io_cpu_clock_pointer_t); \
 	io_cpu_power_domain_pointer_t (*get_power_domain) (io_cpu_clock_pointer_t); \
-	bool (*link_input_to_output) (io_cpu_clock_pointer_t,io_cpu_clock_pointer_t);	\
-	bool (*link_output_to_input) (io_cpu_clock_pointer_t,io_cpu_clock_pointer_t);	\
 	bool (*start) (io_t*,io_cpu_clock_pointer_t); \
 	void (*stop) (io_cpu_clock_pointer_t); \
 	/**/
@@ -1269,8 +1268,6 @@ struct PACK_STRUCTURE io_cpu_clock {
 
 #define io_cpu_clock_ro_pointer(c) 		(c).ro
 
-bool	io_cpu_clock_link_output_to_input (io_cpu_clock_pointer_t output,io_cpu_clock_pointer_t input);
-bool	io_cpu_clock_link_input_to_output (io_cpu_clock_pointer_t input,io_cpu_clock_pointer_t output);
 void	io_cpu_clock_stop (io_cpu_clock_pointer_t);
 bool	io_cpu_clock_has_implementation (io_cpu_clock_pointer_t,io_cpu_clock_implementation_t const*);
 bool	io_cpu_dependant_clock_start_input (io_t*,io_cpu_clock_pointer_t);
@@ -1281,8 +1278,13 @@ io_cpu_power_domain_pointer_t get_always_on_io_power_domain (io_cpu_clock_pointe
 // inline clock implementation
 //
 INLINE_FUNCTION float64_t
-io_cpu_clock_get_frequency (io_cpu_clock_pointer_t c) {
-	return io_cpu_clock_ro_pointer(c)->implementation->get_frequency(c);
+io_cpu_clock_get_current_frequency (io_cpu_clock_pointer_t c) {
+	return io_cpu_clock_ro_pointer(c)->implementation->get_current_frequency(c);
+}
+
+INLINE_FUNCTION float64_t
+io_cpu_clock_get_expected_frequency (io_cpu_clock_pointer_t c) {
+	return io_cpu_clock_ro_pointer(c)->implementation->get_expected_frequency(c);
 }
 
 INLINE_FUNCTION io_cpu_power_domain_pointer_t
@@ -1316,7 +1318,8 @@ typedef struct PACK_STRUCTURE io_cpu_dependant_clock {
 } io_cpu_dependant_clock_t;
 
 bool io_dependant_cpu_clock_start (io_t*,io_cpu_clock_pointer_t);
-float64_t io_dependant_cpu_clock_get_frequency (io_cpu_clock_pointer_t);
+float64_t io_dependant_cpu_clock_get_current_frequency (io_cpu_clock_pointer_t);
+float64_t io_dependant_cpu_clock_get_expected_frequency (io_cpu_clock_pointer_t);
 
 #define IO_CPU_CLOCK_FUNCTION_STRUCT_MEMBERS \
 	IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS\
@@ -2595,11 +2598,7 @@ io_cpu_dependant_clock_start_input (io_t *io,io_cpu_clock_pointer_t clock) {
 	);
 
 	if (io_cpu_clock_ro_pointer (this->input)) {
-		if (io_cpu_clock_start (io,this->input)) {
-			return io_cpu_clock_link_output_to_input (this->input,clock);
-		} else {
-			return false;
-		}
+		return io_cpu_clock_start (io,this->input);
 	} else {
 		return false;
 	}
@@ -2620,36 +2619,6 @@ io_cpu_clock_has_implementation (io_cpu_clock_pointer_t clock,io_cpu_clock_imple
 	return yes;
 }
 
-//
-// Depending on the clocks linking may be done by either the soure or receiver
-// end, or both.  Hence the two methods: link_output_to_input and link_input_to_output
-//
-bool
-io_cpu_clock_link_output_to_input (io_cpu_clock_pointer_t output,io_cpu_clock_pointer_t input) {
-	io_cpu_clock_implementation_t const *I = io_cpu_clock_ro_pointer(output)->implementation;
-	do {
-		if (I->link_output_to_input) {
-			return I->link_output_to_input (output,input);
-		}
-		I = I->specialisation_of;
-	} while (I);
-
-	return false;
-}
-
-bool
-io_cpu_clock_link_input_to_output (io_cpu_clock_pointer_t input,io_cpu_clock_pointer_t output) {
-	io_cpu_clock_implementation_t const *I = io_cpu_clock_ro_pointer(input)->implementation;
-	do {
-		if (I->link_input_to_output) {
-			return I->link_input_to_output (input,output);
-		}
-		I = I->specialisation_of;
-	} while (I);
-
-	return false;
-}
-
 void
 io_cpu_clock_stop (io_cpu_clock_pointer_t clock) {
 	io_cpu_clock_implementation_t const *I = io_cpu_clock_ro_pointer(clock)->implementation;
@@ -2663,7 +2632,7 @@ io_cpu_clock_stop (io_cpu_clock_pointer_t clock) {
 }
 
 static float64_t
-io_cpu_clock_get_frequency_base (io_cpu_clock_pointer_t clock) {
+io_cpu_clock_get_current_frequency_base (io_cpu_clock_pointer_t clock) {
 	return 0;
 }
 
@@ -2677,32 +2646,27 @@ io_cpu_clock_stop_base (io_cpu_clock_pointer_t clock) {
 
 }
 
-static bool
-io_cpu_clock_link_output_to_input_base (io_cpu_clock_pointer_t clock,io_cpu_clock_pointer_t input) {
-	return io_cpu_clock_link_input_to_output (input,clock);
-}
-
-static bool
-io_cpu_clock_link_input_to_output_base (io_cpu_clock_pointer_t clock,io_cpu_clock_pointer_t output) {
-	// no action required
-	return true;
-}
-
 EVENT_DATA io_cpu_clock_implementation_t io_cpu_clock_implementation = {
 	.specialisation_of = NULL,
-	.get_frequency = io_cpu_clock_get_frequency_base,
-	.link_output_to_input = io_cpu_clock_link_output_to_input_base,
-	.link_input_to_output = io_cpu_clock_link_input_to_output_base,
+	.get_current_frequency = io_cpu_clock_get_current_frequency_base,
 	.start = io_cpu_clock_start_base,
 	.stop = io_cpu_clock_stop_base,
 };
 
 float64_t
-io_dependant_cpu_clock_get_frequency (io_cpu_clock_pointer_t clock) {
+io_dependant_cpu_clock_get_current_frequency (io_cpu_clock_pointer_t clock) {
 	io_cpu_dependant_clock_t const *this = (io_cpu_dependant_clock_t const*) (
 		io_cpu_clock_ro_pointer (clock)
 	);
-	return io_cpu_clock_get_frequency (this->input);
+	return io_cpu_clock_get_current_frequency (this->input);
+}
+
+float64_t
+io_dependant_cpu_clock_get_expected_frequency (io_cpu_clock_pointer_t clock) {
+	io_cpu_dependant_clock_t const *this = (io_cpu_dependant_clock_t const*) (
+		io_cpu_clock_ro_pointer (clock)
+	);
+	return io_cpu_clock_get_expected_frequency (this->input);
 }
 
 bool

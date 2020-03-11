@@ -234,6 +234,26 @@ TEST_BEGIN(test_read_float64_1) {
 }
 TEST_END
 
+TEST_BEGIN(test_number_gcd) {
+	uint32_t numbers[4];
+	
+	VERIFY(gcd_uint32(48,18) == 6,NULL);
+	VERIFY(gcd_uint32(10000000,1000000) == 1000000,NULL);
+	VERIFY(gcd_uint32(17,10) == 1,NULL);
+	VERIFY(gcd_uint32(1000,1000) == 1000,NULL);
+	
+	numbers[0] = 48;
+	numbers[1] = 18;
+	VERIFY(gcd_uint32_reduce (numbers,2) == 6,NULL);
+
+	numbers[0] = 48;
+	numbers[1] = 18;
+	numbers[2] = 96;
+	VERIFY(gcd_uint32_reduce (numbers,3) == 6,NULL);
+
+}
+TEST_END
+
 UNIT_SETUP(setup_io_math_unit_test) {
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
 	io_byte_memory_get_info (bm,TEST_MEMORY_INFO);
@@ -255,6 +275,7 @@ io_math_unit_test (V_unit_test_t *unit) {
 		test_read_le_uint32_1,
 		test_read_le_int64_1,
 		test_read_float64_1,
+		test_number_gcd,
 		0
 	};
 	unit->name = "io math";
