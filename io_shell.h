@@ -286,6 +286,14 @@ TEST_BEGIN(test_shell_decoder_1) {
 
 	io_byte_memory_get_info (bm,&bm_begin);
 
+	VERIFY (
+		NULL != io_typesafe_ro_cast_to_type (
+			(io_value_t const*) &tester,
+			IO_VALUE_IMPLEMENTATION(&io_modal_value_implementation)
+		),
+		NULL
+	);
+
 	decoder = mk_io_shell_source_decoder (
 		TEST_IO,
 		def_vref (&reference_to_c_stack_value,&tester),
@@ -330,7 +338,6 @@ TEST_BEGIN(test_shell_decoder_2) {
 	memory_info_t bm_begin,bm_end;
 	io_source_decoder_t *decoder;
 	int64_t i64_value;
-//	float64_t f64;
 
 	test_io_shell_value_t tester = {
 		decl_io_modal_value (
