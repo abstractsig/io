@@ -1064,9 +1064,9 @@ vref_t io_modal_value_receive (io_t*,vref_t,uint32_t,vref_t const*);
 io_value_t*	io_modal_value_initialise (vref_t,vref_t);
 io_value_mode_t const* io_modal_value_get_modes (io_value_t const*);
 
-#define decl_modal_value_implementation(I,MODES) \
-	.specialisation_of = IO_VALUE_IMPLEMENTATION(&univ_value_implementation),	\
-	.initialise = I,	\
+#define decl_modal_value_implementation_type(Init,MODES,Imp) \
+	.specialisation_of = IO_VALUE_IMPLEMENTATION(Imp),	\
+	.initialise = Init,	\
 	.free = io_value_free_nop,	\
 	.encode = default_io_value_encode,	\
 	.receive = io_modal_value_receive,\
@@ -1075,12 +1075,30 @@ io_value_mode_t const* io_modal_value_get_modes (io_value_t const*);
 	.modes = MODES,\
 	/**/
 
+#define decl_modal_value_implementation(Init,MODES) \
+	decl_modal_value_implementation_type(Init,MODES,&io_modal_value_implementation)
+
+/*
+#define decl_modal_value_implementation(Init,MODES) \
+	.specialisation_of = IO_VALUE_IMPLEMENTATION(&io_modal_value_implementation),	\
+	.initialise = Init,	\
+	.free = io_value_free_nop,	\
+	.encode = default_io_value_encode,	\
+	.receive = io_modal_value_receive,\
+	.compare = io_value_compare_no_comparison, \
+	.get_modes = io_modal_value_get_modes,\
+	.modes = MODES,\
+
+*/
+
 #define decl_io_modal_value(T,S) \
 	.implementation = IO_VALUE_IMPLEMENTATION(T), \
 	.reference_count_ = 0, \
 	.size_ = S, \
 	.current_mode = (T)->modes, \
 	/**/
+
+extern EVENT_DATA io_modal_value_implementation_t io_modal_value_implementation;
 
 /*
  *
@@ -1232,11 +1250,18 @@ extern EVENT_DATA io_cpu_power_domain_t always_on_io_power_domain;
 // clock
 //
 typedef struct io_cpu_clock io_cpu_clock_t;
+typedef union io_cpu_clock_pointer io_cpu_clock_pointer_t;
 
-typedef union {
+typedef struct io_cpu_clock_pointer_implementation {
+	io_cpu_clock_t const* (*get_as_read_only) (io_cpu_clock_pointer_t);
+	io_cpu_clock_t* (*get_as_read_write) (io_cpu_clock_pointer_t);
+} io_cpu_clock_pointer_implementation_t;
+
+union io_cpu_clock_pointer {
 	io_cpu_clock_t const *ro;
 	io_cpu_clock_t *rw;
-} io_cpu_clock_pointer_t;
+};
+
 
 typedef struct io_cpu_clock_implementation io_cpu_clock_implementation_t;
 
@@ -6053,6 +6078,20 @@ io_map_value_unmap (vref_t r_this,vref_t r_key) {
 	io_map_value_search (this,r_key,path);
 	return io_map_value_remove_helper (r_this,this,path,r_key);
 }
+
+//
+// modal
+//
+
+static EVENT_DATA io_value_mode_t null_modes[] = {
+};
+
+EVENT_DATA io_modal_value_implementation_t io_modal_value_implementation = {
+	decl_modal_value_implementation_type (
+		io_modal_value_initialise,null_modes,&univ_value_implementation
+	)
+};
+
 
 /*
  *
