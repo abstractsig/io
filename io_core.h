@@ -257,19 +257,21 @@ typedef union PACK_STRUCTURE io_time {
 	int64_t nanoseconds;
 	int64_t ns;
 	uint64_t u64;
-	uint8_t bytes[8];
-	struct {
+	volatile uint16_t u16[4];
+	volatile uint8_t u8[8];
+	volatile struct {
 		uint32_t low;
 		uint32_t high;
 	} part;
 } io_time_t;
 
-#define time_to_milliseconds(t)		((t)/1000000LL)
-#define microsecond_time(m)			((int64_t)(m) * 1000LL)
+#define microsecond_time(m)			(io_time_t){(int64_t)(m) * 1000LL}
 #define millisecond_time(m)			(io_time_t){(int64_t)(m) * 1000000LL}
+#define second_time(m)					(io_time_t){(int64_t)(m) * 1000000000LL}
+#define minute_time(m)					(io_time_t){(int64_t)(m) * 60000000000LL}
+
+#define time_to_milliseconds(t)		((t)/1000000LL)
 #define time_in_milliseconds(m)		((int64_t)(m) / 1000000LL)
-#define second_time(m)					((int64_t)(m) * 1000000000LL)
-#define minute_time(m)					(second_time(m) * 60LL)
 
 //
 // alarms
@@ -405,6 +407,49 @@ io_encoding_pipe_new_encoding (io_pipe_t *pipe) {
 	return ((io_encoding_pipe_implementation_t const*) pipe->implementation)->new_encoding((io_pipe_t*)pipe);
 }
 typedef union io_value_reference vref_t;
+
+//
+// dma
+//
+typedef struct io_dma_channel io_dma_channel_t;
+typedef struct io_dma_channel_implementation io_dma_channel_implementation_t;
+
+struct  PACK_STRUCTURE io_dma_channel_implementation {
+	void (*transfer_from_peripheral) (io_dma_channel_t*,void*,uint32_t);
+	void (*transfer_to_peripheral) (io_dma_channel_t*,void const*,uint32_t);
+};
+
+#define IO_DMA_CHANNEL_STRUCT_MEMBERS	\
+	io_dma_channel_implementation_t const *implementation;\
+	io_event_t complete;	\
+	io_event_t error;	\
+	io_dma_channel_t *next_channel;\
+	/**/
+
+enum {
+	IO_DMA_TRANSFER_MEMORY_TO_MEMORY,
+	IO_DMA_TRANSFER_MEMORY_TO_PERIPHERAL,
+	IO_DMA_TRANSFER_PERIPHERAL_TO_MEMORY,
+};
+
+struct PACK_STRUCTURE io_dma_channel {
+	IO_DMA_CHANNEL_STRUCT_MEMBERS
+};
+
+extern EVENT_DATA io_dma_channel_implementation_t dma_channel_implementation;
+
+//
+// inline dma implementation
+//
+INLINE_FUNCTION void
+io_dma_transfer_from_peripheral (io_dma_channel_t *channel,void *dest,uint32_t size) {
+	channel->implementation->transfer_from_peripheral(channel,dest,size);
+}
+
+INLINE_FUNCTION void
+io_dma_transfer_to_peripheral (io_dma_channel_t *channel,void const *src,uint32_t size) {
+	channel->implementation->transfer_to_peripheral(channel,src,size);
+}
 
 /*
  *
@@ -1078,19 +1123,6 @@ io_value_mode_t const* io_modal_value_get_modes (io_value_t const*);
 #define decl_modal_value_implementation(Init,MODES) \
 	decl_modal_value_implementation_type(Init,MODES,&io_modal_value_implementation)
 
-/*
-#define decl_modal_value_implementation(Init,MODES) \
-	.specialisation_of = IO_VALUE_IMPLEMENTATION(&io_modal_value_implementation),	\
-	.initialise = Init,	\
-	.free = io_value_free_nop,	\
-	.encode = default_io_value_encode,	\
-	.receive = io_modal_value_receive,\
-	.compare = io_value_compare_no_comparison, \
-	.get_modes = io_modal_value_get_modes,\
-	.modes = MODES,\
-
-*/
-
 #define decl_io_modal_value(T,S) \
 	.implementation = IO_VALUE_IMPLEMENTATION(T), \
 	.reference_count_ = 0, \
@@ -1262,6 +1294,7 @@ union io_cpu_clock_pointer {
 	io_cpu_clock_t *rw;
 };
 
+typedef bool (*io_cpu_clock_iterator_t) (io_cpu_clock_pointer_t,void*);
 
 typedef struct io_cpu_clock_implementation io_cpu_clock_implementation_t;
 
@@ -1269,9 +1302,11 @@ typedef struct io_cpu_clock_implementation io_cpu_clock_implementation_t;
 	io_cpu_clock_implementation_t const *specialisation_of; \
 	float64_t (*get_current_frequency) (io_cpu_clock_pointer_t); \
 	float64_t (*get_expected_frequency) (io_cpu_clock_pointer_t); \
+	io_cpu_clock_pointer_t (*get_input) (io_cpu_clock_pointer_t); \
 	io_cpu_power_domain_pointer_t (*get_power_domain) (io_cpu_clock_pointer_t); \
 	bool (*start) (io_t*,io_cpu_clock_pointer_t); \
-	void (*stop) (io_cpu_clock_pointer_t); \
+	void (*stop) (io_t*,io_cpu_clock_pointer_t); \
+	bool (*iterate_outputs) (io_cpu_clock_pointer_t,io_cpu_clock_iterator_t,void*);\
 	/**/
 
 struct PACK_STRUCTURE io_cpu_clock_implementation {
@@ -1292,12 +1327,16 @@ struct PACK_STRUCTURE io_cpu_clock {
 #define def_io_cpu_clock_pointer(C)		((io_cpu_clock_pointer_t){(io_cpu_clock_t const*) (C)})
 
 #define io_cpu_clock_ro_pointer(c) 		(c).ro
+#define io_cpu_clock_is_null(c) 			(io_cpu_clock_ro_pointer(c) == NULL)
 
-void	io_cpu_clock_stop (io_cpu_clock_pointer_t);
+void	io_cpu_clock_stop (io_t*,io_cpu_clock_pointer_t);
 bool	io_cpu_clock_has_implementation (io_cpu_clock_pointer_t,io_cpu_clock_implementation_t const*);
 bool	io_cpu_dependant_clock_start_input (io_t*,io_cpu_clock_pointer_t);
 
+io_cpu_clock_pointer_t io_cpu_dependant_clock_get_input (io_cpu_clock_pointer_t);
+io_cpu_clock_pointer_t io_cpu_clock_get_input_nop (io_cpu_clock_pointer_t);
 io_cpu_power_domain_pointer_t get_always_on_io_power_domain (io_cpu_clock_pointer_t);
+bool	io_cpu_clock_is_derrived_from (io_cpu_clock_pointer_t,io_cpu_clock_implementation_t const*);
 
 //
 // inline clock implementation
@@ -1320,6 +1359,16 @@ io_cpu_clock_power_domain (io_cpu_clock_pointer_t c) {
 INLINE_FUNCTION bool
 io_cpu_clock_start (io_t *io,io_cpu_clock_pointer_t c) {
 	return io_cpu_clock_ro_pointer(c)->implementation->start(io,c);
+}
+
+INLINE_FUNCTION bool
+io_cpu_clock_iterate_outputs (io_cpu_clock_pointer_t clock ,io_cpu_clock_iterator_t cb,void *uv) {
+	return io_cpu_clock_ro_pointer(clock)->implementation->iterate_outputs(clock,cb,uv);
+}
+
+INLINE_FUNCTION io_cpu_clock_pointer_t
+io_cpu_clock_get_input (io_cpu_clock_pointer_t clock) {
+	return io_cpu_clock_ro_pointer(clock)->implementation->get_input(clock);
 }
 
 extern EVENT_DATA io_cpu_clock_implementation_t io_cpu_clock_implementation;
@@ -1346,6 +1395,8 @@ bool io_dependant_cpu_clock_start (io_t*,io_cpu_clock_pointer_t);
 float64_t io_dependant_cpu_clock_get_current_frequency (io_cpu_clock_pointer_t);
 float64_t io_dependant_cpu_clock_get_expected_frequency (io_cpu_clock_pointer_t);
 
+extern EVENT_DATA io_cpu_clock_implementation_t io_dependent_clock_implementation;
+
 #define IO_CPU_CLOCK_FUNCTION_STRUCT_MEMBERS \
 	IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS\
 	io_cpu_clock_pointer_t const *outputs;\
@@ -1354,6 +1405,9 @@ float64_t io_dependant_cpu_clock_get_expected_frequency (io_cpu_clock_pointer_t)
 typedef struct PACK_STRUCTURE io_cpu_clock_function {
 	IO_CPU_CLOCK_FUNCTION_STRUCT_MEMBERS
 } io_cpu_clock_function_t;
+
+bool	io_cpu_clock_function_iterate_outputs (io_cpu_clock_pointer_t,bool (*) (io_cpu_clock_pointer_t,void*),void*);
+bool	io_cpu_clock_iterate_outputs_nop (io_cpu_clock_pointer_t,bool (*) (io_cpu_clock_pointer_t,void*),void*);
 
 //
 // sockets
@@ -1461,20 +1515,16 @@ io_socket_bindt (io_socket_t *socket,io_event_t *ev) {
 // cpu io pins
 //
 typedef uint32_t io_pin_t;
-void	io_pin_nop (io_t*,io_pin_t);
 
 //
 // interrupts
 //
 typedef void (*io_interrupt_action_t) (void*);
 
-#define IO_INTERRUPT_HANDLER_STRUCT_MEMBERS \
-	io_interrupt_action_t action; \
-	void *user_value; \
-	/**/
 	
 typedef struct io_interrupt_handler {
-	IO_INTERRUPT_HANDLER_STRUCT_MEMBERS
+	io_interrupt_action_t action;
+	void *user_value;
 } io_interrupt_handler_t;
 
 //
@@ -1542,7 +1592,7 @@ typedef struct PACK_STRUCTURE io_implementation {
 	//
 	void (*set_io_pin_output) (io_t*,io_pin_t);
 	void (*set_io_pin_input) (io_t*,io_pin_t);
-	void (*set_io_pin_interrupt) (io_t*,io_pin_t);
+	void (*set_io_pin_interrupt) (io_t*,io_pin_t,io_interrupt_handler_t*);
 	void (*set_io_pin_alternate) (io_t*,io_pin_t);
 	int32_t (*read_from_io_pin) (io_t*,io_pin_t);
 	void (*write_to_io_pin) (io_t*,io_pin_t,int32_t);
@@ -1744,8 +1794,8 @@ io_set_pin_to_alternate (io_t *io,io_pin_t p) {
 }
 
 INLINE_FUNCTION void
-io_set_pin_to_interrupt (io_t *io,io_pin_t p) {
-	io->implementation->set_io_pin_interrupt (io,p);
+io_set_pin_to_interrupt (io_t *io,io_pin_t p,io_interrupt_handler_t *h) {
+	io->implementation->set_io_pin_interrupt (io,p,h);
 }
 
 INLINE_FUNCTION void
@@ -2168,6 +2218,10 @@ void
 io_pin_nop (io_t *io,io_pin_t p) {
 }
 
+static void
+io_pin_interrupt_nop (io_t *io,io_pin_t p,io_interrupt_handler_t *h) {
+}
+
 static int32_t
 read_from_io_pin_nop (io_t *io,io_pin_t p) {
 	return 0;
@@ -2216,7 +2270,7 @@ static const io_implementation_t	io_base = {
 	.unregister_interrupt_handler = NULL,
 	.set_io_pin_output = io_pin_nop,
 	.set_io_pin_input = io_pin_nop,
-	.set_io_pin_interrupt = io_pin_nop,
+	.set_io_pin_interrupt = io_pin_interrupt_nop,
 	.set_io_pin_alternate = io_pin_nop,
 	.release_io_pin = io_pin_nop,
 	.read_from_io_pin = read_from_io_pin_nop,
@@ -2616,6 +2670,38 @@ get_always_on_io_power_domain (io_cpu_clock_pointer_t clock) {
 	return def_io_cpu_power_domain_pointer (&always_on_io_power_domain);
 }
 
+io_cpu_clock_pointer_t
+io_cpu_clock_get_input_nop (io_cpu_clock_pointer_t clock) {
+	return IO_CPU_CLOCK(NULL);
+}
+
+bool
+io_cpu_clock_is_derrived_from (
+	io_cpu_clock_pointer_t clock,io_cpu_clock_implementation_t const *T
+) {
+	bool yes = false;
+	while (!io_cpu_clock_is_null (clock)) {
+		io_cpu_clock_implementation_t const *I = (
+			io_cpu_clock_ro_pointer(clock)->implementation
+		);
+		if (I == T) {
+			yes = true;
+			break;
+		}
+		clock = io_cpu_clock_get_input(clock);
+	};
+
+	return yes;
+}
+
+io_cpu_clock_pointer_t
+io_cpu_dependant_clock_get_input (io_cpu_clock_pointer_t clock) {
+	io_cpu_dependant_clock_t const *this = (
+		(io_cpu_dependant_clock_t const*) io_cpu_clock_ro_pointer (clock)
+	);
+	return this->input;
+}
+
 bool
 io_cpu_dependant_clock_start_input (io_t *io,io_cpu_clock_pointer_t clock) {
 	io_cpu_dependant_clock_t const *this = (
@@ -2645,11 +2731,11 @@ io_cpu_clock_has_implementation (io_cpu_clock_pointer_t clock,io_cpu_clock_imple
 }
 
 void
-io_cpu_clock_stop (io_cpu_clock_pointer_t clock) {
+io_cpu_clock_stop (io_t *io,io_cpu_clock_pointer_t clock) {
 	io_cpu_clock_implementation_t const *I = io_cpu_clock_ro_pointer(clock)->implementation;
 	do {
 		if (I->stop) {
-			I->stop (clock);
+			I->stop (io,clock);
 			break;
 		}
 		I = I->specialisation_of;
@@ -2667,8 +2753,35 @@ io_cpu_clock_start_base (io_t *io,io_cpu_clock_pointer_t clock) {
 }
 
 static void
-io_cpu_clock_stop_base (io_cpu_clock_pointer_t clock) {
+io_cpu_clock_stop_base (io_t *io,io_cpu_clock_pointer_t clock) {
 
+}
+
+bool
+io_cpu_clock_iterate_outputs_nop (
+	io_cpu_clock_pointer_t clock ,bool (*cb) (io_cpu_clock_pointer_t,void*),void *uv
+) {
+	return true;
+}
+
+bool
+io_cpu_clock_function_iterate_outputs (
+	io_cpu_clock_pointer_t clock ,bool (*cb) (io_cpu_clock_pointer_t,void*),void *uv
+) {
+	io_cpu_clock_function_t const *this = (
+		(io_cpu_clock_function_t const*) io_cpu_clock_ro_pointer (clock)
+	);
+	io_cpu_clock_pointer_t const *cursor = this->outputs;
+	io_cpu_clock_t const *next;
+	
+	while ( (next = io_cpu_clock_ro_pointer(*cursor)) != NULL) {
+		if (!cb(*cursor,uv)) {
+			return false;
+		}
+		cursor ++;
+	}
+
+	return true;
 }
 
 EVENT_DATA io_cpu_clock_implementation_t io_cpu_clock_implementation = {
@@ -2701,6 +2814,16 @@ io_dependant_cpu_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
 	);
 	return io_cpu_clock_start (io,this->input);
 }
+
+EVENT_DATA io_cpu_clock_implementation_t io_dependent_clock_implementation = {
+	.specialisation_of = &io_cpu_clock_implementation,
+	.get_power_domain = get_always_on_io_power_domain,
+	.get_current_frequency = io_dependant_cpu_clock_get_current_frequency,
+	.get_expected_frequency = io_dependant_cpu_clock_get_expected_frequency,
+	.iterate_outputs = io_cpu_clock_iterate_outputs_nop,
+	.start = io_dependant_cpu_clock_start,
+	.stop = NULL,
+};
 
 //
 // pipes
@@ -3033,6 +3156,26 @@ io_value_pipe_put_value (io_value_pipe_t *this,vref_t r_value) {
 		return false;
 	}
 }
+
+static void
+io_dma_null_transfer_from_peripheral (io_dma_channel_t *channel,void *dest,uint32_t len) {
+}
+
+static void
+io_dma_null_transfer_to_peripheral (io_dma_channel_t *channel,void const *src,uint32_t len) {
+}
+
+EVENT_DATA io_dma_channel_implementation_t dma_channel_implementation = {
+	.transfer_from_peripheral = io_dma_null_transfer_from_peripheral,
+	.transfer_to_peripheral = io_dma_null_transfer_to_peripheral,
+};
+
+io_dma_channel_t null_dma_channel = {
+	.implementation = &dma_channel_implementation,
+	.complete = def_io_event(NULL,NULL),
+	.error = def_io_event(NULL,NULL),
+	.next_channel = NULL,
+};
 
 //
 // hash
