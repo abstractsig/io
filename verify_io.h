@@ -1831,8 +1831,8 @@ TEST_BEGIN(test_io_constrained_hash_table_2) {
 	);
 	
 	if (VERIFY (cht != NULL,NULL)) {
+		vref_t r_last = cr_NIL;
 		uint32_t i,c;
-		vref_t r_last;
 		
 		VERIFY(cht_get_table_size(cht) >= size,"table size");
 		size = cht_get_table_size(cht);
