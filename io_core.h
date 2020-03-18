@@ -121,8 +121,8 @@ typedef struct io_value_memory io_value_memory_t;
 void 	iterate_io_byte_memory_allocations(io_byte_memory_t*,bool (*cb) (void*,void*),void*);
 void	incremental_iterate_io_byte_memory_allocations (io_byte_memory_t*,uint16_t*,bool (*) (io_value_t*,void*),void *);
 
-io_byte_memory_t*	mk_io_byte_memory (io_t*,uint32_t);
-io_byte_memory_t*	initialise_io_byte_memory (io_t*,io_byte_memory_t*);
+io_byte_memory_t*	mk_io_byte_memory (io_t*,uint32_t,uint32_t);
+io_byte_memory_t*	initialise_io_byte_memory (io_t*,io_byte_memory_t*,uint32_t);
 void	free_io_byte_memory (io_byte_memory_t*);
 void*	umm_malloc(io_byte_memory_t*,size_t);
 void*	umm_calloc(io_byte_memory_t*,size_t,size_t);
@@ -136,6 +136,21 @@ void	io_byte_memory_get_info (io_byte_memory_t*,memory_info_t *info);
 #define io_byte_memory_free umm_free
 #define io_byte_memory_reallocate umm_realloc
 
+//
+// block sizes as pow_2 (only 8 for now)
+//
+#define UMM_BLOCK_SIZE_8		3UL
+#define UMM_BLOCK_SIZE_16		4UL
+#define UMM_BLOCK_SIZE_32		5UL
+#define UMM_BLOCK_SIZE_64		6UL
+#define UMM_BLOCK_SIZE_128		7UL
+#define UMM_BLOCK_SIZE_256		8UL	// up to 8Mbyte
+#define UMM_BLOCK_SIZE_1024	10UL	// up to 32Mbyte
+#define UMM_BLOCK_SIZE_4096	12UL	// up to 132Mbyte
+
+//
+// uid
+//
 #define IO_UID_BYTE_LENGTH				16
 #define IO_UID_WORDS_LENGTH			(IO_UID_BYTE_LENGTH/sizeof(uint32_t))
 #define IO_UID_RESERVED_LIMIT			0xffff
@@ -177,7 +192,6 @@ typedef struct PACK_STRUCTURE {
 
 #define io_config_u32_ptr(c)	(&(c).first_run_flag)
 #define io_config_u32_size()	(sizeof(io_persistant_state_t)/sizeof(uint32_t))
-
 
 /*
  *
@@ -552,7 +566,18 @@ reference_value (vref_t r_value) {
 }
 
 INLINE_FUNCTION vref_t
+reference_io_value (vref_t r_value) {
+	return vref_implementation(r_value)->reference(r_value);
+}
+
+INLINE_FUNCTION vref_t
 unreference_value (vref_t r_value) {
+	vref_implementation(r_value)->unreference(r_value);
+	return r_value;
+}
+
+INLINE_FUNCTION vref_t
+unreference_io_value (vref_t r_value) {
 	vref_implementation(r_value)->unreference(r_value);
 	return r_value;
 }
@@ -679,6 +704,64 @@ void free_string_hash_table (string_hash_table_t*);
 bool string_hash_table_insert (string_hash_table_t*,const char*,uint32_t,string_hash_table_mapping_t);
 bool string_hash_table_remove (string_hash_table_t*,const char*,uint32_t);
 bool string_hash_table_map (string_hash_table_t*,const char*,uint32_t,string_hash_table_mapping_t*);
+
+//
+// cht
+//
+typedef struct PACK_STRUCTURE io_constrained_hash_entry {
+	vref_t key;
+	vref_t value;
+	int64_t age;
+	struct PACK_STRUCTURE io_constrained_hash_entry_info {
+		uint32_t access_count:29;
+		uint32_t free:1;
+		uint32_t user_flag1:1;
+		uint32_t user_flag2:1;
+	} info;
+	struct io_constrained_hash_entry *successor;
+	struct io_constrained_hash_entry *predecessor;
+} io_constrained_hash_entry_t;
+
+typedef struct io_constrained_hash_entry_info io_constrained_hash_entry_info_t;
+
+#define cht_entry_access_count(e) ((e)->info.access_count)
+
+typedef bool (*cht_purge_entry_helper_t) (vref_t,vref_t,void*);
+typedef void (*cht_begin_purge_helper_t) (void*);
+
+typedef struct PACK_STRUCTURE io_constrained_hash {
+	io_t *io;
+	uint32_t table_size;
+	uint32_t entry_limit;
+	uint32_t entry_count;
+	uint32_t prune_count;		// number of entries to prune
+	cht_purge_entry_helper_t purge_callback;
+	cht_begin_purge_helper_t begin_purge;
+	void *user_data;
+	io_constrained_hash_entry_t *entries;
+	io_constrained_hash_entry_t **ordered;
+} io_constrained_hash_t;
+
+io_constrained_hash_t*	mk_io_constrained_hash (io_byte_memory_t*,uint32_t,cht_begin_purge_helper_t,cht_purge_entry_helper_t,void*);
+void free_io_constrained_hash (io_byte_memory_t*,io_constrained_hash_t*);
+
+vref_t	cht_get_value (io_constrained_hash_t*,vref_t);
+bool		cht_has_key (io_constrained_hash_t*,vref_t);
+void		cht_sort (io_constrained_hash_t*);
+void		cht_set_value (io_constrained_hash_t*,vref_t,vref_t);
+bool		cht_unset (io_constrained_hash_t*,vref_t);
+int		cht_compare_entries_by_key (const void*,const void*);
+
+#define cht_entries_size(size) 					(sizeof(io_constrained_hash_entry_t) * size)
+#define cht_ordered_size(size) 					(sizeof(io_constrained_hash_entry_t*) * size)
+#define cht_index_of_entry(this,e) 				((uint32_t) (e - (this)->entries))
+#define cht_count(this)								((this)->entry_count)
+#define cht_entry_at_index(this,i)				((this)->entries[i])
+#define cht_get_entry_limit(this)				((this)->entry_limit)
+#define cht_get_table_size(this)					((this)->table_size)
+#define cht_ordered_entry_at_index(this,i)	((this)->ordered[i])
+#define cht_get_invalid_value(this)				((this)->invalid_value)
+#define cht_get_prune_count(this)				((this)->prune_count)
 
 /*
  *
@@ -1521,11 +1604,21 @@ typedef uint32_t io_pin_t;
 //
 typedef void (*io_interrupt_action_t) (void*);
 
-	
-typedef struct io_interrupt_handler {
+typedef struct io_interrupt_handler io_interrupt_handler_t;
+
+struct io_interrupt_handler {
 	io_interrupt_action_t action;
 	void *user_value;
-} io_interrupt_handler_t;
+};
+
+INLINE_FUNCTION io_interrupt_handler_t*
+initialise_io_interrupt_handler (
+	io_interrupt_handler_t *ir,io_interrupt_action_t fn,void* user_value
+) {
+	ir->action = fn;
+	ir->user_value = user_value;
+	return ir;
+}
 
 //
 // Io
@@ -2029,8 +2122,16 @@ vref_t	io_map_value_unmap (vref_t,vref_t);
 bool		io_map_value_iterate (vref_t,bool (*) (vref_t,void*),void*);
 bool		io_map_value_get_mapping (vref_t,vref_t,vref_t*);
 
-
 #include <io_math.h>
+
+typedef int (*quick_sort_compare_t) (void const*,void const*);
+void	pq_sort_recurse (void*[],int,int,quick_sort_compare_t);
+
+// this version of qsort requires size of all array values to be sizeof(void*)
+INLINE_FUNCTION void
+pq_sort (void** a,int n,quick_sort_compare_t compare) {
+	pq_sort_recurse (a,0,n-1,compare);
+}
 
 #ifdef IMPLEMENT_IO_CORE
 //-----------------------------------------------------------------------------
@@ -3733,7 +3834,7 @@ mk_umm_io_value_memory (io_t *io,uint32_t size,uint32_t id) {
 		this->implementation = &umm_value_memory_implementation;
 		this->io = io;
 		this->id_ = id;
-		this->bm = mk_io_byte_memory (io,size);
+		this->bm = mk_io_byte_memory (io,size,UMM_BLOCK_SIZE_8);
 		if (this->bm != NULL) {
 			initialise_io_byte_memory_cursor(this->bm,&this->gc_cursor);
 			this->gc_stack_size = GC_STACK_LENGTH;
@@ -5596,11 +5697,16 @@ EVENT_DATA io_value_implementation_t io_cons_value_implementation = {
 	.get_modes = io_value_get_null_modes,
 };
 
+#define decl_vref(P) {\
+		.ref.implementation = &reference_to_constant_value,						\
+		.ref.expando.ptr = ((intptr_t) (P)),			\
+	}
+
 EVENT_DATA io_cons_value_t cr_cons_v = {
 	decl_io_value (&io_cons_value_implementation,sizeof(io_cons_value_t))
-	.r_car = cr_NIL,
-	.r_cdr = cr_NIL,
-	.r_cpr = cr_NIL,
+	.r_car = decl_vref(&cr_nil_v),//cr_NIL,
+	.r_cdr = decl_vref(&cr_nil_v),//cr_NIL,
+	.r_cpr = decl_vref(&cr_nil_v),//cr_NIL,
 };
 
 vref_t
@@ -5702,8 +5808,8 @@ EVENT_DATA io_value_implementation_t io_list_value_implementation = {
 
 EVENT_DATA io_list_value_t cr_list_v = {
 	decl_io_value (&io_list_value_implementation,sizeof(io_list_value_t))
-	.r_head = cr_NIL,
-	.r_tail = cr_NIL,
+	.r_head = decl_vref(&cr_nil_v),//cr_NIL,
+	.r_tail = decl_vref(&cr_nil_v),//cr_NIL,
 };
 
 vref_t
@@ -5879,8 +5985,8 @@ EVENT_DATA io_value_implementation_t io_map_slot_value_implementation = {
 
 EVENT_DATA io_map_slot_value_t cr_map_slot_v = {
 	decl_io_value (&io_map_slot_value_implementation,sizeof(io_map_slot_value_t))
-	.r_key = cr_NIL,
-	.r_mapped = cr_NIL,
+	.r_key = decl_vref(&cr_nil_v),//cr_NIL,
+	.r_mapped = decl_vref(&cr_nil_v),//cr_NIL,
 };
 
 INLINE_FUNCTION vref_t
@@ -5996,8 +6102,8 @@ EVENT_DATA io_value_implementation_t io_map_value_implementation = {
 
 EVENT_DATA io_map_value_t cr_map_v = {
 	decl_io_value (&io_map_value_implementation,sizeof(io_map_value_t))
-	.r_tree = cr_NIL,
-	.r_head = cr_NIL,
+	.r_tree = decl_vref(&cr_nil_v),//cr_NIL,
+	.r_head = decl_vref(&cr_nil_v),//cr_NIL,
 };
 
 //
@@ -6750,7 +6856,7 @@ io_source_decoder_end_of_statement (io_source_decoder_t *this) {
 #define UMM_DATA(m,b)   (UMM_BLOCK(m,b).body.data)
 
 io_byte_memory_t*
-mk_io_byte_memory (io_t *io,uint32_t size) {
+mk_io_byte_memory (io_t *io,uint32_t size,uint32_t block_size) {
 	io_byte_memory_t *this = io_byte_memory_allocate (
 		io_get_byte_memory (io),sizeof(io_byte_memory_t)
 	);
@@ -6761,7 +6867,7 @@ mk_io_byte_memory (io_t *io,uint32_t size) {
 			io_get_byte_memory (io),size
 		);
 		if (this->heap) {
-			initialise_io_byte_memory (io,this);
+			initialise_io_byte_memory (io,this,block_size);
 		} else {
 			io_byte_memory_free (io_get_byte_memory (io),this);
 			this= NULL;
@@ -6779,7 +6885,7 @@ free_io_byte_memory (io_byte_memory_t *this) {
 }
 
 io_byte_memory_t*
-initialise_io_byte_memory (io_t *io,io_byte_memory_t *mem) {
+initialise_io_byte_memory (io_t *io,io_byte_memory_t *mem,uint32_t block_size) {
   	// init heap pointer and size, and memset it to 0
 	io_memset (mem->heap,0x00,mem->number_of_blocks * sizeof(umm_block_t));
 	mem->io = io;
@@ -7388,6 +7494,746 @@ void *umm_calloc(io_byte_memory_t *mem,size_t num, size_t item_size ) {
 
 	return ret;
 }
+
+
+void
+pq_sort_exchange (void* a[],int i,int j) {
+	void* s = a[i];
+	a[i] = a[j];
+	a[j] = s;
+}
+
+int
+pq_sort_partition (void* a[],int l,int h,quick_sort_compare_t cmp) {
+	int i = l-1;
+	int j = h;
+	void* v = a[h];
+
+	while (true) {
+
+		while(cmp(a[++i],v) < 0);
+		while(cmp(a[--j],v) > 0) if (j == i)  break;
+
+		if (i >= j) break;
+
+		pq_sort_exchange (a,i,j);
+	}
+
+	pq_sort_exchange (a,i,h);
+	
+	return i;
+}
+
+void
+pq_sort_recurse (void* a[],int l,int h,quick_sort_compare_t cmp) {
+	if (h <= l) {
+		return;
+	} else {
+		int j = pq_sort_partition (a,l,h,cmp);
+		pq_sort_recurse (a,l,j-1,cmp);
+		pq_sort_recurse (a,j+1,h,cmp);
+	}
+}
+
+//
+// cht
+//
+
+static io_constrained_hash_t*	initialise_constrained_hash (io_constrained_hash_t*);
+uint32_t	cht_hash1(io_constrained_hash_t*,vref_t);
+
+#define cht_keys_equal(a,b)				vref_is_equal_to(a,b)
+#define cht_values_equal(a,b)				vref_is_equal_to(a,b)
+#define cht_keys_greater_than(a,b)		(vref_get_as_builtin_integer(a) > vref_get_as_builtin_integer(b))
+
+//
+// cannot reference when used to map cacheds references
+//
+#define CHT_REFERENCES_VALUES 0
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * mk_io_constrained_hash --
+ *
+ *-----------------------------------------------------------------------------
+ */
+io_constrained_hash_t*
+mk_io_constrained_hash (
+	io_byte_memory_t *memory,
+	uint32_t size,
+	cht_begin_purge_helper_t begin_purge,
+	cht_purge_entry_helper_t on_purge,
+	void *user_data
+
+) {
+	io_constrained_hash_t *this = io_byte_memory_allocate (
+		memory,sizeof(io_constrained_hash_t)
+	);
+	
+	if (this) {
+		this->io = memory->io;
+		size = next_prime_u32_integer (size);
+		this->entries = io_byte_memory_allocate (
+			memory,cht_entries_size (size)
+		);
+
+		if (this->entries) {
+			this->ordered = io_byte_memory_allocate (
+				memory,cht_ordered_size (size)
+			);
+			if (this->ordered) {
+				this->table_size = size;
+				this->begin_purge = begin_purge;
+				this->purge_callback = on_purge;
+				this->user_data = user_data;
+				initialise_constrained_hash (this);
+			} else {
+				goto error2;
+			}
+		} else {
+			goto error1;
+		}
+		
+	}
+	
+	return this;
+
+error2:
+	io_byte_memory_free (memory,this->entries);
+
+error1:
+	io_byte_memory_free (memory,this);
+	
+	return NULL;
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * free_io_constrained_hash --
+ *
+ * Arguments
+ * =========
+ * memory		MUST be the memory this was allocated in
+ * this			the cht to free
+ *
+ *-----------------------------------------------------------------------------
+ */
+void
+free_io_constrained_hash (io_byte_memory_t *memory,io_constrained_hash_t *this) {
+	#if CHT_REFERENCES_VALUES
+	for(uint32_t i = 0; i < this->table_size; i++ ) {
+		if (vref_is_valid(this->entries[i].key)) {
+			unreference_io_value(this->entries[i].key);
+		}
+		if (vref_is_valid(this->entries[i].value)) {
+			unreference_io_value(this->entries[i].value);
+		}
+	}
+	#endif
+	
+	io_byte_memory_free (memory,this->entries);
+	io_byte_memory_free (memory,this->ordered);
+	io_byte_memory_free (memory,this);
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * initialise_constrained_hash --
+ *
+ * Initialise a constrained hash structure. 
+ *
+ * Arguments
+ * =========
+ * this				
+ *
+ *-----------------------------------------------------------------------------
+ */
+static io_constrained_hash_t*
+initialise_constrained_hash (io_constrained_hash_t *this) {
+	uint32_t i;
+
+	for( i = 0; i < this->table_size; i++ ) {
+		this->entries[i].key = INVALID_VREF;
+		this->entries[i].value = INVALID_VREF;
+		this->entries[i].age = 0;
+		this->entries[i].info.free = 1;
+		this->entries[i].info.access_count = 0;
+		this->entries[i].successor = NULL;
+		this->entries[i].predecessor = NULL;
+		this->ordered[i] = this->entries + i;
+	}
+
+	this->entry_count = 0;
+	this->prune_count = this->table_size/10 + 1;		// prune 10% of entries
+	this->entry_limit = this->table_size*4/5;			// allow 20% unused
+
+	return this;
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * murmur3_32 --
+ *
+ * compute hash of a value
+ *
+ *-----------------------------------------------------------------------------
+ */
+uint32_t
+murmur3_32 (uint8_t const *key, size_t len) {
+	uint32_t h = 0x27d4eb2d;	// seed
+	if (len > 3) {
+		uint32_t const* key_x4 = (uint32_t const*) key;
+		size_t i = len >> 2;
+		do {
+			uint32_t k = *key_x4++;
+			k *= 0xcc9e2d51;
+			k = (k << 15) | (k >> 17);
+			k *= 0x1b873593;
+			h ^= k;
+			h = (h << 13) | (h >> 19);
+			h = (h * 5) + 0xe6546b64;
+		} while (--i);
+		key = (uint8_t const*) key_x4;
+	}
+	if (len & 3) {
+		size_t i = len & 3;
+		uint32_t k = 0;
+		key = &key[i - 1];
+		do {
+			k <<= 8;
+			k |= *key--;
+		} while (--i);
+		k *= 0xcc9e2d51;
+		k = (k << 15) | (k >> 17);
+		k *= 0x1b873593;
+		h ^= k;
+	}
+	h ^= len;
+	h ^= h >> 16;
+	h *= 0x85ebca6b;
+	h ^= h >> 13;
+	h *= 0xc2b2ae35;
+	h ^= h >> 16;
+	return h;
+}
+
+uint32_t
+cht_hash1 (io_constrained_hash_t *this,vref_t a) {
+	return (
+			murmur3_32 ((uint8_t const*) &a,sizeof(vref_t))
+		%	this->table_size
+	);
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * cht_compare_entries_by_age --
+ *
+ * Compare for qsort: an entry is greater if access_count is greater or, if equal
+ * age.
+ *
+ *-----------------------------------------------------------------------------
+ */
+int
+cht_compare_entries_by_age (void const *a,void const *b) {
+	io_constrained_hash_entry_t const *w1 = (io_constrained_hash_entry_t const*) a;
+	io_constrained_hash_entry_t const *w2 = (io_constrained_hash_entry_t const*) b;
+	
+	if (w1->info.free || w2->info.free) {
+		if (w1->info.free && w2->info.free) {
+			return 0;
+		} else if (w1->info.free) {
+			return 1;
+		} else {
+			return -1;
+		}
+	} else if (w1->info.access_count == w2->info.access_count) {
+		return (w1->age == w2->age) ?
+			0
+			: (w1->age > w2->age) ?
+			1
+			: -1;
+	} else {
+		return (w1->info.access_count > w2->info.access_count) ?	1 : -1;
+	}
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * cht_compare_entries_by_key --
+ *
+ * Compare by key for qsort (push all free entries to end of ordered list).
+ *
+ *-----------------------------------------------------------------------------
+ */
+int
+cht_compare_entries_by_key (void const *a,void const *b) {
+	io_constrained_hash_entry_t const *w1 = ((io_constrained_hash_entry_t const*) a);
+	io_constrained_hash_entry_t const *w2 = ((io_constrained_hash_entry_t const*) b);
+	if (w1->info.free || w2->info.free) {
+		if (w1->info.free && w2->info.free) {
+			return 0;
+		} else if (w1->info.free) {
+			return 1;
+		} else {
+			return -1;
+		}
+	} else {
+		return cht_keys_greater_than(w1->key,w2->key )
+			? 1 
+			: cht_keys_equal(w1->key,w2->key) 
+			? 0 
+			: -1;
+	}
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * cht_sort_user --
+ *
+ * Create ordering based on a user supplied comparison.
+ *
+ *-----------------------------------------------------------------------------
+ */
+void
+cht_sort_user (
+	io_constrained_hash_t *this,int (*compare)(void const*,void const*)
+) {
+	pq_sort ((void**) this->ordered,this->table_size,compare);
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * cht_sort --
+ *
+ * Create ordering that puts the oldest entry with least access's first.
+ * The ordering is stored in the cht's ordered array and will thus be
+ * overwritten by each call to sort.
+ *
+ *-----------------------------------------------------------------------------
+ */
+void
+cht_sort (io_constrained_hash_t *this) {
+	pq_sort (
+		(void**) this->ordered,
+		this->table_size,
+		cht_compare_entries_by_age
+	);
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * cht_prune --
+ *
+ * Keep hash table size below limit.
+ *
+ *-----------------------------------------------------------------------------
+ */
+static void
+cht_prune (io_constrained_hash_t *this) {
+	if (this->entry_count >= this->entry_limit) {
+		io_constrained_hash_entry_t **entry = this->ordered,**end = entry + this->table_size;
+		uint32_t i = 0;
+
+		#if 0 && defined(CHT_DEBUG_WORKER)
+		printw(
+			CHT_DEBUG_WORKER,
+			"prune up to %u of %u, lim=%u\n",
+			this->prune_count,
+			this->entry_count,
+			this->entry_limit
+		);
+		#endif
+		
+		if (this->begin_purge) {
+			this->begin_purge(this->user_data);
+		}
+		
+		cht_sort(this);
+		while (entry < end && i < this->prune_count) {
+			if(!(*entry)->info.free) {
+				i++;
+				#if 0 && defined(CHT_DEBUG_WORKER)
+				printw(CHT_DEBUG_WORKER," -- %u, #%u\n",(*entry)->key,cht_hash1(this,(*entry)->key));
+				#endif
+				if (this->purge_callback) {
+					if (this->purge_callback((*entry)->key,(*entry)->value,this->user_data)) {
+						cht_unset(this,(*entry)->key);
+					}
+				} else {
+					cht_unset(this,(*entry)->key);
+				}
+			}
+			entry++;
+		}
+	}
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * cht_find_entry --
+ *
+ * Retrieve a key-value pair from a hash table.  Does not count 
+ * as an access.
+ *
+ * Arguments
+ * =========
+ * this			this hash
+ * key			key to find
+ * return		pointer to entry with key == key, or NULL
+ *
+ *-----------------------------------------------------------------------------
+ */
+io_constrained_hash_entry_t*
+cht_find_entry (io_constrained_hash_t *this,vref_t key) {
+	io_constrained_hash_entry_t *entry = (
+		this->entries + cht_hash1(this,key)
+	);
+	
+	if (entry->info.free == 0) {
+		while (1) {
+			if (cht_keys_equal(entry->key,key)) {
+				return entry;
+			} else if (entry->successor) {
+				entry = entry->successor;
+			} else {
+				break;
+			}
+		};
+	}
+	
+	return NULL;
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * cht_move --
+ *
+ * Move an entry.
+ *
+ *-----------------------------------------------------------------------------
+ */
+void
+cht_move (
+	io_constrained_hash_t *this,
+	io_constrained_hash_entry_t *dest,
+	io_constrained_hash_entry_t *src
+) {
+	#ifdef CHT_DEBUG_WORKER
+	io_printf (this->io,"move [%u] <- %u\n",cht_index_of_entry(this,dest),src->key);
+	#endif
+	
+	#if CHT_REFERENCES_VALUES
+	if (vref_is_valid(dest->key)) {
+		unreference_io_value (dest->key);
+	}
+	dest->key = reference_io_value (src->key);
+
+	if (vref_is_valid(dest->value)) {
+		unreference_io_value (dest->value);
+	}
+	dest->value = reference_io_value (src->value);
+	#else
+	dest->key = src->key;
+	dest->value = src->value;
+	#endif
+	
+	dest->age = src->age;
+	dest->info.access_count = src->info.access_count;
+	dest->successor = src->successor;
+	dest->predecessor = src->predecessor;
+	if (src->successor) {
+		src->successor->predecessor = dest;
+	}
+	if (src->predecessor) {
+		src->predecessor->successor = dest;
+	}
+	src->info.free = 1;
+	src->info.access_count = 0;
+	src->successor = NULL;
+	src->predecessor = NULL;
+	dest->info.free = 0;
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * cht_longest_chain --
+ *
+ * Debug helper.
+ *
+ *-----------------------------------------------------------------------------
+ */
+uint32_t
+cht_longest_chain (io_constrained_hash_t const *this) {
+	io_constrained_hash_entry_t 
+		*e,
+		*entry = this->entries,
+		*end = entry + this->table_size;
+	uint32_t max = 0;
+
+	while (entry < end) {
+		if(!entry->info.free) {
+			uint32_t count = 0;
+			e = entry;
+			while(e) {
+				count++;
+				e = e->successor;
+			}
+			if (count > max) max = count;
+		}
+		entry++;
+	}
+	return max;
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * cht_unlink_entry --
+ *
+ *-----------------------------------------------------------------------------
+ */
+void
+cht_unlink_entry(io_constrained_hash_entry_t *entry) {
+	if(entry->predecessor) {
+		entry->predecessor->successor = entry->successor;
+	}
+	if(entry->successor) {
+		entry->successor->predecessor = entry->predecessor;
+	}
+	entry->predecessor = NULL;
+	entry->successor = NULL;
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * cht_find_entry_for_chain_root --
+ *
+ * Find an entry in e's probe chain that is not a primal-hash.
+ *
+ *-----------------------------------------------------------------------------
+ */
+io_constrained_hash_entry_t*
+cht_find_entry_for_chain_root (
+	io_constrained_hash_t *this,io_constrained_hash_entry_t *e,uint32_t h1
+) {
+	while (e) {
+		if (cht_hash1(this,e->key) == h1) {
+			return e;
+		}
+		e = e->successor;
+	}
+	return NULL;
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * cht_unset --
+ *
+ * Remove an entry from a hash table.
+ *
+ *-----------------------------------------------------------------------------
+ */
+bool
+cht_unset (io_constrained_hash_t *this,vref_t key) {
+	io_constrained_hash_entry_t *free_root = cht_find_entry (this,key);
+	if (free_root) {
+		io_constrained_hash_entry_t *pri, *fwrd = free_root->successor;
+		uint32_t free_chain_root = cht_index_of_entry(this,free_root);
+		
+		#ifdef CHT_DEBUG_WORKER
+		printw (CHT_DEBUG_WORKER,"unset %u #%u\n",key,cht_hash1(this,free_root->key));
+		#endif
+
+		cht_unlink_entry (free_root);
+		free_root->info.free = 1;
+		free_root->info.user_flag1 = 0;
+		free_root->info.user_flag2 = 0;
+
+	again:
+		#ifdef CHT_DEBUG_WORKER
+		printw (CHT_DEBUG_WORKER,"free chain root = #%u\n",free_chain_root);
+		#endif
+		pri = cht_find_entry_for_chain_root (this,fwrd,free_chain_root);
+		if (pri) {
+			#ifdef CHT_DEBUG_WORKER
+			printw(CHT_DEBUG_WORKER,"free chain entry found %u\n",pri->key);
+			#endif
+			fwrd = pri->successor;
+			cht_move(this,free_root,pri);
+			free_chain_root = cht_index_of_entry(this,pri);
+			free_root = pri;
+			goto again;
+		}
+	
+		this->entry_count --;
+		return true;
+	} else {
+		#ifdef CHT_DEBUG_WORKER
+		printw (CHT_DEBUG_WORKER,"unset key %u not found\n",key);
+		#endif
+		return false;
+	}
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * cht_get_free_entry --
+ *
+ * Get free entry, helper for cht_set_value().  In general the free nodes
+ * congregate at the 'bottom' of the ordered table.  So we start searching
+ * from the end of this->ordered.
+ *
+ *-----------------------------------------------------------------------------
+ */
+io_constrained_hash_entry_t*
+cht_get_free_entry (io_constrained_hash_t *this) {
+	io_constrained_hash_entry_t **entry = this->ordered + this->table_size - 1;
+	while (entry >= this->ordered) {
+		if ((*entry)->info.free) {
+			return *entry;
+		}
+		entry --;
+	}
+
+	// no free entries?
+	io_panic(this->io,IO_PANIC_UNRECOVERABLE_ERROR);
+
+	return NULL;
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * cht_get_value --
+ *
+ * Retrieve a key-value pair from a hash table.
+ *
+ * Does count as an access.
+ *
+ *-----------------------------------------------------------------------------
+ */
+vref_t
+cht_get_value (
+	io_constrained_hash_t *this,vref_t key
+) {
+	io_constrained_hash_entry_t *entry = cht_find_entry(this,key);
+	if (entry) {
+		entry->info.access_count ++;
+		return entry->value;
+	} else {
+		return INVALID_VREF;
+	}
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * cht_has_key --
+ *
+ * Test for existance of a key.
+ *
+ * Does not count as an access.
+ *
+ *-----------------------------------------------------------------------------
+ */
+bool
+cht_has_key (
+	io_constrained_hash_t *this,vref_t key
+) {
+	return cht_find_entry(this,key) != NULL;
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * cht_set_value --
+ *
+ * Insert a key-value pair into a hash table.
+ *
+ *-----------------------------------------------------------------------------
+ */
+void
+cht_set_value (
+	io_constrained_hash_t *this,vref_t r_key,vref_t r_value
+) {
+	static int64_t s_age = 0;
+	io_constrained_hash_entry_t *entry,*free_entry;
+
+	// constrain number of entries
+	cht_prune(this);
+
+	entry = this->entries + cht_hash1(this,r_key);
+	if (entry->info.free == 0) {
+		while (1) {
+			if (cht_keys_equal(entry->key,r_key)) {
+				#if CHT_REFERENCES_VALUES
+				unreference_io_value (entry->value);
+				entry->value = reference_io_value (r_value);
+				#else
+				entry->value = r_value;
+				#endif
+				entry->info.access_count ++;
+				return;
+			} else if (entry->successor) {
+				entry = entry->successor;
+			} else {
+				break;
+			}
+		};
+
+		free_entry = cht_get_free_entry (this);
+		free_entry->successor = NULL;
+		free_entry->predecessor = entry;
+		entry->successor = free_entry;
+		entry = free_entry;
+	}
+	this->entry_count ++;
+	#if 0 && defined(CHT_DEBUG_WORKER)
+	printw (
+		CHT_DEBUG_WORKER,
+		"cht set %u, key = %u hsh = #%u\n",
+		this->entry_count,
+		r_key,
+		cht_hash1(this,r_key)
+	);
+	#endif
+	#if CHT_REFERENCES_VALUES
+	if (vref_is_valid(entry->key)) {
+		unreference_io_value (entry->key);
+	}
+	entry->key = reference_io_value (r_key);
+	if (vref_is_valid(entry->value)) {
+		unreference_io_value (entry->value);
+	}
+	entry->value = reference_io_value (r_value);
+	#else
+	entry->key = r_key;
+	entry->value = r_value;
+	#endif
+	entry->age = s_age++;
+
+	entry->info.access_count = 0;
+	entry->info.free = 0;
+	entry->info.user_flag1 = 0;
+	entry->info.user_flag2 = 0;
+}
+
 #ifdef STB_SPRINTF_IMPLEMENTATION
 //
 // this lib can use unaligned word access which is generally not good for arm cpus
@@ -9442,7 +10288,6 @@ exit:
 #undef P
 
 // end of sha256
-
 
 /*
  * Common and shared functions used by multiple modules in the Mbed TLS

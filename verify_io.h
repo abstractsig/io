@@ -1292,7 +1292,7 @@ TEST_BEGIN(test_io_memories_1) {
 
 	io_byte_memory_get_info (bm,&bm_begin);
 
-	mem = mk_io_byte_memory (TEST_IO,32);
+	mem = mk_io_byte_memory (TEST_IO,32,UMM_BLOCK_SIZE_8);
 	if (VERIFY (mem != NULL,NULL)) {
 		memory_info_t begin,end;
 		void *data;
@@ -1738,6 +1738,228 @@ TEST_BEGIN(test_string_hash_table_2) {
 }
 TEST_END
 
+int
+test_io_pq_sort_1_compare (void const *a,void const *b) {
+	int c = ((int) a) - ((int) b);
+	return (c > 0) ? 1 : (c < 0) ? -1 : 0;
+}
+
+TEST_BEGIN(test_io_pq_sort_1) {
+	int data[] = {5,1,4,2};
+	int expect[] = {1,2,4,5};
+	bool ok;
+	
+	pq_sort ((void**) data,SIZEOF(data),test_io_pq_sort_1_compare);
+	
+	ok = true;
+	for (int i = 0; i < SIZEOF(data) && ok; i++) {
+		ok &= expect[i] == data[i];
+	}
+	VERIFY(ok,"sorted");
+}
+TEST_END
+
+TEST_BEGIN(test_io_pq_sort_2) {
+	int a[] = {12,43,13,5,8,10,11,9,20,17};
+	int r[] = {5,8,9,10,11,12,13,17,20,43};
+	int i,ok = 1;
+	
+	pq_sort ((void**) a,SIZEOF(a),test_io_pq_sort_1_compare);
+	for (i = 0; i < SIZEOF(a); i++){
+		ok &= (a[i] == r[i]);
+	}
+
+	VERIFY(ok,"all sorted");	
+}
+TEST_END
+
+static bool
+test_constrained_hash_purge_entry_helper (
+	vref_t a,vref_t b,void *u
+) {
+	uint32_t *prune_count = (uint32_t*) u;
+	*prune_count += 1;	
+	return true;
+}
+
+static void
+test_constrained_hash_begin_purge_helper (void *u) {
+}
+
+TEST_BEGIN(test_io_constrained_hash_table_1) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	io_constrained_hash_t *hash;
+	memory_info_t begin,end;
+	uint32_t size = 17;
+	
+	io_byte_memory_get_info (bm,&begin);
+	
+	hash = mk_io_constrained_hash (
+		bm,
+		size,
+		test_constrained_hash_begin_purge_helper,
+		test_constrained_hash_purge_entry_helper,
+		NULL
+	);
+	
+	if (VERIFY (hash != NULL,NULL)) {
+		
+		free_io_constrained_hash (bm,hash);
+	}
+	
+	io_byte_memory_get_info (bm,&end);
+	VERIFY (end.used_bytes == begin.used_bytes,NULL);	
+}
+TEST_END
+
+TEST_BEGIN(test_io_constrained_hash_table_2) {
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bmbegin,bmend,vmbegin,vmend;
+	io_constrained_hash_t *cht;
+	uint32_t size = 17;
+	
+	io_byte_memory_get_info (bm,&bmbegin);
+	io_value_memory_get_info (vm,&vmbegin);
+
+	cht = mk_io_constrained_hash (
+		bm,
+		size,
+		test_constrained_hash_begin_purge_helper,
+		test_constrained_hash_purge_entry_helper,
+		NULL
+	);
+	
+	if (VERIFY (cht != NULL,NULL)) {
+		uint32_t i,c;
+		vref_t r_last;
+		
+		VERIFY(cht_get_table_size(cht) >= size,"table size");
+		size = cht_get_table_size(cht);
+		
+		for (i = 0, c = 0; i < size; i++) {
+			io_constrained_hash_entry_t *e = &cht_entry_at_index(cht,i);
+			e->value = mk_io_int64_value (vm,i);
+			r_last = e->value;
+			c += e->info.free;
+		}
+		VERIFY(c == size,"table initialised");
+		VERIFY(cht_count(cht) == 0,"empty");
+
+		cht_entry_at_index(cht,size - 1).info.free = 0;
+		cht_sort(cht);
+		VERIFY (
+			vref_is_equal_to (
+				cht_ordered_entry_at_index(cht,0)->value,r_last
+			),
+			"order by age"
+		);
+
+		VERIFY(!cht_has_key(cht,cr_NIL),NULL);
+		
+		free_io_constrained_hash (bm,cht);
+	}
+	
+	io_byte_memory_get_info (bm,&bmend);
+	VERIFY (bmend.used_bytes == bmbegin.used_bytes,NULL);	
+
+	io_do_gc (TEST_IO,-1);
+	io_value_memory_get_info (vm,&vmend);
+	VERIFY (vmend.used_bytes == vmbegin.used_bytes,NULL);	
+}
+TEST_END
+
+TEST_BEGIN(test_io_constrained_hash_table_3) {
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bmbegin,bmend,vmbegin,vmend;
+	io_constrained_hash_t *cht;
+	uint32_t size = 17;
+	
+	io_byte_memory_get_info (bm,&bmbegin);
+	io_value_memory_get_info (vm,&vmbegin);
+
+	cht = mk_io_constrained_hash (
+		bm,
+		size,
+		test_constrained_hash_begin_purge_helper,
+		test_constrained_hash_purge_entry_helper,
+		NULL
+	);
+	
+	if (VERIFY (cht != NULL,NULL)) {
+		vref_t r_key,r_value;
+		
+		r_key = mk_io_int64_value (vm,0);
+		r_value = mk_io_int64_value (vm,1);
+		
+		cht_set_value(cht,r_key,r_value);
+		VERIFY (cht_count(cht) == 1,NULL);
+		VERIFY (cht_has_key(cht,r_key),NULL);
+		VERIFY (vref_is_equal_to (cht_get_value(cht,r_key),r_value),NULL);
+
+		VERIFY (cht_unset (cht,r_key),NULL);
+		VERIFY (!cht_has_key(cht,r_key),NULL);
+
+		VERIFY (!cht_has_key(cht,cr_NIL),NULL);
+
+		free_io_constrained_hash (bm,cht);
+	}
+	
+	io_byte_memory_get_info (bm,&bmend);
+	VERIFY (bmend.used_bytes == bmbegin.used_bytes,NULL);	
+
+	io_do_gc (TEST_IO,-1);
+	io_value_memory_get_info (vm,&vmend);
+	VERIFY (vmend.used_bytes == vmbegin.used_bytes,NULL);	
+}
+TEST_END
+
+TEST_BEGIN(test_io_constrained_hash_table_4) {
+	io_value_memory_t *vm = io_get_short_term_value_memory (TEST_IO);
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bmbegin,bmend,vmbegin,vmend;
+	io_constrained_hash_t *cht;
+	uint32_t size = 17;
+	uint32_t prune_count = 0;
+	io_byte_memory_get_info (bm,&bmbegin);
+	io_value_memory_get_info (vm,&vmbegin);
+
+	cht = mk_io_constrained_hash (
+		bm,
+		size,
+		test_constrained_hash_begin_purge_helper,
+		test_constrained_hash_purge_entry_helper,
+		&prune_count
+	);
+	
+	if (VERIFY (cht != NULL,NULL)) {
+		int i;
+		for(i = 0; i < cht_get_entry_limit (cht); i++) {
+			cht_set_value (
+				cht,mk_io_int64_value (vm,i),cr_NIL
+			);
+		}
+
+		VERIFY(prune_count == 0,"no pruning yet");
+		cht_set_value (
+			cht,mk_io_int64_value (vm,i),cr_NIL
+		);
+
+		VERIFY(prune_count == 2,"entries pruned");
+
+		free_io_constrained_hash (bm,cht);
+	}
+	
+	io_byte_memory_get_info (bm,&bmend);
+	VERIFY (bmend.used_bytes == bmbegin.used_bytes,NULL);	
+
+	io_do_gc (TEST_IO,-1);
+	io_value_memory_get_info (vm,&vmend);
+	VERIFY (vmend.used_bytes == vmbegin.used_bytes,NULL);	
+}
+TEST_END
+
 UNIT_SETUP(setup_io_internalss_unit_test) {
 	return VERIFY_UNIT_CONTINUE;
 }
@@ -1762,6 +1984,11 @@ io_internals_unit_test (V_unit_test_t *unit) {
 		test_vref_bucket_hash_table_5,
 		test_string_hash_table_1,
 		test_string_hash_table_2,
+		test_io_pq_sort_1,
+		test_io_constrained_hash_table_1,
+		test_io_constrained_hash_table_2,
+		test_io_constrained_hash_table_3,
+		test_io_constrained_hash_table_4,
 		0
 	};
 	unit->name = "io internals";
