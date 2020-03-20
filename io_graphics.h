@@ -1405,7 +1405,7 @@ io_graphics_context_draw_filled_rectangle_base (io_graphics_context_t *gfx,io_i3
 #endif /* IMPLEMENT_IO_GRAPHICS */
 #ifdef IMPLEMENT_VERIFY_IO_GRAPHICS
 
-#define TEST_IO_GRAPHICS_CONTEXT_PIXEL_WIDTH	64
+#define TEST_IO_GRAPHICS_CONTEXT_PIXEL_WIDTH		64
 #define TEST_IO_GRAPHICS_CONTEXT_PIXEL_HEIGHT	48
 
 static uint32_t
@@ -1795,23 +1795,6 @@ TEST_BEGIN(test_io_graphics_text_2) {
 }
 TEST_END
 
-TEST_BEGIN(test_io_graphics_text_3) {
-	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
-	io_graphics_context_t *gfx;
-
-
-	gfx = mk_test_io_graphics_graphics_context(bm,IO_BLACK_8BIT);
-	io_graphics_font_set_pixel_height (gfx->current_font,40);
-	io_graphics_context_set_colour (gfx,IO_WHITE_8BIT);
-
-	io_graphics_context_select_font_by_name (gfx,(uint8_t const*) "RobotoBold",10);
-	io_graphics_context_draw_ascii_text (gfx,"L4g",(io_i32_point_t){0,-9});
-	//io_graphics_context_render(gfx);
-
-	free_io_graphics_context(gfx);
-}
-TEST_END
-
 TEST_BEGIN(test_io_graphics_line_1) {
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
 	io_graphics_context_t *gfx;
@@ -1964,7 +1947,6 @@ io_graphics_unit_test (V_unit_test_t *unit) {
 		test_io_graphics_1,
 		test_io_graphics_text_1,
 		test_io_graphics_text_2,
-		test_io_graphics_text_3,
 		test_io_graphics_line_1,
 		test_io_graphics_circle_1,
 		test_io_graphics_circle_2,
@@ -1978,6 +1960,55 @@ io_graphics_unit_test (V_unit_test_t *unit) {
 	unit->setup = setup_io_graphics_unit_test;
 	unit->teardown = teardown_io_graphics_unit_test;
 }
+
+#ifdef IMPLEMENT_VERIFY_IO_GRAPHICS_FONT_ROBOTO
+
+TEST_BEGIN(test_io_graphics_font_roboto_1) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	io_graphics_context_t *gfx;
+
+	gfx = mk_test_io_graphics_graphics_context(bm,IO_BLACK_8BIT);
+	io_graphics_font_set_pixel_height (gfx->current_font,40);
+	io_graphics_context_set_colour (gfx,IO_WHITE_8BIT);
+
+	io_graphics_context_select_font_by_name (gfx,(uint8_t const*) "RobotoBold",10);
+	io_graphics_context_draw_ascii_text (gfx,"L4g",(io_i32_point_t){0,-9});
+	//io_graphics_context_render(gfx);
+
+	free_io_graphics_context(gfx);
+}
+
+TEST_END
+UNIT_SETUP(setup_io_graphics_font_roboto_unit_test) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	io_byte_memory_get_info (bm,TEST_MEMORY_INFO);
+	return VERIFY_UNIT_CONTINUE;
+}
+
+UNIT_TEARDOWN(teardown_io_graphics_font_robotos_unit_test) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bm_end;
+	io_byte_memory_get_info (bm,&bm_end);
+	VERIFY (bm_end.used_bytes == TEST_MEMORY_INFO->used_bytes,NULL);
+}
+
+void
+io_graphics_font_roboto_unit_test (V_unit_test_t *unit) {
+	static V_test_t const tests[] = {
+		test_io_graphics_font_roboto_1,
+		0
+	};
+	unit->name = "roboto font";
+	unit->description = "io graphics roboto font unit test";
+	unit->tests = tests;
+	unit->setup = setup_io_graphics_font_roboto_unit_test;
+	unit->teardown = teardown_io_graphics_font_robotos_unit_test;
+}
+#define IO_GRAPHICS_FONT_ROBOTO_UNIT_TEST io_graphics_font_roboto_unit_test
+#else
+#define IO_GRAPHICS_FONT_ROBOTO_UNIT_TEST
+#endif /* IMPLEMENT_VERIFY_IO_GRAPHICS_FONT_ROBOTO */
+
 #define IO_GRAPHICS_UNIT_TESTS	\
 	io_graphics_unit_test,
 	/**/

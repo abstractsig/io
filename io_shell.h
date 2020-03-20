@@ -86,7 +86,7 @@ ion_shell_source_decoder_state_symbol (io_source_decoder_t *this,io_character_t 
 		is_symbol_t const *cursor = this->keywords;
 		vref_t r_sym;
 
-		io_encoding_get_ro_bytes (this->buffer,&b,&e);
+		io_encoding_get_content (this->buffer,&b,&e);
 
 		while (*cursor) {
 			if (vref_is_valid((r_sym = (*cursor)((char*) b,e-b)))) {
