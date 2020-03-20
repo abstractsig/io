@@ -777,12 +777,16 @@ typedef vref_t (*io_value_decoder_t) (io_encoding_t*,io_value_memory_t*);
 	io_encoding_t* (*make_encoding) (io_byte_memory_t*);\
 	void (*free) (io_encoding_t*);\
 	io_t* (*get_io) (io_encoding_t*);\
+	void const* (*get_ro_header) (io_encoding_t const*); \
+	void* (*get_rw_header) (io_encoding_t*); \
+	void (*get_content) (io_encoding_t const*,uint8_t const**,uint8_t const**);\
 	vref_t (*decode_to_io_value) (io_encoding_t*,io_value_decoder_t,io_value_memory_t*);\
 	uint32_t (*grow_increment) (io_encoding_t*);\
 	int32_t (*limit) (void);\
 	size_t (*length) (io_encoding_t const*);\
-	bool (*push) (io_encoding_t*,uint8_t const*,uint32_t);\
-	bool (*pop) (io_encoding_t*,uint32_t);\
+	bool (*cast_outer) (io_encoding_t*);\
+	bool (*cast_inner) (io_encoding_t*);\
+	bool (*cast_inner_with_add) (io_encoding_t*);\
 	/**/
 
 struct io_encoding_implementation {
@@ -827,6 +831,21 @@ io_encoding_get_io (io_encoding_t *encoding) {
 	return encoding->implementation->get_io (encoding);
 }
 
+INLINE_FUNCTION void const*
+io_encoding_get_get_ro_header (io_encoding_t const *encoding) {
+	return encoding->implementation->get_ro_header (encoding);
+}
+
+INLINE_FUNCTION void*
+io_encoding_get_get_rw_header (io_encoding_t *encoding) {
+	return encoding->implementation->get_rw_header (encoding);
+}
+
+INLINE_FUNCTION void
+io_encoding_get_content (io_encoding_t const *encoding,uint8_t const **begin,uint8_t const **end) {
+	encoding->implementation->get_content (encoding,begin,end);
+}
+
 INLINE_FUNCTION vref_t
 io_encoding_decode_to_io_value (io_encoding_t *encoding,io_value_decoder_t d,io_value_memory_t *vm) {
 	return encoding->implementation->decode_to_io_value(encoding,d,vm);
@@ -838,13 +857,18 @@ io_encoding_free (io_encoding_t *encoding) {
 }
 
 INLINE_FUNCTION bool
-io_encoding_push (io_encoding_t *encoding,uint8_t const *b,uint32_t s) {
-	return encoding->implementation->push (encoding,b,s);
+io_encoding_cast_outer (io_encoding_t *encoding) {
+	return encoding->implementation->cast_outer (encoding);
 }
 
 INLINE_FUNCTION bool
-io_encoding_pop (io_encoding_t *encoding,uint32_t s) {
-	return encoding->implementation->pop (encoding,s);
+io_encoding_cast_inner (io_encoding_t *encoding) {
+	return encoding->implementation->cast_inner (encoding);
+}
+
+INLINE_FUNCTION bool
+io_encoding_cast_inner_with_add (io_encoding_t *encoding) {
+	return encoding->implementation->cast_inner_with_add (encoding);
 }
 
 INLINE_FUNCTION size_t
@@ -869,14 +893,12 @@ io_encoding_length (io_encoding_t const *encoding) {
  */
 #define IO_BINARY_ENCODING_IMPLEMENTATION_STRUCT_MEMBERS \
 	IO_ENCODING_IMPLEMENTATION_STRUCT_MEMBERS	\
-	io_encoding_t* (*copy) (io_encoding_t const*,io_byte_memory_t*);\
 	size_t (*fill) (io_encoding_t*,uint8_t,size_t);\
 	bool (*append_byte) (io_encoding_t*,uint8_t);\
 	bool (*append_bytes) (io_encoding_t*,uint8_t const*,size_t);\
 	bool (*pop_last_byte) (io_encoding_t*,uint8_t*);\
 	size_t (*print) (io_encoding_t*,char const*,va_list);\
 	void (*reset) (io_encoding_t*);\
-	void (*get_ro_bytes) (io_encoding_t const*,uint8_t const**,uint8_t const**);\
 	/**/
 
 typedef struct io_binary_encoding_implementation {
@@ -910,11 +932,6 @@ size_t	io_encoding_printf (io_encoding_t*,const char*, ... );
 INLINE_FUNCTION size_t
 io_encoding_print (io_encoding_t *encoding,char const *fmt,va_list va) {
 	return ((io_binary_encoding_implementation_t const *) encoding->implementation)->print(encoding,fmt,va);
-}
-
-INLINE_FUNCTION void
-io_encoding_get_ro_bytes (io_encoding_t const *encoding,uint8_t const **begin,uint8_t const **end) {
-	((io_binary_encoding_implementation_t const *) encoding->implementation)->get_ro_bytes (encoding,begin,end);
 }
 
 INLINE_FUNCTION void
@@ -987,6 +1004,53 @@ int32_t	io_x70_encoding_take_uint_value (const uint8_t*,const uint8_t*,uint32_t*
 vref_t	io_x70_decoder (io_encoding_t*,io_value_memory_t*);
 
 #define X70_UINT_VALUE_BYTE	'U'
+
+typedef struct io_packet_implementation io_packet_implementation_t;
+typedef struct io_packet io_packet_t;
+
+#define IO_PACKET_IMPLEMENTATION_STRUCT_PROPERTIES \
+	io_packet_implementation_t const *specialisation_of; \
+	/**/
+
+struct PACK_STRUCTURE io_packet_implementation {
+	IO_PACKET_IMPLEMENTATION_STRUCT_PROPERTIES
+};
+
+#define IO_PACKET_STRUCT_PROPERTIES \
+	io_packet_implementation_t const *implementation; \
+	/**/
+
+struct PACK_STRUCTURE io_packet {
+	IO_PACKET_STRUCT_PROPERTIES
+};
+
+typedef struct PACK_STRUCTURE io_twi_transfer {
+	IO_PACKET_STRUCT_PROPERTIES
+	struct {
+		uint32_t bus_address:8;
+		uint32_t tx_length:8;
+		uint32_t rx_length:8;
+		uint32_t :8;
+	} cmd;
+} io_twi_transfer_t;
+
+#define io_twi_transfer_bus_address(t)	(t)->cmd.bus_address
+#define io_twi_transfer_tx_length(t)	(t)->cmd.tx_length
+#define io_twi_transfer_rx_length(t)	(t)->cmd.rx_length
+
+extern EVENT_DATA io_binary_encoding_implementation_t io_twi_encoding_implementation;
+
+INLINE_FUNCTION io_encoding_t*
+mk_io_twi_encoding (io_byte_memory_t *bm) {
+	return io_twi_encoding_implementation.make_encoding(bm);
+}
+
+INLINE_FUNCTION bool
+is_io_twi_encoding (io_encoding_t const *encoding) {
+	return io_is_encoding_of_type (
+		encoding,IO_ENCODING_IMPLEMENATAION (&io_twi_encoding_implementation)
+	);
+}
 
 //
 // int64 encoding
@@ -1518,6 +1582,7 @@ typedef struct PACK_STRUCTURE io_socket_constructor {
 	void (*free) (io_socket_t*);\
 	bool (*open) (io_socket_t*);\
 	void (*close) (io_socket_t*);\
+	bool (*is_closed) (io_socket_t const*);\
 	io_t*	(*get_io) (io_socket_t*); \
 	io_pipe_t* (*bindt) (io_socket_t*,io_event_t*);\
 	io_event_t* (*bindr) (io_socket_t*,io_event_t*);\
@@ -1567,6 +1632,11 @@ io_socket_open (io_socket_t *socket) {
 INLINE_FUNCTION void
 io_socket_close (io_socket_t *socket) {
 	socket->implementation->close (socket);
+}
+
+INLINE_FUNCTION bool
+io_socket_is_closed (io_socket_t const *socket) {
+	return socket->implementation->is_closed (socket);
 }
 
 INLINE_FUNCTION io_t*
@@ -2220,6 +2290,11 @@ io_socket_mtu_nop (io_socket_t const *socket) {
 	return 0;
 }
 
+static bool
+io_socket_is_closed_always (io_socket_t const *socket) {
+	return true;
+}
+
 EVENT_DATA io_socket_implementation_t io_socket_implementation_base = {
 	.specialisation_of = NULL,
 	.new = io_socket_new_null,
@@ -2227,6 +2302,7 @@ EVENT_DATA io_socket_implementation_t io_socket_implementation_base = {
 	.free = io_socket_free_panic,
 	.open = io_socket_open_nop,
 	.close = io_socket_close_nop,
+	.is_closed = io_socket_is_closed_always,
 	.get_io = io_socket_get_io_null,
 	.bindt = io_socket_bindt_nop,
 	.bindr = io_socket_bindr_nop,
@@ -4112,17 +4188,41 @@ null_encoding_get_io (io_encoding_t *encoding) {
 	return NULL;
 }
 
+static bool
+null_io_encoding_no_cast (io_encoding_t *encoding) {
+	return false;
+}
+
+static void const*
+null_io_encoding_no_ro_header (io_encoding_t const *encoding) {
+	return NULL;
+}
+
+static void*
+null_io_encoding_no_rw_header (io_encoding_t *encoding) {
+	return NULL;
+}
+
+static void
+io_encoding_no_content (io_encoding_t const *encoding,uint8_t const** b,uint8_t const** e) {
+	*b = *e = NULL;
+}
+
 EVENT_DATA io_encoding_implementation_t io_encoding_implementation_base = {
 	.specialisation_of = NULL,
 	.make_encoding = mk_null_encoding,
 	.free = free_null_encoding,
 	.get_io = null_encoding_get_io,
+	.get_ro_header = null_io_encoding_no_ro_header,
+	.get_rw_header = null_io_encoding_no_rw_header,
+	.get_content = io_encoding_no_content,
 	.decode_to_io_value = io_value_encoding_decode_to_io_value,
 	.limit = null_encoding_limit,
 	.length = null_encoding_length,
 	.grow_increment = null_encoding_grow_increment,
-	.push = NULL,
-	.pop = NULL,
+	.cast_outer = null_io_encoding_no_cast,
+	.cast_inner_with_add = null_io_encoding_no_cast,
+	.cast_inner= null_io_encoding_no_cast,
 };
 
 bool
@@ -4143,12 +4243,16 @@ EVENT_DATA io_encoding_implementation_t io_value_int64_encoding_implementation =
 	.make_encoding = mk_null_encoding,
 	.free = free_null_encoding,
 	.get_io = null_encoding_get_io,
+	.get_ro_header = null_io_encoding_no_ro_header,
+	.get_rw_header = null_io_encoding_no_rw_header,
+	.get_content = io_encoding_no_content,
 	.decode_to_io_value = io_value_encoding_decode_to_io_value,
 	.limit = null_encoding_limit,
 	.length = null_encoding_length,
 	.grow_increment = null_encoding_grow_increment,
-	.push = NULL,
-	.pop = NULL,
+	.cast_outer = null_io_encoding_no_cast,
+	.cast_inner_with_add = null_io_encoding_no_cast,
+	.cast_inner= null_io_encoding_no_cast,
 };
 
 bool encoding_is_io_value_int64 (io_encoding_t *encoding) {
@@ -4162,12 +4266,16 @@ EVENT_DATA io_encoding_implementation_t io_value_float64_encoding_implementation
 	.make_encoding = mk_null_encoding,
 	.free = free_null_encoding,
 	.get_io = null_encoding_get_io,
+	.get_ro_header = null_io_encoding_no_ro_header,
+	.get_rw_header = null_io_encoding_no_rw_header,
+	.get_content = io_encoding_no_content,
 	.decode_to_io_value = io_value_encoding_decode_to_io_value,
 	.limit = null_encoding_limit,
 	.length = null_encoding_length,
 	.grow_increment = null_encoding_grow_increment,
-	.push = NULL,
-	.pop = NULL,
+	.cast_outer = null_io_encoding_no_cast,
+	.cast_inner_with_add = null_io_encoding_no_cast,
+	.cast_inner= null_io_encoding_no_cast,
 };
 
 bool
@@ -4251,7 +4359,7 @@ io_binary_encoding_append_byte (io_encoding_t *encoding,uint8_t byte) {
 }
 
 static void
-io_binary_encoding_get_ro_bytes (
+io_binary_encoding_get_content (
 	io_encoding_t const *encoding,uint8_t const **begin,uint8_t const **end
 ) {
 	io_binary_encoding_t *this = (io_binary_encoding_t*) encoding;
@@ -4337,7 +4445,7 @@ io_text_encoding_iterate_characters (
 	if (is_io_text_encoding(encoding)) {
 		const uint8_t *b,*e;
 
-		io_encoding_get_ro_bytes (encoding,&b,&e);
+		io_encoding_get_content (encoding,&b,&e);
 
 		while (b < e) {
 			if ((*b & 0x80) == 0) {
@@ -4405,19 +4513,21 @@ EVENT_DATA io_binary_encoding_implementation_t io_binary_encoding_implementation
 	.make_encoding = mk_null_encoding,
 	.free = free_null_encoding,
 	.get_io = io_binary_encoding_get_io,
-	.push = NULL,
-	.pop = NULL,
 	.length = io_binary_encoding_length,
 	.limit = io_binary_encoding_nolimit,
 	.grow_increment = io_text_encoding_grow_increment,
-	.copy = NULL,
 	.fill = io_binary_encoding_fill_bytes,
 	.append_byte = io_binary_encoding_append_byte,
 	.append_bytes = io_binary_encoding_append_bytes,
 	.pop_last_byte = io_binary_encoding_pop_last_byte,
 	.print = io_binary_encoding_print,
 	.reset = io_binary_encoding_reset,
-	.get_ro_bytes = io_binary_encoding_get_ro_bytes,
+	.get_ro_header = null_io_encoding_no_ro_header,
+	.get_rw_header = null_io_encoding_no_rw_header,
+	.get_content = io_binary_encoding_get_content,
+	.cast_outer = null_io_encoding_no_cast,
+	.cast_inner_with_add = null_io_encoding_no_cast,
+	.cast_inner= null_io_encoding_no_cast,
 };
 
 bool
@@ -4462,18 +4572,20 @@ EVENT_DATA io_binary_encoding_implementation_t io_text_encoding_implementation =
 	),
 	.decode_to_io_value = io_binary_encoding_decode_to_io_value,
 	.make_encoding = io_text_encoding_new,
-	.copy = NULL,
 	.free = io_text_encoding_free,
 	.get_io = io_binary_encoding_get_io,
-	.push = NULL,
-	.pop = NULL,
+	.cast_outer = null_io_encoding_no_cast,
+	.cast_inner_with_add = null_io_encoding_no_cast,
+	.cast_inner= null_io_encoding_no_cast,
 	.fill = io_binary_encoding_fill_bytes,
 	.append_byte = io_binary_encoding_append_byte,
 	.append_bytes = io_binary_encoding_append_bytes,
 	.pop_last_byte = io_binary_encoding_pop_last_byte,
 	.print = io_binary_encoding_print,
 	.reset = io_binary_encoding_reset,
-	.get_ro_bytes = io_binary_encoding_get_ro_bytes,
+	.get_ro_header = null_io_encoding_no_ro_header,
+	.get_rw_header = null_io_encoding_no_rw_header,
+	.get_content = io_binary_encoding_get_content,
 	.length = io_binary_encoding_length,
 	.limit = io_binary_encoding_nolimit,
 };
@@ -4540,7 +4652,7 @@ io_x70_decoder (io_encoding_t *encoding,io_value_memory_t *vm) {
 	const uint8_t *b,*e;
 	vref_t r_value = INVALID_VREF;
 	
-	io_encoding_get_ro_bytes (encoding,&b,&e);
+	io_encoding_get_content (encoding,&b,&e);
 	
 	while (b < e) {
 		uint32_t u;
@@ -4574,18 +4686,107 @@ EVENT_DATA io_binary_encoding_implementation_t io_x70_encoding_implementation = 
 	),
 	.decode_to_io_value = io_binary_encoding_decode_to_io_value,
 	.make_encoding = io_x70_encoding_new,
-	.copy = NULL,
 	.free = io_binary_encoding_free,
 	.get_io = io_binary_encoding_get_io,
-	.push = NULL,
-	.pop = NULL,
+	.cast_outer = null_io_encoding_no_cast,
+	.cast_inner_with_add = null_io_encoding_no_cast,
+	.cast_inner= null_io_encoding_no_cast,
 	.fill = io_binary_encoding_fill_bytes,
 	.append_byte = io_binary_encoding_append_byte,
 	.append_bytes = io_binary_encoding_append_bytes,
 	.pop_last_byte = io_binary_encoding_pop_last_byte,
 	.print = io_binary_encoding_print,
 	.reset = io_binary_encoding_reset,
-	.get_ro_bytes = io_binary_encoding_get_ro_bytes,
+	.get_ro_header = null_io_encoding_no_ro_header,
+	.get_rw_header = null_io_encoding_no_rw_header,
+	.get_content = io_binary_encoding_get_content,
+	.length = io_binary_encoding_length,
+	.limit = io_binary_encoding_nolimit,
+};
+
+#define IO_PACKET_ENCODING_STRUCT_MEMBERS \
+	IO_BINARY_ENCODING_STRUCT_MEMBERS \
+	uint32_t offset_to_content;\
+	/**/
+	
+typedef struct PACK_STRUCTURE io_packet_encoding {
+	IO_PACKET_ENCODING_STRUCT_MEMBERS
+} io_packet_encoding_t;
+
+static void const*
+io_packet_encoding_ro_header (io_encoding_t const *encoding) {
+	io_packet_encoding_t const *this = (io_packet_encoding_t const*) encoding;
+	return this->data;
+}
+
+static void*
+io_packet_encoding_rw_header (io_encoding_t *encoding) {
+	io_packet_encoding_t *this = (io_packet_encoding_t*) encoding;
+	return this->data;
+}
+
+static void
+io_packet_encoding_get_content (
+	io_encoding_t const *encoding,uint8_t const **begin,uint8_t const **end
+) {
+	io_packet_encoding_t *this = (io_packet_encoding_t*) encoding;
+	*begin = this->data + this->offset_to_content,
+	*end = this->cursor;
+};
+
+static void
+io_packet_encoding_reset (io_encoding_t *encoding) {
+	io_packet_encoding_t *this = (io_packet_encoding_t*) encoding;
+	this->cursor = this->data + this->offset_to_content;
+}
+
+static io_encoding_t* 
+io_twi_encoding_new (io_byte_memory_t *bm) {
+	io_packet_encoding_t *this = io_byte_memory_allocate (
+		bm,sizeof(io_packet_encoding_t)
+	);
+
+	if (this != NULL) {
+		this->implementation = IO_ENCODING_IMPLEMENATAION (
+			&io_twi_encoding_implementation
+		);
+		this->bm = bm;
+		this = io_binary_encoding_initialise ((io_binary_encoding_t*) this);
+		this->offset_to_content = sizeof(io_twi_transfer_t);
+		
+		// will advance cursor to end of header
+		io_twi_transfer_t p = {
+			.implementation = NULL,
+		};
+		
+		io_binary_encoding_append_bytes (
+			(io_encoding_t*) this,(uint8_t*) &p,sizeof(io_twi_transfer_t)
+		);
+	}
+
+	return (io_encoding_t*) this;
+};
+
+EVENT_DATA io_binary_encoding_implementation_t io_twi_encoding_implementation = {
+	.specialisation_of = IO_ENCODING_IMPLEMENATAION (
+		&io_binary_encoding_implementation
+	),
+	.decode_to_io_value = io_binary_encoding_decode_to_io_value,
+	.make_encoding = io_twi_encoding_new,
+	.free = io_binary_encoding_free,
+	.get_io = io_binary_encoding_get_io,
+	.cast_outer = null_io_encoding_no_cast,
+	.cast_inner_with_add = null_io_encoding_no_cast,
+	.cast_inner= null_io_encoding_no_cast,
+	.fill = io_binary_encoding_fill_bytes,
+	.append_byte = io_binary_encoding_append_byte,
+	.append_bytes = io_binary_encoding_append_bytes,
+	.pop_last_byte = io_binary_encoding_pop_last_byte,
+	.print = io_binary_encoding_print,
+	.reset = io_packet_encoding_reset,
+	.get_ro_header = io_packet_encoding_ro_header,
+	.get_rw_header = io_packet_encoding_rw_header,
+	.get_content = io_packet_encoding_get_content,
 	.length = io_binary_encoding_length,
 	.limit = io_binary_encoding_nolimit,
 };
@@ -5393,7 +5594,7 @@ io_text_decode_x70_value (
 vref_t
 io_text_to_text_value_decoder (io_encoding_t *encoding,io_value_memory_t *vm) {
 	const uint8_t *b,*e;
-	io_encoding_get_ro_bytes (encoding,&b,&e);
+	io_encoding_get_content (encoding,&b,&e);
 	return mk_io_text_value (vm,b,e - b);
 }
 
@@ -9071,7 +9272,7 @@ STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback,
 			vref_t r_value = va_arg(va, vref_t);
 			if (io_value_encode (r_value,venc)) {
 				const uint8_t *s,*e;
-				io_encoding_get_ro_bytes (venc,&s,&e);
+				io_encoding_get_content (venc,&s,&e);
 				 // copy the string
 				 n = e - s;
 				 while (n) {

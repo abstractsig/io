@@ -49,6 +49,16 @@ typedef struct io_i32_point {
 typedef union PACK_STRUCTURE io_pixel {
 	uint32_t all;
 	struct PACK_STRUCTURE {
+		uint32_t mono:1;
+		uint32_t :23;
+		uint8_t a;
+	} monochrome_1bit;
+	struct PACK_STRUCTURE {
+		uint32_t mono:8;
+		uint32_t :16;
+		uint8_t a;
+	} monochrome;
+	struct PACK_STRUCTURE {
 		uint32_t r:2;
 		uint32_t :6;
 		uint32_t g:2;
@@ -83,19 +93,21 @@ typedef union PACK_STRUCTURE io_pixel {
 	} colour_8bit;
 } io_pixel_t;
 
-#define io_pixel_alpha(px)				(px).colour_8bit.a
+#define io_pixel_alpha(px)					(px).colour_8bit.a
 
-#define def_io_pixel_2bita(r,g,b,a)		((io_pixel_t){.colour_4bit = {r,g,b,a}})
-#define def_io_pixel_2bit(r,g,b)		def_io_pixel_2bita(r,g,b,0xff)
+#define def_io_pixel_1bit_monochrome(bit)		((io_pixel_t){.monochrome_1bit = {.mono = bit,.a = 0,}})
+
+#define def_io_pixel_2bita(r,g,b,a)		((io_pixel_t){.colour_2bit = {r,g,b,a}})
+#define def_io_pixel_2bit(r,g,b)			def_io_pixel_2bita(r,g,b,0xff)
 
 #define def_io_pixel_4bita(r,g,b,a)		((io_pixel_t){.colour_4bit = {r,g,b,a}})
-#define def_io_pixel_4bit(r,g,b)		def_io_pixel_4bita(r,g,b,0xff)
+#define def_io_pixel_4bit(r,g,b)			def_io_pixel_4bita(r,g,b,0xff)
 
 #define def_io_pixel_6bita(r,g,b,a)		((io_pixel_t){.colour_6bit = {r,g,b,a}})
-#define def_io_pixel_6bit(r,g,b)		def_io_pixel_6bita(r,g,b,0xff)
+#define def_io_pixel_6bit(r,g,b)			def_io_pixel_6bita(r,g,b,0xff)
 
 #define def_io_pixel_8bita(r,g,b,a)		((io_pixel_t){.colour_8bit = {r,g,b,a}})
-#define def_io_pixel_8bit(r,g,b)		def_io_pixel_8bita(r,g,b,0xff)
+#define def_io_pixel_8bit(r,g,b)			def_io_pixel_8bita(r,g,b,0xff)
 
 #define io_pixel_colour_2bit_red(px)	(px).colour_2bit.r
 #define io_pixel_colour_2bit_blue(px)	(px).colour_2bit.b
@@ -110,8 +122,9 @@ typedef union PACK_STRUCTURE io_pixel {
 #define io_pixel_colour_6bit_green(px)	(px).colour_6bit.g
 
 #define io_pixel_colour_red(px)			(px).colour_8bit.r
-#define io_pixel_colour_blue(px)		(px).colour_8bit.b
+#define io_pixel_colour_blue(px)			(px).colour_8bit.b
 #define io_pixel_colour_green(px)		(px).colour_8bit.g
+#define io_pixel_colour_monochrome(px)	(px).monochrome.mono
 
 #define are_pixel_levels_equal(a,b) (((a).all & 0x00ffffff) == ((b).all & 0x00ffffff))
 
@@ -144,15 +157,16 @@ typedef union colour_mix_bit_depth {
 
 #define IO_COLOUR_MIX_IMPLEMENTATION_STRUCT_MEMBERS \
 	io_colour_mix_implementation_t const *specialisation_of;	\
-	colour_mix_bit_depth_t (*bit_depth) (void);					\
-	uint8_t (*maximum_bit_depth) (void);						\
-	uint8_t (*get_red_level) (io_pixel_t);						\
-	uint8_t (*get_green_level) (io_pixel_t);					\
-	uint8_t (*get_blue_level) (io_pixel_t);						\
-	io_pixel_t (*mk_pixel) (uint8_t,uint8_t,uint8_t);			\
-	io_pixel_t (*convert_to_8bit) (io_pixel_t);					\
-	io_pixel_t (*convert_from_8bit) (io_pixel_t);				\
-	io_colour_t (*get_standard_colour) (io_colour_id_t);		\
+	colour_mix_bit_depth_t (*bit_depth) (void); \
+	uint8_t (*maximum_bit_depth) (void); \
+	uint8_t (*get_monochrome_level) (io_pixel_t); \
+	uint8_t (*get_red_level) (io_pixel_t); \
+	uint8_t (*get_green_level) (io_pixel_t); \
+	uint8_t (*get_blue_level) (io_pixel_t); \
+	io_pixel_t (*mk_pixel) (uint8_t,uint8_t,uint8_t); \
+	io_pixel_t (*convert_to_8bit) (io_pixel_t); \
+	io_pixel_t (*convert_from_8bit) (io_pixel_t); \
+	io_colour_t (*get_standard_colour) (io_colour_id_t); \
 	/**/
 
 struct io_colour_mix_implementation {
@@ -174,6 +188,11 @@ io_colour_mix_bit_depth (io_colour_mix_t const *cm) {
 INLINE_FUNCTION uint8_t
 io_colour_mix_maximum_bit_depth (io_colour_mix_t const *cm) {
 	return cm->implementation->maximum_bit_depth ();
+}
+
+INLINE_FUNCTION uint8_t
+io_colour_mix_get_pixel_monochrome_level (io_colour_mix_t const *cm,io_pixel_t px) {
+	return cm->implementation->get_monochrome_level (px);
 }
 
 INLINE_FUNCTION uint8_t
@@ -210,6 +229,7 @@ extern EVENT_DATA io_colour_mix_t io_colour_mix_8bit;
 extern EVENT_DATA io_colour_mix_t io_colour_mix_6bit;
 extern EVENT_DATA io_colour_mix_t io_colour_mix_4bit;
 extern EVENT_DATA io_colour_mix_t io_colour_mix_2bit;
+extern EVENT_DATA io_colour_mix_t io_colour_mix_1bit_monochrome;
 
 struct PACK_STRUCTURE io_colour {
 	io_colour_mix_t const *mix;
@@ -228,6 +248,8 @@ struct PACK_STRUCTURE io_colour {
 #define decl_4bit_colour(r,g,b)	{.mix = &io_colour_mix_4bit,.level = def_io_pixel_4bit(r,g,b)}
 #define decl_2bit_colour(r,g,b)	{.mix = &io_colour_mix_2bit,.level = def_io_pixel_2bit(r,g,b)}
 
+#define decl_1bit_monochrome_colour(bit)	{.mix = &io_colour_mix_1bit_monochrome,.level = def_io_pixel_1bit_monochrome(bit)}
+
 // and mix==?
 #define colours_are_equal(c1,c2) are_pixel_levels_equal(io_colour_level(c1),io_colour_level(c2))
 
@@ -240,6 +262,11 @@ io_colour_t scale_io_colour (io_colour_t base,io_colour_t by);
 INLINE_FUNCTION io_colour_t
 io_colour_mix_get_standard_colour (io_colour_mix_t const *cm,io_colour_id_t id) {
 	return cm->implementation->get_standard_colour (id);
+}
+
+INLINE_FUNCTION uint8_t
+io_colour_monochrome_level (io_colour_t c) {
+	return io_colour_mix(c)->implementation->get_monochrome_level (io_colour_level(c));
 }
 
 INLINE_FUNCTION uint8_t
@@ -264,26 +291,29 @@ io_colour_get_maximum_bit_depth (io_colour_t c) {
 
 // the standard colours
 
-#define IO_BLACK_8BIT			io_colour_mix_get_standard_colour(&io_colour_mix_8bit,IO_COLOUR_BLACK)
-#define IO_WHITE_8BIT			io_colour_mix_get_standard_colour(&io_colour_mix_8bit,IO_COLOUR_WHITE)
-#define IO_8BIT_COLOUR_RED		io_colour_mix_get_standard_colour(&io_colour_mix_8bit,IO_COLOUR_RED)
-#define IO_8BIT_COLOUR_GREEN	io_colour_mix_get_standard_colour(&io_colour_mix_8bit,IO_COLOUR_GREEN)
-#define IO_8BIT_COLOUR_BLUE		io_colour_mix_get_standard_colour(&io_colour_mix_8bit,IO_COLOUR_BLUE)
+#define IO_BLACK_8BIT					io_colour_mix_get_standard_colour(&io_colour_mix_8bit,IO_COLOUR_BLACK)
+#define IO_WHITE_8BIT					io_colour_mix_get_standard_colour(&io_colour_mix_8bit,IO_COLOUR_WHITE)
+#define IO_8BIT_COLOUR_RED				io_colour_mix_get_standard_colour(&io_colour_mix_8bit,IO_COLOUR_RED)
+#define IO_8BIT_COLOUR_GREEN			io_colour_mix_get_standard_colour(&io_colour_mix_8bit,IO_COLOUR_GREEN)
+#define IO_8BIT_COLOUR_BLUE			io_colour_mix_get_standard_colour(&io_colour_mix_8bit,IO_COLOUR_BLUE)
 
-#define IO_BLACK_6BIT			io_colour_mix_get_standard_colour(&io_colour_mix_6bit,IO_COLOUR_BLACK)
-#define IO_WHITE_6BIT			io_colour_mix_get_standard_colour(&io_colour_mix_6bit,IO_COLOUR_WHITE)
-#define IO_6BIT_COLOUR_RED		io_colour_mix_get_standard_colour(&io_colour_mix_6bit,IO_COLOUR_RED)
-#define IO_6BIT_COLOUR_GREEN	io_colour_mix_get_standard_colour(&io_colour_mix_6bit,IO_COLOUR_GREEN)
-#define IO_6BIT_COLOUR_BLUE		io_colour_mix_get_standard_colour(&io_colour_mix_6bit,IO_COLOUR_BLUE)
+#define IO_BLACK_6BIT					io_colour_mix_get_standard_colour(&io_colour_mix_6bit,IO_COLOUR_BLACK)
+#define IO_WHITE_6BIT					io_colour_mix_get_standard_colour(&io_colour_mix_6bit,IO_COLOUR_WHITE)
+#define IO_6BIT_COLOUR_RED				io_colour_mix_get_standard_colour(&io_colour_mix_6bit,IO_COLOUR_RED)
+#define IO_6BIT_COLOUR_GREEN			io_colour_mix_get_standard_colour(&io_colour_mix_6bit,IO_COLOUR_GREEN)
+#define IO_6BIT_COLOUR_BLUE			io_colour_mix_get_standard_colour(&io_colour_mix_6bit,IO_COLOUR_BLUE)
 
-#define IO_BLACK_4BIT			io_colour_mix_get_standard_colour(&io_colour_mix_4bit,IO_COLOUR_BLACK)
-#define IO_WHITE_4BIT			io_colour_mix_get_standard_colour(&io_colour_mix_4bit,IO_COLOUR_WHITE)
-#define IO_4BIT_COLOUR_RED		io_colour_mix_get_standard_colour(&io_colour_mix_4bit,IO_COLOUR_RED)
-#define IO_4BIT_COLOUR_GREEN	io_colour_mix_get_standard_colour(&io_colour_mix_4bit,IO_COLOUR_GREEN)
-#define IO_4BIT_COLOUR_BLUE		io_colour_mix_get_standard_colour(&io_colour_mix_4bit,IO_COLOUR_BLUE)
+#define IO_BLACK_4BIT					io_colour_mix_get_standard_colour(&io_colour_mix_4bit,IO_COLOUR_BLACK)
+#define IO_WHITE_4BIT					io_colour_mix_get_standard_colour(&io_colour_mix_4bit,IO_COLOUR_WHITE)
+#define IO_4BIT_COLOUR_RED				io_colour_mix_get_standard_colour(&io_colour_mix_4bit,IO_COLOUR_RED)
+#define IO_4BIT_COLOUR_GREEN			io_colour_mix_get_standard_colour(&io_colour_mix_4bit,IO_COLOUR_GREEN)
+#define IO_4BIT_COLOUR_BLUE			io_colour_mix_get_standard_colour(&io_colour_mix_4bit,IO_COLOUR_BLUE)
 
-#define IO_BLACK_2BIT			io_colour_mix_get_standard_colour(&io_colour_mix_2bit,IO_COLOUR_BLACK)
-#define IO_WHITE_2BIT			io_colour_mix_get_standard_colour(&io_colour_mix_2bit,IO_COLOUR_WHITE)
+#define IO_BLACK_2BIT					io_colour_mix_get_standard_colour(&io_colour_mix_2bit,IO_COLOUR_BLACK)
+#define IO_WHITE_2BIT					io_colour_mix_get_standard_colour(&io_colour_mix_2bit,IO_COLOUR_WHITE)
+
+#define IO_BLACK_1BIT_MONOCHROME		io_colour_mix_get_standard_colour(&io_colour_mix_1bit_monochrome,IO_COLOUR_BLACK)
+#define IO_WHITE_1BIT_MONOCHROME		io_colour_mix_get_standard_colour(&io_colour_mix_1bit_monochrome,IO_COLOUR_WHITE)
 
 //
 // graphics font
@@ -523,6 +553,16 @@ cm_8bit_maximum_bit_depth (void) {
 }
 
 static uint8_t
+cm_8bit_get_monochrome_level (io_pixel_t px) {
+	uint16_t c = (
+			io_pixel_colour_red(px)
+		+	io_pixel_colour_green(px)
+		+	io_pixel_colour_blue(px)
+	);
+	return (uint8_t) (c/3);
+}
+
+static uint8_t
 cm_8bit_get_red_level (io_pixel_t px) {
 	return io_pixel_colour_red(px);
 }
@@ -568,6 +608,7 @@ EVENT_DATA io_colour_mix_implementation_t colour_mix_8bit_implementation = {
 	.bit_depth = cm_8bit_bit_depth,
 	.maximum_bit_depth = cm_8bit_maximum_bit_depth,
 	.mk_pixel = cm_8bit_make_pixel,
+	.get_monochrome_level = cm_8bit_get_monochrome_level,
 	.get_red_level = cm_8bit_get_red_level,
 	.get_green_level = cm_8bit_get_green_level,
 	.get_blue_level = cm_8bit_get_blue_level,
@@ -649,6 +690,7 @@ EVENT_DATA io_colour_mix_implementation_t colour_mix_6bit_implementation = {
 	.bit_depth = cm_6bit_bit_depth,
 	.maximum_bit_depth = cm_6bit_maximum_bit_depth,
 	.mk_pixel = cm_6bit_make_pixel,
+	.get_monochrome_level = cm_8bit_get_monochrome_level,
 	.get_red_level = cm_6bit_get_red_level,
 	.get_green_level = cm_6bit_get_green_level,
 	.get_blue_level = cm_6bit_get_blue_level,
@@ -731,6 +773,7 @@ EVENT_DATA io_colour_mix_implementation_t colour_mix_4bit_implementation = {
 	.bit_depth = cm_4bit_bit_depth,
 	.maximum_bit_depth = cm_4bit_maximum_bit_depth,
 	.mk_pixel = cm_4bit_make_pixel,
+	.get_monochrome_level = cm_8bit_get_monochrome_level,
 	.get_red_level = cm_4bit_get_red_level,
 	.get_green_level = cm_4bit_get_green_level,
 	.get_blue_level = cm_4bit_get_blue_level,
@@ -796,10 +839,10 @@ static io_colour_t
 cm_2bit_get_standard_colour (io_colour_id_t id) {
 	static const io_colour_t c[] = {
 		/* IO_COLOUR_BLACK */	decl_2bit_colour(0,0,0),
-		/* IO_COLOUR_WHITE */	decl_2bit_colour(0xf,0xf,0xf),
-		/* IO_COLOUR_RED */		decl_2bit_colour(0xf,0,0),
-		/* IO_COLOUR_GREEN */	decl_2bit_colour(0,0xf,0),
-		/* IO_COLOUR_BLUE */	decl_2bit_colour(0,0,0xf),
+		/* IO_COLOUR_WHITE */	decl_2bit_colour(0x3,0x3,0x3),
+		/* IO_COLOUR_RED */		decl_2bit_colour(0x3,0,0),
+		/* IO_COLOUR_GREEN */	decl_2bit_colour(0,0x3,0),
+		/* IO_COLOUR_BLUE */		decl_2bit_colour(0,0,0x3),
 	};
 	if (id < IO_COLOUR_MAX_INDEX) {
 		return c[id];
@@ -813,6 +856,7 @@ EVENT_DATA io_colour_mix_implementation_t colour_mix_2bit_implementation = {
 	.bit_depth = cm_2bit_bit_depth,
 	.maximum_bit_depth = cm_2bit_maximum_bit_depth,
 	.mk_pixel = cm_2bit_make_pixel,
+	.get_monochrome_level = cm_8bit_get_monochrome_level,
 	.get_red_level = cm_2bit_get_red_level,
 	.get_green_level = cm_2bit_get_green_level,
 	.get_blue_level = cm_2bit_get_blue_level,
@@ -824,6 +868,108 @@ EVENT_DATA io_colour_mix_implementation_t colour_mix_2bit_implementation = {
 EVENT_DATA io_colour_mix_t io_colour_mix_2bit = {
 	.implementation = &colour_mix_2bit_implementation,
 };
+
+/////////////
+static colour_mix_bit_depth_t
+cm_1bit_monochrome_bit_depth (void) {
+	return def_colour_mix_bit_depth(0,0,0);
+}
+
+static uint8_t
+cm_1bit_monochrome_maximum_bit_depth (void) {
+	return 1;
+}
+
+static uint8_t
+cm_1bit_monochrome_get_monochrome_level (io_pixel_t px) {
+	return io_pixel_colour_monochrome(px);
+}
+
+static uint8_t
+cm_1bit_monochrome_get_red_level (io_pixel_t px) {
+	return 0;
+}
+
+static uint8_t
+cm_1bit_monochrome_get_green_level (io_pixel_t px) {
+	return 0;
+}
+
+static uint8_t
+cm_1bit_monochrome_get_blue_level (io_pixel_t px) {
+	return 0;
+}
+
+static io_pixel_t
+cm_1bit_monochrome_convert_to_8bit (io_pixel_t px) {
+	if (io_pixel_colour_monochrome(px)) {
+		return def_io_pixel_8bit(0xff,0xff,0xff);
+	} else {
+		return def_io_pixel_8bit(0,0,0);
+	}
+}
+
+static io_pixel_t
+cm_1bit_monochrome_convert_from_8bit (io_pixel_t px) {
+	if (
+			io_pixel_colour_red(px) > 0
+		|| io_pixel_colour_green(px) > 0
+		|| io_pixel_colour_blue(px) > 0
+	) {
+		return def_io_pixel_1bit_monochrome(1);
+	} else {
+		return def_io_pixel_1bit_monochrome(0);
+	}
+}
+
+static io_colour_t
+cm_1bit_monochrome_get_standard_colour (io_colour_id_t id) {
+	static const io_colour_t c[] = {
+		/* IO_COLOUR_BLACK */	decl_1bit_monochrome_colour(0),
+		/* IO_COLOUR_WHITE */	decl_1bit_monochrome_colour(1),
+		/* IO_COLOUR_RED */		decl_1bit_monochrome_colour(1),
+		/* IO_COLOUR_GREEN */	decl_1bit_monochrome_colour(1),
+		/* IO_COLOUR_BLUE */		decl_1bit_monochrome_colour(1),
+	};
+	if (id < IO_COLOUR_MAX_INDEX) {
+		return c[id];
+	} else {
+		return c[0];
+	}
+}
+
+static io_pixel_t
+cm_1bit_monochrome_make_pixel (uint8_t r,uint8_t g,uint8_t b) {
+	if (
+			r > 0
+		|| g > 0
+		|| b > 0
+	) {
+		return def_io_pixel_1bit_monochrome(1);
+	} else {
+		return def_io_pixel_1bit_monochrome(0);
+	}
+}
+
+EVENT_DATA io_colour_mix_implementation_t 
+colour_mix_1bit_monochrome_implementation = {
+	.specialisation_of = NULL,
+	.bit_depth = cm_1bit_monochrome_bit_depth,
+	.maximum_bit_depth = cm_1bit_monochrome_maximum_bit_depth,
+	.mk_pixel = cm_1bit_monochrome_make_pixel,
+	.get_monochrome_level = cm_1bit_monochrome_get_monochrome_level,
+	.get_red_level = cm_1bit_monochrome_get_red_level,
+	.get_green_level = cm_1bit_monochrome_get_green_level,
+	.get_blue_level = cm_1bit_monochrome_get_blue_level,
+	.convert_to_8bit = cm_1bit_monochrome_convert_to_8bit,
+	.convert_from_8bit = cm_1bit_monochrome_convert_from_8bit,
+	.get_standard_colour = cm_1bit_monochrome_get_standard_colour,
+};
+
+EVENT_DATA io_colour_mix_t io_colour_mix_1bit_monochrome = {
+	.implementation = &colour_mix_1bit_monochrome_implementation,
+};
+
 
 io_colour_t
 convert_io_colour (io_colour_t from,io_colour_t to) {
@@ -912,11 +1058,16 @@ io_graphics_compare_float32 (float32_t a,float32_t b,float32_t epsilon) {
 #define STBTT_assert(x)
 #include <stb_truetype.h>
 #include <font/Proggy-Small.h>
+
+#ifdef WITH_IO_GRAPHICS_FONT_ROBOTO_BOLD
 #include <font/Roboto-Bold.h>
+#endif
 
 const io_ttf_data_t io_graphics_ttf_fonts[] = {
 	{"ProggySmall",ProggySmall_ttf},
+	#ifdef WITH_IO_GRAPHICS_FONT_ROBOTO_BOLD
 	{"RobotoBold",Roboto_Bold_ttf},
+	#endif
 	{NULL}
 };
 
@@ -1274,6 +1425,8 @@ static void test_gfx_set_colour (io_graphics_context_t*,io_colour_t);
 static void test_gfx_render (io_graphics_context_t*);
 static void test_gfx_fill_rectangle (io_graphics_context_t*,io_i32_point_t,io_i32_point_t);
 static io_colour_t  test_gfx_get_drawing_colour (io_graphics_context_t*);
+static void	test_gfx_set_gamma_correction (io_graphics_context_t*,io_graphics_float_t);
+static io_graphics_float_t test_gfx_get_gamma_correction (io_graphics_context_t*);
 
 EVENT_DATA io_graphics_context_implementation_t test_io_graphics_graphics_context_implementation = {
 	.free = free_test_io_graphics_graphics_context,
@@ -1293,6 +1446,8 @@ EVENT_DATA io_graphics_context_implementation_t test_io_graphics_graphics_contex
 	.draw_filled_rectangle = io_graphics_context_draw_filled_rectangle_base,
 	.get_pixel_height = test_gfx_get_height_in_pixels,
 	.get_pixel_width = test_gfx_get_width_in_pixels,
+	.set_gamma_correction = test_gfx_set_gamma_correction,
+	.get_gamma_correction = test_gfx_get_gamma_correction,
 	.render = test_gfx_render,
 };
 
@@ -1307,7 +1462,6 @@ typedef struct PACK_STRUCTURE test_io_graphics_graphics_context {
 	io_pixel_t pixels[TEST_IO_GRAPHICS_CONTEXT_PIXEL_WIDTH][TEST_IO_GRAPHICS_CONTEXT_PIXEL_HEIGHT];
 
 } test_io_graphics_graphics_context_t;
-
 
 static io_graphics_context_t*
 mk_test_io_graphics_graphics_context (
@@ -1375,7 +1529,6 @@ test_gfx_draw_pixel (io_graphics_context_t *gfx,io_i32_point_t at) {
 	}
 }
 
-
 static void
 test_gfx_fill_rectangle (io_graphics_context_t *gfx,io_i32_point_t p1,io_i32_point_t p2) {
 	if (io_points_not_equal(p1,p2)) {
@@ -1425,6 +1578,16 @@ test_gfx_render (io_graphics_context_t *gfx) {
 		io_printf (io,"\n");
 	}
 }
+
+static void
+test_gfx_set_gamma_correction (io_graphics_context_t *gfx,io_graphics_float_t g) {
+}
+
+static io_graphics_float_t
+test_gfx_get_gamma_correction (io_graphics_context_t *gfx) {
+	return 0;
+}
+
 
 //
 // monochrome comparison only

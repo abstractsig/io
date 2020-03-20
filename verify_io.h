@@ -164,14 +164,15 @@ print_unit_test_report (V_runner_t *runner) {
 	if (runner->total_failed == 0) {
 		vprintf (
 			runner,"%-*s%-*scompleted with %d test%s",
-			DBP_FIELD1,"self test",
-			DBP_FIELD2,DEVICE_NAME,
+			DBP_FIELD1,DEVICE_NAME,
+			DBP_FIELD2,"self test",
 			runner->total_tests,
 			(runner->total_tests == 1) ? "":"s"
 		);
 		if (runner->skipped_unit_count > 0) {
 			vprintf (
-				runner," (%u unit%s skipped)",
+				runner,"%-*s(%u unit%s skipped)",
+				DBP_FIELD1+DBP_FIELD2,"",
 				runner->skipped_unit_count,plural(runner->skipped_unit_count)
 			);
 		}
@@ -313,7 +314,7 @@ TEST_BEGIN(test_io_text_encoding_1) {
 		VERIFY (io_encoding_printf (encoding,"%s","abc") == 3,NULL);
 		VERIFY (io_encoding_length (encoding) == 3,NULL);
 
-		io_encoding_get_ro_bytes (encoding,&b,&e);
+		io_encoding_get_content (encoding,&b,&e);
 		VERIFY ((e - b) == 3,NULL);
 		VERIFY (memcmp ("abc",b,3) == 0,NULL);
 		byte = 0;
@@ -351,13 +352,47 @@ TEST_BEGIN(test_io_x70_encoding_1) {
 		VERIFY (io_encoding_printf (encoding,"%s","abc") == 3,NULL);
 		VERIFY (io_encoding_length (encoding) == 3,NULL);
 
-		io_encoding_get_ro_bytes (encoding,&b,&e);
+		io_encoding_get_content (encoding,&b,&e);
 		VERIFY ((e - b) == 3,NULL);
 		VERIFY (memcmp ("abc",b,3) == 0,NULL);
 
 		io_encoding_reset (encoding);
 		VERIFY (io_encoding_length (encoding) == 0,NULL);
 		
+		unreference_io_encoding(encoding);
+	}
+
+	io_byte_memory_get_info (bm,&end);
+	VERIFY (end.used_bytes == begin.used_bytes,NULL);
+}
+TEST_END
+
+TEST_BEGIN(test_io_packet_encoding_1) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t begin,end;
+
+	io_byte_memory_get_info (bm,&begin);
+	
+	io_encoding_t *encoding = mk_io_twi_encoding (bm);
+
+	if (VERIFY(encoding != NULL,NULL)) {
+		const uint8_t *b,*e;
+		io_twi_transfer_t *h;
+
+		reference_io_encoding (encoding);
+
+		VERIFY (is_io_twi_encoding (encoding),NULL);
+
+		io_encoding_get_content (encoding,&b,&e);
+		VERIFY ((e - b) == 0,NULL);
+
+		h = io_encoding_get_get_rw_header (encoding);
+		if (VERIFY (h != NULL,NULL)) {
+			h->cmd.bus_address = 0x42;
+			h->cmd.tx_length = 1;
+			h->cmd.rx_length = 0;
+		}
+
 		unreference_io_encoding(encoding);
 	}
 
@@ -436,13 +471,13 @@ TEST_BEGIN(test_io_constant_values_2) {
 	encoding = mk_io_text_encoding (bm);
 
 	VERIFY (io_encoding_printf (encoding,"%v",cr_NIL) == 2,NULL);
-	io_encoding_get_ro_bytes (encoding,&b,&e);
+	io_encoding_get_content (encoding,&b,&e);
 	VERIFY ((e - b) == 2,NULL);
 	VERIFY (memcmp ("()",b,2) == 0,NULL);
 
 	io_encoding_reset (encoding);
 	VERIFY (io_encoding_printf (encoding,"%v",cr_UNIV) == 1,NULL);
-	io_encoding_get_ro_bytes (encoding,&b,&e);
+	io_encoding_get_content (encoding,&b,&e);
 	VERIFY ((e - b) == 1,NULL);
 	VERIFY (memcmp (".",b,1) == 0,NULL);
 	
@@ -532,7 +567,7 @@ TEST_BEGIN(test_io_int64_value_2) {
 
 		VERIFY (io_encoding_printf (encoding,"%v",r_value) == 2,NULL);
 
-		io_encoding_get_ro_bytes (encoding,&b,&e);
+		io_encoding_get_content (encoding,&b,&e);
 		VERIFY ((e - b) == 2,NULL);
 		VERIFY (memcmp ("42",b,2) == 0,NULL);
 
@@ -574,7 +609,7 @@ TEST_BEGIN(test_io_int64_value_3) {
 		
 		VERIFY (io_value_encode (r_value,encoding),NULL);
 
-		io_encoding_get_ro_bytes (encoding,&b,&e);
+		io_encoding_get_content (encoding,&b,&e);
 		if (
 			VERIFY (
 				(
@@ -666,7 +701,7 @@ TEST_BEGIN(test_io_float64_value_2) {
 
 		VERIFY (io_encoding_printf (encoding,"%v",r_value) == 9,NULL);
 
-		io_encoding_get_ro_bytes (encoding,&b,&e);
+		io_encoding_get_content (encoding,&b,&e);
 		VERIFY ((e - b) == 9,NULL);
 		VERIFY (memcmp ("42.100000",b,2) == 0,NULL);
 
@@ -702,7 +737,7 @@ TEST_BEGIN(test_io_float64_value_3) {
 		
 		VERIFY (io_value_encode (r_value,encoding),NULL);
 
-		io_encoding_get_ro_bytes (encoding,&b,&e);
+		io_encoding_get_content (encoding,&b,&e);
 		if (
 			VERIFY (
 				(
@@ -765,7 +800,7 @@ TEST_BEGIN(test_io_binary_value_with_const_bytes_1) {
 
 			if (VERIFY (io_value_encode (r_value,encoding),NULL)) {
 				const uint8_t *b,*e;
-				io_encoding_get_ro_bytes (encoding,&b,&e);
+				io_encoding_get_content (encoding,&b,&e);
 				VERIFY ((e - b) == 3 && memcmp(b,"abc",3) == 0,NULL);
 			}
 
@@ -799,7 +834,7 @@ TEST_BEGIN(test_io_binary_value_dynamic_1) {
 
 			if (VERIFY (io_value_encode (r_value,encoding),NULL)) {
 				const uint8_t *b,*e;
-				io_encoding_get_ro_bytes (encoding,&b,&e);
+				io_encoding_get_content (encoding,&b,&e);
 				VERIFY ((e - b) == 3 && memcmp(b,"abc",3) == 0,NULL);
 			}
 
@@ -833,7 +868,7 @@ TEST_BEGIN(test_io_text_value_1) {
 
 			if (VERIFY (io_value_encode (r_value,encoding),NULL)) {
 				const uint8_t *b,*e;
-				io_encoding_get_ro_bytes (encoding,&b,&e);
+				io_encoding_get_content (encoding,&b,&e);
 				VERIFY ((e - b) == 3 && memcmp(b,"abc",3) == 0,NULL);
 			}
 
@@ -872,7 +907,7 @@ TEST_BEGIN(test_io_text_value_2) {
 				'a','b','c'
 			};
 
-			io_encoding_get_ro_bytes (encoding,&b,&e);
+			io_encoding_get_content (encoding,&b,&e);
 
 			if (
 				VERIFY (
@@ -900,7 +935,7 @@ TEST_BEGIN(test_io_text_value_2) {
 					
 					if (VERIFY (io_value_encode (r_decoded,e1),NULL)) {
 						const uint8_t *b,*e;
-						io_encoding_get_ro_bytes (e1,&b,&e);
+						io_encoding_get_content (e1,&b,&e);
 						VERIFY ((e - b) == 3 && memcmp(b,"abc",3) == 0,NULL);
 					}
 
@@ -1046,7 +1081,7 @@ TEST_BEGIN(test_list_value_1) {
 			encoding = mk_io_text_encoding (bm);
 			if (VERIFY (io_encoding_printf (encoding,"%v",r_value) == 2,NULL)) {
 				const uint8_t *b,*e;
-				io_encoding_get_ro_bytes (encoding,&b,&e);
+				io_encoding_get_content (encoding,&b,&e);
 				VERIFY (memcmp(b,"()",2) == 0,NULL);
 			}
 			
@@ -1089,7 +1124,7 @@ TEST_BEGIN(test_list_value_2) {
 		encoding = mk_io_text_encoding (bm);
 		if (VERIFY (io_encoding_printf (encoding,"%v",r_list) == 4,NULL)) {
 			const uint8_t *b,*e;
-			io_encoding_get_ro_bytes (encoding,&b,&e);
+			io_encoding_get_content (encoding,&b,&e);
 			VERIFY (memcmp(b,"(42)",4) == 0,NULL);
 		}
 		
@@ -1247,6 +1282,7 @@ io_core_values_unit_test (V_unit_test_t *unit) {
 	static V_test_t const tests[] = {
 		test_io_text_encoding_1,
 		test_io_x70_encoding_1,
+		test_io_packet_encoding_1,
 		test_io_constant_values_1,
 		test_io_constant_values_2,
 		test_io_int64_value_1,
