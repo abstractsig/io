@@ -1438,11 +1438,14 @@ TEST_BEGIN(test_io_encoding_pipe_1) {
 	if (VERIFY (pipe != NULL,NULL)) {
 		io_encoding_t *data = NULL, *encoding;
 		VERIFY (!io_encoding_pipe_is_readable (pipe),NULL);
-		encoding = reference_io_encoding (mk_io_text_encoding (bm));
+//		encoding = reference_io_encoding (mk_io_text_encoding (bm));
+		encoding = mk_io_text_encoding (bm);
 		VERIFY (io_encoding_pipe_put_encoding (pipe,encoding),NULL);
 		VERIFY (io_encoding_pipe_is_readable (pipe),NULL);
 		VERIFY (io_encoding_pipe_is_writeable (pipe),NULL);
-		VERIFY (io_encoding_pipe_get_encoding (pipe,&data) && data == encoding,NULL);
+		VERIFY (io_encoding_pipe_peek (pipe,&data) && data == encoding,NULL);
+		io_encoding_pipe_pop_encoding (pipe);
+		
 		VERIFY (!io_encoding_pipe_is_readable (pipe),NULL);
 		VERIFY (io_encoding_pipe_is_writeable (pipe),NULL);
 
@@ -1450,7 +1453,7 @@ TEST_BEGIN(test_io_encoding_pipe_1) {
 		VERIFY (is_io_encoding_pipe_event (io_pipe_event (pipe)),NULL);
 		VERIFY (!io_event_is_valid (io_pipe_event (pipe)),NULL);
 
-		unreference_io_encoding (encoding);
+		//unreference_io_encoding (encoding);
 		free_io_encoding_pipe (pipe,bm);
 	}
 	
@@ -1774,6 +1777,30 @@ TEST_BEGIN(test_string_hash_table_2) {
 }
 TEST_END
 
+TEST_BEGIN(test_string_hash_table_3) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	string_hash_table_t *hash;
+	memory_info_t begin,end;
+
+	io_byte_memory_get_info (bm,&begin);
+	
+	hash = mk_string_hash_table (bm,7);
+	if (VERIFY (hash != NULL,NULL)) {
+		string_hash_table_mapping_t map;
+		
+		VERIFY (string_hash_table_insert (hash,NULL,0,def_hash_mapping_i32(0)),NULL);
+
+		map.i32 = -1;
+		VERIFY (string_hash_table_map (hash,NULL,0,&map) && map.i32 == 0,NULL);
+
+		free_string_hash_table (hash);
+	}
+	
+	io_byte_memory_get_info (bm,&end);
+	VERIFY (end.used_bytes == begin.used_bytes,NULL);	
+}
+TEST_END
+
 int
 test_io_pq_sort_1_compare (void const *a,void const *b) {
 	int c = ((int) a) - ((int) b);
@@ -1996,15 +2023,15 @@ TEST_BEGIN(test_io_constrained_hash_table_4) {
 }
 TEST_END
 
-UNIT_SETUP(setup_io_internalss_unit_test) {
+UNIT_SETUP(setup_io_containers_unit_test) {
 	return VERIFY_UNIT_CONTINUE;
 }
 
-UNIT_TEARDOWN(teardown_io_internals_unit_test) {
+UNIT_TEARDOWN(teardown_io_containers_unit_test) {
 }
 
 static void
-io_internals_unit_test (V_unit_test_t *unit) {
+io_containers_unit_test (V_unit_test_t *unit) {
 	static V_test_t const tests[] = {
 		test_io_memories_1,
 		test_io_memories_2,
@@ -2020,6 +2047,7 @@ io_internals_unit_test (V_unit_test_t *unit) {
 		test_vref_bucket_hash_table_5,
 		test_string_hash_table_1,
 		test_string_hash_table_2,
+		test_string_hash_table_3,
 		test_io_pq_sort_1,
 		test_io_constrained_hash_table_1,
 		test_io_constrained_hash_table_2,
@@ -2027,18 +2055,123 @@ io_internals_unit_test (V_unit_test_t *unit) {
 		test_io_constrained_hash_table_4,
 		0
 	};
-	unit->name = "io internals";
-	unit->description = "io internals unit test";
+	unit->name = "io containers";
+	unit->description = "io containers unit test";
 	unit->tests = tests;
-	unit->setup = setup_io_internalss_unit_test;
-	unit->teardown = teardown_io_internals_unit_test;
+	unit->setup = setup_io_containers_unit_test;
+	unit->teardown = teardown_io_containers_unit_test;
 }
+
+#ifdef IMPLEMENT_VERIFY_IO_CORE_SOCKETS
+
+
+
+TEST_BEGIN(test_io_address_1) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bmbegin,bmend;
+	io_address_t a;
+	
+	io_byte_memory_get_info (bm,&bmbegin);
+
+	a = io_any_address();
+	VERIFY (is_any_io_address (a),NULL);
+	
+	{
+		uint8_t t = 42;
+		a = mk_io_address(TEST_IO,1,&t);
+		VERIFY (io_u8_address_value(a) == 42,NULL);
+		VERIFY (compare_io_addresses (a,io_any_address()) == 1,NULL);
+		VERIFY (compare_io_addresses (io_any_address(),a) == -1,NULL);
+		free_io_address (TEST_IO,a);
+	}
+	
+	{
+		uint16_t t = 4296;
+		a = mk_io_address(TEST_IO,2,(uint8_t const*) &t);
+		VERIFY (io_u16_address_value(a) == t,NULL);
+		VERIFY (compare_io_addresses (a,io_any_address()) == 1,NULL);
+		VERIFY (compare_io_addresses (io_any_address(),a) == -1,NULL);
+		free_io_address (TEST_IO,a);
+	}
+
+	{
+		uint32_t t = 0x8000000;
+		a = mk_io_address(TEST_IO,4,(uint8_t const*) &t);
+		VERIFY (io_u32_address_value(a) == t,NULL);
+		VERIFY (compare_io_addresses (a,io_any_address()) == 1,NULL);
+		VERIFY (compare_io_addresses (io_any_address(),a) == -1,NULL);
+		free_io_address (TEST_IO,a);
+	}
+
+	{
+		uint8_t t[] = {1,0,0,0,0};
+		a = mk_io_address (TEST_IO,sizeof(t),t);
+		VERIFY (compare_io_addresses (a,def_io_u8_address(1)) == 0,NULL);
+		VERIFY (compare_io_addresses (def_io_u8_address(1),a) == 0,NULL);
+		VERIFY (compare_io_addresses (def_io_u8_address(2),a) == 1,NULL);
+		VERIFY (compare_io_addresses (a,def_io_u8_address(2)) == -1,NULL);
+		free_io_address (TEST_IO,a);
+	}
+
+	{
+		uint8_t d1[] = {1,0,0,1,0,2};
+		uint8_t d2[] = {1,0,0,1,0,2};
+		uint8_t d3[] = {1,0,0,0,0,2};
+		io_address_t a1 = mk_io_address (TEST_IO,sizeof(d1),d1);
+		io_address_t a2 = mk_io_address (TEST_IO,sizeof(d2),d2);
+		io_address_t a3 = mk_io_address (TEST_IO,sizeof(d3),d3);
+
+		VERIFY (compare_io_addresses (a1,a2) == 0,NULL);
+		VERIFY (compare_io_addresses (a1,a3) == 1,NULL);
+		VERIFY (compare_io_addresses (a3,a2) == -1,NULL);
+
+		VERIFY (compare_io_addresses (a3,io_any_address()) == 1,NULL);
+
+		free_io_address (TEST_IO,a1);
+		free_io_address (TEST_IO,a2);
+		free_io_address (TEST_IO,a3);
+	}
+
+	VERIFY (compare_io_addresses (io_any_address(),io_any_address()) == 0,NULL);
+	
+	io_byte_memory_get_info (bm,&bmend);
+	VERIFY (bmend.used_bytes == bmbegin.used_bytes,NULL);	
+}
+TEST_END
+
+UNIT_SETUP(setup_io_sockets_unit_test) {
+	return VERIFY_UNIT_CONTINUE;
+}
+
+UNIT_TEARDOWN(teardown_io_sockets_unit_test) {
+}
+
+static void
+io_sockets_unit_test (V_unit_test_t *unit) {
+	static V_test_t const tests[] = {
+		test_io_address_1,
+		0
+	};
+	unit->name = "io sockets";
+	unit->description = "io sockets unit test";
+	unit->tests = tests;
+	unit->setup = setup_io_sockets_unit_test;
+	unit->teardown = teardown_io_sockets_unit_test;
+}
+
+
+
+#define IO_CORE_SOCKETS_UNIT_TEST io_sockets_unit_test,
+#else
+#define IO_CORE_SOCKETS_UNIT_TEST
+#endif /* IMPLEMENT_VERIFY_IO_CORE_SOCKETS */
 
 void
 run_ut_io (V_runner_t *runner) {
 	static const unit_test_t test_set[] = {
-		io_internals_unit_test,
+		io_containers_unit_test,
 		IO_CORE_VALUES_UNIT_TEST
+		IO_CORE_SOCKETS_UNIT_TEST
 		IO_MATH_UNIT_TESTS
 		IO_CPU_UNIT_TESTS
 		IO_DEVICE_UNIT_TESTS

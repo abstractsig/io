@@ -42,6 +42,7 @@ bool			is_u32_integer_prime (uint32_t);
 uint32_t		gcd_uint32 (uint32_t, uint32_t);
 uint32_t		gcd_uint32_reduce (uint32_t*,uint32_t);
 
+uint16_t		read_le_uint16 (uint8_t const*);
 uint32_t		read_le_uint32 (uint8_t const*);
 int64_t		read_le_int64 (uint8_t const*);
 float64_t	read_le_float64 (uint8_t const*);
@@ -54,6 +55,15 @@ typedef int32_t	q32f31_t;
 // io core implementation
 //
 //-----------------------------------------------------------------------------
+uint16_t
+read_le_uint16 (uint8_t const* ptr) {
+	uint8_t const* ptr8 = (uint8_t const*) ptr;
+	return (
+			(uint16_t) ptr8[0] 
+		+	((uint16_t)ptr8[1] << 8)
+	);
+}
+
 uint32_t
 read_le_uint32 (uint8_t const* ptr) {
 	uint8_t const* ptr8 = (uint8_t const*) ptr;

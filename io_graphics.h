@@ -366,6 +366,87 @@ io_graphics_font_get_pixel_height (io_graphics_font_t *font) {
 	return font->implementation->get_pixel_height (font);
 }
 
+//
+// graphics command
+//
+
+typedef struct io_graphics_command io_graphics_command_t;
+typedef struct io_graphics_command_implementation {
+	void (*free) (io_byte_memory_t*,io_graphics_command_t*);
+	void (*run) (io_graphics_command_t*,io_graphics_context_t*);
+} io_graphics_command_implementation_t;
+
+#define IO_GRAPHICS_COMMAND_STRUCT_MEMBERS \
+	io_graphics_command_implementation_t const *implementation;\
+	/**/
+
+struct PACK_STRUCTURE io_graphics_command {
+	IO_GRAPHICS_COMMAND_STRUCT_MEMBERS
+};
+
+
+//
+// inline graphics command methods
+//
+INLINE_FUNCTION void
+free_io_graphics_command (io_byte_memory_t *bm,io_graphics_command_t *cmd) {
+	cmd->implementation->free (bm,cmd);
+}
+
+INLINE_FUNCTION void
+run_io_graphics_command (io_graphics_command_t *cmd,io_graphics_context_t *gfx) {
+	cmd->implementation->run (cmd,gfx);
+}
+
+typedef struct io_graphics_command_stack {
+	io_byte_memory_t *bm;
+	io_graphics_command_t **commands;
+	io_graphics_command_t **cursor;
+	io_graphics_command_t **end_of_allocation;
+	uint32_t grow;
+} io_graphics_command_stack_t;
+
+#define io_graphics_command_stack_begin(b)	(b)->commands
+#define io_graphics_command_stack_end(b)		(b)->cursor
+#define io_graphics_command_stack_memory(b)	(b)->bm
+
+io_graphics_command_stack_t* mk_io_graphics_command_stack (io_byte_memory_t*,uint32_t);
+void free_io_graphics_command_stack (io_graphics_command_stack_t*);
+void reset_io_graphics_command_stack (io_graphics_command_stack_t*);
+
+bool io_graphics_stack_append_line (io_graphics_command_stack_t*,io_i32_point_t,io_i32_point_t);
+bool io_graphics_stack_append_text (io_graphics_command_stack_t*,io_character_t*,uint32_t,io_i32_point_t);
+bool io_graphics_stack_append_circle (io_graphics_command_stack_t*,io_i32_point_t,uint32_t,bool);
+bool io_graphics_stack_append_rectangle (io_graphics_command_stack_t*,io_i32_point_t,io_i32_point_t,bool);
+
+/*
+enum gfx_command_type {
+    NK_COMMAND_NOP,
+    NK_COMMAND_SCISSOR,
+    NK_COMMAND_LINE,
+    NK_COMMAND_CURVE,
+    NK_COMMAND_RECT,
+    NK_COMMAND_RECT_FILLED,
+    NK_COMMAND_RECT_MULTI_COLOR,
+    NK_COMMAND_CIRCLE,
+    NK_COMMAND_CIRCLE_FILLED,
+    NK_COMMAND_ARC,
+    NK_COMMAND_ARC_FILLED,
+    NK_COMMAND_TRIANGLE,
+    NK_COMMAND_TRIANGLE_FILLED,
+    NK_COMMAND_POLYGON,
+    NK_COMMAND_POLYGON_FILLED,
+    NK_COMMAND_POLYLINE,
+    NK_COMMAND_TEXT,
+    NK_COMMAND_IMAGE,
+    NK_COMMAND_CUSTOM
+};
+*/
+
+//
+// graphics context
+//
+
 typedef struct PACK_STRUCTURE {
 	const char *name;
 	uint8_t const *ttf;
@@ -373,9 +454,6 @@ typedef struct PACK_STRUCTURE {
 
 extern const io_ttf_data_t io_graphics_ttf_fonts[];
 
-//
-// graphics context
-//
 typedef struct PACK_STRUCTURE {
 	void (*free) (io_graphics_context_t*);
 	bool (*select_font_by_name) (io_graphics_context_t*,uint8_t const*,uint32_t);
@@ -386,17 +464,21 @@ typedef struct PACK_STRUCTURE {
 	bool (*get_pixel) (io_graphics_context_t*,io_i32_point_t,io_pixel_t*);
 	uint32_t (*get_pixel_height) (io_graphics_context_t*);
 	uint32_t (*get_pixel_width) (io_graphics_context_t*);
-	void (*fill) (io_graphics_context_t*,io_colour_t);
-	void (*fill_rectangle) (io_graphics_context_t*,io_i32_point_t,io_i32_point_t);
+	io_graphics_command_stack_t* (*get_command_stack) (io_graphics_context_t*);
 	void (*draw_pixel) (io_graphics_context_t*,io_i32_point_t);
 	int32_t (*draw_character) (io_graphics_context_t*,io_character_t,io_i32_point_t);
+	void (*fill_rectangle) (io_graphics_context_t*,io_i32_point_t,io_i32_point_t);
+	void (*begin) (io_graphics_context_t*);
+	void (*run) (io_graphics_context_t*);
+	void (*render) (io_graphics_context_t*);
+
+	void (*fill) (io_graphics_context_t*,io_colour_t);
 	void (*draw_ascii_text) (io_graphics_context_t*,char const*,io_i32_point_t);
 	void (*draw_circle) (io_graphics_context_t*,io_i32_point_t,int);
 	void (*draw_filled_circle) (io_graphics_context_t*,io_i32_point_t,int);
 	void (*draw_line) (io_graphics_context_t*,io_i32_point_t,io_i32_point_t);
 	void (*draw_rectangle) (io_graphics_context_t*,io_i32_point_t,io_i32_point_t);
 	void (*draw_filled_rectangle) (io_graphics_context_t*,io_i32_point_t,io_i32_point_t);
-	void (*render) (io_graphics_context_t*);
 } io_graphics_context_implementation_t;
 
 #define IO_GRAPHICS_CONTEXT_STRUCT_MEMBERS \
@@ -450,6 +532,11 @@ io_graphics_context_draw_character (io_graphics_context_t *gfx,io_character_t c,
 INLINE_FUNCTION void
 io_graphics_context_draw_ascii_text (io_graphics_context_t *gfx,char const *t,io_i32_point_t p) {
 	gfx->implementation->draw_ascii_text(gfx,t,p);
+}
+
+INLINE_FUNCTION io_graphics_command_stack_t*
+io_graphics_context_get_command_stack (io_graphics_context_t *gfx) {
+	return gfx->implementation->get_command_stack(gfx);
 }
 
 INLINE_FUNCTION uint32_t
@@ -513,8 +600,18 @@ io_graphics_context_get_pixel (io_graphics_context_t *gfx,io_i32_point_t at,io_p
 }
 
 INLINE_FUNCTION void
+io_graphics_context_begin (io_graphics_context_t *gfx) {
+	gfx->implementation->begin(gfx);
+}
+
+INLINE_FUNCTION void
+io_graphics_context_run (io_graphics_context_t *gfx) {
+	gfx->implementation->run(gfx);
+}
+
+INLINE_FUNCTION void
 io_graphics_context_render (io_graphics_context_t *gfx) {
-	gfx->implementation->render(gfx);;
+	gfx->implementation->render(gfx);
 }
 
 INLINE_FUNCTION void
@@ -1044,6 +1141,281 @@ io_graphics_compare_float32 (float32_t a,float32_t b,float32_t epsilon) {
 }
 
 //
+// command stack
+//
+
+io_graphics_command_stack_t*
+mk_io_graphics_command_stack (io_byte_memory_t *bm,uint32_t grow) {
+	io_graphics_command_stack_t *this = io_byte_memory_allocate (
+		bm,sizeof(io_graphics_command_stack_t)
+	);
+	
+	if (this) {
+		this->bm = bm;
+		this->grow = grow;
+		this->commands = io_byte_memory_allocate (
+			bm,sizeof(io_graphics_command_stack_t*) * grow
+		);
+		if (this->commands) {
+			this->cursor = this->commands;
+			this->end_of_allocation = this->commands + grow;
+		} else {
+			io_byte_memory_free(bm,this);
+			this = NULL;
+		}
+	} 
+
+	return this;
+}
+
+void
+reset_io_graphics_command_stack (io_graphics_command_stack_t *this) {
+	io_graphics_command_t **cursor = io_graphics_command_stack_begin(this);
+	
+	while (cursor < io_graphics_command_stack_end(this)) {
+		free_io_graphics_command (this->bm,*cursor);
+		cursor++;
+	}
+
+	this->cursor = this->commands;	
+}
+
+void
+free_io_graphics_command_stack (io_graphics_command_stack_t *this) {
+	reset_io_graphics_command_stack (this);
+	io_byte_memory_free(this->bm,this->commands);
+	io_byte_memory_free(this->bm,this);
+}
+
+bool
+io_graphics_command_stack_append (
+	io_graphics_command_stack_t *this,io_graphics_command_t *cmd
+) {
+	if (this->cursor == this->end_of_allocation) {
+		uint32_t length = (this->end_of_allocation - this->commands);
+		io_graphics_command_t **buf = io_byte_memory_reallocate (
+			this->bm,this->commands,sizeof(io_graphics_command_stack_t*) * (length + this->grow)
+		);
+		if (buf) {
+			this->commands = buf;
+			this->cursor = this->commands + length;
+			this->end_of_allocation = this->commands + length + this->grow;
+		} else {
+			return false;
+		}
+	}
+	
+	*(this->cursor)++ = cmd;
+	
+	return true;
+}
+
+//
+// commands
+//
+
+typedef struct PACK_STRUCTURE io_graphics_line_command {
+	IO_GRAPHICS_COMMAND_STRUCT_MEMBERS
+	io_i32_point_t p1,p2;
+} io_graphics_line_command_t;
+
+static void
+free_io_graphics_line_command (io_byte_memory_t *bm,io_graphics_command_t *cmd) {
+	io_byte_memory_free (bm,cmd);
+}
+
+static void
+io_graphics_command_line_run (io_graphics_command_t *cmd,io_graphics_context_t *gfx) {
+	io_graphics_line_command_t *this = (io_graphics_line_command_t*) cmd;
+	io_graphics_context_one_pixel_line (gfx,this->p1,this->p2);
+}
+
+static EVENT_DATA io_graphics_command_implementation_t 
+io_graphics_command_line_implementation = {
+	.free = free_io_graphics_line_command,
+	.run = io_graphics_command_line_run,
+};
+
+bool
+io_graphics_stack_append_line (
+	io_graphics_command_stack_t *stack,io_i32_point_t p1,io_i32_point_t p2
+) {
+	io_graphics_line_command_t *line = io_byte_memory_allocate (
+		io_graphics_command_stack_memory(stack),sizeof(io_graphics_line_command_t)
+	);
+	
+	if (line) {
+		line->implementation = &io_graphics_command_line_implementation;
+		line->p1 = p1;
+		line->p2 = p2;
+		return io_graphics_command_stack_append (stack,(io_graphics_command_t*) line);
+	} else {
+		return false;
+	}
+}
+
+typedef struct PACK_STRUCTURE io_graphics_text_command {
+	IO_GRAPHICS_COMMAND_STRUCT_MEMBERS
+	io_character_t *text;
+	uint32_t length;
+	io_i32_point_t at;
+} io_graphics_text_command_t;
+
+static void
+free_io_graphics_text_command (io_byte_memory_t *bm,io_graphics_command_t *cmd) {
+	io_graphics_text_command_t *this = (io_graphics_text_command_t*) cmd;
+	io_byte_memory_free (bm,this->text);
+	io_byte_memory_free (bm,cmd);
+}
+
+static void
+io_graphics_command_text_run (io_graphics_command_t *cmd,io_graphics_context_t *gfx) {
+	io_graphics_text_command_t *this = (io_graphics_text_command_t*) cmd;
+	io_character_t *cursor = this->text;
+	io_character_t *end = cursor + this->length;
+	io_i32_point_t at = this->at;
+	
+	while (cursor < end) {
+		at.x += io_graphics_context_draw_character_with_current_font (
+			gfx,*cursor++,at
+		);
+		// text spacing from font...
+		at.x += 1;
+	}
+
+}
+
+static EVENT_DATA io_graphics_command_implementation_t 
+io_graphics_command_text_implementation = {
+	.free = free_io_graphics_text_command,
+	.run = io_graphics_command_text_run,
+};
+
+bool
+io_graphics_stack_append_text (
+	io_graphics_command_stack_t *stack,io_character_t *text,uint32_t length,io_i32_point_t at
+) {
+	io_graphics_text_command_t *command = io_byte_memory_allocate (
+		io_graphics_command_stack_memory(stack),sizeof(io_graphics_text_command_t)
+	);
+	
+	if (command) {
+		command->implementation = &io_graphics_command_text_implementation;
+		command->length = length;
+		command->at = at;
+		command->text = io_byte_memory_allocate (
+			io_graphics_command_stack_memory(stack),sizeof(io_character_t) * length
+		);
+		if (command->text) {
+			memcpy (command->text,text,sizeof(io_character_t) * length);
+			return io_graphics_command_stack_append (stack,(io_graphics_command_t*) command);
+		} else {
+			io_byte_memory_free (io_graphics_command_stack_memory(stack),command);
+			return false;
+		}
+	} else {
+		return false;
+	}
+}
+
+typedef struct PACK_STRUCTURE io_graphics_circle_command {
+	IO_GRAPHICS_COMMAND_STRUCT_MEMBERS
+	uint32_t fill;
+	uint32_t radius;
+	io_i32_point_t center;
+} io_graphics_circle_command_t;
+
+static void
+free_io_graphics_circle_command (io_byte_memory_t *bm,io_graphics_command_t *cmd) {
+	io_byte_memory_free (bm,cmd);
+}
+
+static void
+io_graphics_command_circle_run (io_graphics_command_t *cmd,io_graphics_context_t *gfx) {
+	io_graphics_circle_command_t *this = (io_graphics_circle_command_t*) cmd;
+
+	if (this->fill) {
+		io_graphics_context_fill_circle (gfx,this->center,this->radius);
+	} else {
+		io_graphics_context_circle (gfx,this->center,this->radius);
+	}
+}
+
+static EVENT_DATA io_graphics_command_implementation_t 
+io_graphics_command_circle_implementation = {
+	.free = free_io_graphics_circle_command,
+	.run = io_graphics_command_circle_run,
+};
+
+bool
+io_graphics_stack_append_circle (
+	io_graphics_command_stack_t *stack,io_i32_point_t at,uint32_t radius,bool fill
+) {
+	io_graphics_circle_command_t *line = io_byte_memory_allocate (
+		io_graphics_command_stack_memory(stack),sizeof(io_graphics_circle_command_t)
+	);
+	
+	if (line) {
+		line->implementation = &io_graphics_command_circle_implementation;
+		line->center = at;
+		line->radius = radius;
+		line->fill = fill;
+		return io_graphics_command_stack_append (stack,(io_graphics_command_t*) line);
+	} else {
+		return false;
+	}
+}
+
+typedef struct PACK_STRUCTURE io_graphics_rectangle_command {
+	IO_GRAPHICS_COMMAND_STRUCT_MEMBERS
+	uint32_t fill;
+	io_i32_point_t p1;
+	io_i32_point_t p2;
+} io_graphics_rectangle_command_t;
+
+
+static void
+free_io_graphics_rectangle_command (io_byte_memory_t *bm,io_graphics_command_t *cmd) {
+	io_byte_memory_free (bm,cmd);
+}
+
+static void
+io_graphics_command_rectangle_run (io_graphics_command_t *cmd,io_graphics_context_t *gfx) {
+	io_graphics_rectangle_command_t *this = (io_graphics_rectangle_command_t*) cmd;
+
+	if (this->fill) {
+		io_graphics_context_draw_filled_rectangle_base (gfx,this->p1,this->p2);
+	} else {
+		io_graphics_context_draw_rectangle_base (gfx,this->p1,this->p2);
+	}
+}
+
+static EVENT_DATA io_graphics_command_implementation_t 
+io_graphics_command_rectangle_implementation = {
+	.free = free_io_graphics_rectangle_command,
+	.run = io_graphics_command_rectangle_run,
+};
+
+bool
+io_graphics_stack_append_rectangle (
+		io_graphics_command_stack_t *stack,io_i32_point_t p1,io_i32_point_t p2,bool fill
+) {
+	io_graphics_rectangle_command_t *line = io_byte_memory_allocate (
+		io_graphics_command_stack_memory(stack),sizeof(io_graphics_rectangle_command_t)
+	);
+	
+	if (line) {
+		line->implementation = &io_graphics_command_rectangle_implementation;
+		line->p1 = p1;
+		line->p2 = p2;
+		line->fill = fill;
+		return io_graphics_command_stack_append (stack,(io_graphics_command_t*) line);
+	} else {
+		return false;
+	}
+}
+
+//
 // need stb tt
 //
 #define STB_TRUETYPE_IMPLEMENTATION
@@ -1405,6 +1777,69 @@ io_graphics_context_draw_filled_rectangle_base (io_graphics_context_t *gfx,io_i3
 #endif /* IMPLEMENT_IO_GRAPHICS */
 #ifdef IMPLEMENT_VERIFY_IO_GRAPHICS
 
+TEST_BEGIN(test_io_graphics_command_line_1) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bm_begin,bm_end;
+	io_graphics_command_stack_t *stack;
+	
+	io_byte_memory_get_info (bm,&bm_begin);
+
+	stack = mk_io_graphics_command_stack (bm,5);
+
+	VERIFY (
+		io_graphics_command_stack_begin(stack) == io_graphics_command_stack_end (stack),
+		NULL
+	);
+  
+	VERIFY (
+		io_graphics_stack_append_line (
+			stack, def_i32_point(0,0), def_i32_point(1,0)
+		),
+		NULL
+	);
+	
+	io_character_t text[] = {'a','b','c'};
+	VERIFY (
+		io_graphics_stack_append_text (
+			stack,text,SIZEOF(text),def_i32_point(0,0)
+		),
+		NULL
+	);
+
+	free_io_graphics_command_stack (stack);
+
+	io_byte_memory_get_info (bm,&bm_end);
+	VERIFY (bm_end.used_bytes == bm_begin.used_bytes,NULL);
+}
+TEST_END
+
+UNIT_SETUP(setup_io_graphics_commands_unit_test) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	io_byte_memory_get_info (bm,TEST_MEMORY_INFO);
+	return VERIFY_UNIT_CONTINUE;
+}
+
+UNIT_TEARDOWN(teardown_io_graphics_commands_unit_test) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bm_end;
+	io_byte_memory_get_info (bm,&bm_end);
+	VERIFY (bm_end.used_bytes == TEST_MEMORY_INFO->used_bytes,NULL);
+}
+
+void
+io_graphics_commands_unit_test (V_unit_test_t *unit) {
+	static V_test_t const tests[] = {
+		test_io_graphics_command_line_1,
+		0
+	};
+	unit->name = "io graphics commands";
+	unit->description = "io graphics commands unit test";
+	unit->tests = tests;
+	unit->setup = setup_io_graphics_commands_unit_test;
+	unit->teardown = teardown_io_graphics_commands_unit_test;
+}
+
+
 #define TEST_IO_GRAPHICS_CONTEXT_PIXEL_WIDTH		64
 #define TEST_IO_GRAPHICS_CONTEXT_PIXEL_HEIGHT	48
 
@@ -1422,11 +1857,14 @@ static bool test_gfx_get_pixel (io_graphics_context_t *gfx,io_i32_point_t at,io_
 static void free_test_io_graphics_graphics_context (io_graphics_context_t *gfx);
 static void test_gfx_draw_pixel (io_graphics_context_t*,io_i32_point_t);
 static void test_gfx_set_colour (io_graphics_context_t*,io_colour_t);
+static void test_gfx_begin (io_graphics_context_t*);
+static void test_gfx_run (io_graphics_context_t*);
 static void test_gfx_render (io_graphics_context_t*);
 static void test_gfx_fill_rectangle (io_graphics_context_t*,io_i32_point_t,io_i32_point_t);
 static io_colour_t  test_gfx_get_drawing_colour (io_graphics_context_t*);
 static void	test_gfx_set_gamma_correction (io_graphics_context_t*,io_graphics_float_t);
 static io_graphics_float_t test_gfx_get_gamma_correction (io_graphics_context_t*);
+static io_graphics_command_stack_t* test_io_graphics_graphics_context_get_command_stack (io_graphics_context_t*);
 
 EVENT_DATA io_graphics_context_implementation_t test_io_graphics_graphics_context_implementation = {
 	.free = free_test_io_graphics_graphics_context,
@@ -1436,24 +1874,23 @@ EVENT_DATA io_graphics_context_implementation_t test_io_graphics_graphics_contex
 	.fill = io_graphics_context_fill_with_colour,
 	.fill_rectangle = test_gfx_fill_rectangle,
 	.get_pixel = test_gfx_get_pixel,
+	.get_command_stack = test_io_graphics_graphics_context_get_command_stack,
 	.draw_pixel = test_gfx_draw_pixel,
 	.draw_character = io_graphics_context_draw_character_with_current_font,
-	.draw_ascii_text = io_graphics_context_draw_draw_ascii_text_base,
-	.draw_circle = io_graphics_context_circle,
-	.draw_filled_circle = io_graphics_context_fill_circle,
-	.draw_line = io_graphics_context_one_pixel_line,
-	.draw_rectangle = io_graphics_context_draw_rectangle_base,
-	.draw_filled_rectangle = io_graphics_context_draw_filled_rectangle_base,
+	.begin = test_gfx_begin,
+	.run = test_gfx_run,
+	.render = test_gfx_render,
 	.get_pixel_height = test_gfx_get_height_in_pixels,
 	.get_pixel_width = test_gfx_get_width_in_pixels,
 	.set_gamma_correction = test_gfx_set_gamma_correction,
 	.get_gamma_correction = test_gfx_get_gamma_correction,
-	.render = test_gfx_render,
 };
 
 typedef struct PACK_STRUCTURE test_io_graphics_graphics_context {
 	IO_GRAPHICS_CONTEXT_STRUCT_MEMBERS
 
+	io_graphics_command_stack_t *stack;
+	
 	io_colour_t current_drawing_colour;
 	//
 	// should use current_draw_colour to access a pixel array as a void*
@@ -1476,6 +1913,7 @@ mk_test_io_graphics_graphics_context (
 		initialise_io_graphics_context (
 			(io_graphics_context_t*) this,bm,io_graphics_ttf_fonts
 		);
+		this->stack = mk_io_graphics_command_stack (bm,5);
 		this->current_drawing_colour = drawing_colour;
 		io_graphics_context_fill (
 			(io_graphics_context_t*) this,
@@ -1488,8 +1926,16 @@ mk_test_io_graphics_graphics_context (
 
 void
 free_test_io_graphics_graphics_context (io_graphics_context_t *gfx) {
+	test_io_graphics_graphics_context_t *this = (test_io_graphics_graphics_context_t*) gfx;
+	free_io_graphics_command_stack (this->stack);
 	free_io_graphics_font (gfx->current_font);
 	io_byte_memory_free (gfx->bm,gfx);
+}
+
+io_graphics_command_stack_t*
+test_io_graphics_graphics_context_get_command_stack (io_graphics_context_t *gfx) {
+	test_io_graphics_graphics_context_t *this = (test_io_graphics_graphics_context_t*) gfx;
+	return this->stack;
 }
 
 static void
@@ -1553,6 +1999,22 @@ test_gfx_fill_rectangle (io_graphics_context_t *gfx,io_i32_point_t p1,io_i32_poi
 }
 
 static void
+test_gfx_begin (io_graphics_context_t *gfx) {
+	test_io_graphics_graphics_context_t *this = (test_io_graphics_graphics_context_t*) gfx;
+	reset_io_graphics_command_stack (this->stack);
+}
+
+static void
+test_gfx_run (io_graphics_context_t *gfx) {
+	test_io_graphics_graphics_context_t *this = (test_io_graphics_graphics_context_t*) gfx;
+	io_graphics_command_t **cursor = io_graphics_command_stack_begin(this->stack);
+	
+	while (cursor < io_graphics_command_stack_end(this->stack)) {
+		run_io_graphics_command (*cursor++,gfx);
+	}
+}
+
+static void
 test_gfx_render (io_graphics_context_t *gfx) {
 	test_io_graphics_graphics_context_t *this = (test_io_graphics_graphics_context_t*) gfx;
 	io_t *io = gfx->bm->io;
@@ -1587,7 +2049,6 @@ static io_graphics_float_t
 test_gfx_get_gamma_correction (io_graphics_context_t *gfx) {
 	return 0;
 }
-
 
 //
 // monochrome comparison only
@@ -1784,7 +2245,16 @@ TEST_BEGIN(test_io_graphics_text_2) {
 		VERIFY (io_graphics_font_get_pixel_height (gfx->current_font) == 10,NULL);
 
 		io_graphics_context_set_colour (gfx,IO_WHITE_8BIT);
-		io_graphics_context_draw_ascii_text (gfx,"LX",(io_i32_point_t){0,0});
+		
+		io_graphics_context_begin (gfx);
+		io_character_t text[] = {'L','X'};
+		io_graphics_stack_append_text (
+			io_graphics_context_get_command_stack(gfx),
+			text,SIZEOF(text),
+			def_i32_point(0,0)
+		);
+		io_graphics_context_run (gfx);
+
 		VERIFY (check_gfx_pattern (expect,13,7,gfx),NULL);
 
 		free_io_graphics_context(gfx);
@@ -1807,7 +2277,13 @@ TEST_BEGIN(test_io_graphics_line_1) {
 		};
 
 		io_graphics_context_set_colour (gfx,IO_WHITE_8BIT);
-		io_graphics_context_draw_line(gfx,def_i32_point(0,0),def_i32_point(1,0));
+		io_graphics_context_begin (gfx);
+		io_graphics_stack_append_line (
+			io_graphics_context_get_command_stack(gfx),
+			def_i32_point(0,0),
+			def_i32_point(1,0)
+		);
+		io_graphics_context_run (gfx);
 		VERIFY (check_gfx_pattern (expect,6,2,gfx),NULL);
 
 		free_io_graphics_context(gfx);
@@ -1834,7 +2310,13 @@ TEST_BEGIN(test_io_graphics_circle_1) {
 			0,0,0,0,1,1,1,0,0,0,
 		};
 
-		io_graphics_context_draw_circle(gfx,def_i32_point(5,5),4);
+		io_graphics_context_begin (gfx);
+		io_graphics_stack_append_circle (
+			io_graphics_context_get_command_stack(gfx),
+			def_i32_point(5,5),4,false
+		);
+		io_graphics_context_run (gfx);
+
 		VERIFY (check_gfx_pattern (expect,10,10,gfx),NULL);
 
 		free_io_graphics_context(gfx);
@@ -1862,7 +2344,13 @@ TEST_BEGIN(test_io_graphics_circle_2) {
 		};
 
 		io_graphics_context_set_colour (gfx,IO_WHITE_8BIT);
-		io_graphics_context_draw_filled_circle(gfx,def_i32_point(5,5),4);
+		io_graphics_context_begin (gfx);
+		io_graphics_stack_append_circle (
+			io_graphics_context_get_command_stack(gfx),
+			def_i32_point(5,5),4,true
+		);
+		io_graphics_context_run (gfx);
+
 		VERIFY (check_gfx_pattern (expect,10,10,gfx),NULL);
 
 		free_io_graphics_context(gfx);
@@ -1890,7 +2378,14 @@ TEST_BEGIN(test_io_graphics_rectangle_1) {
 		};
 
 		io_graphics_context_set_colour (gfx,IO_WHITE_8BIT);
-		io_graphics_context_draw_rectangle(gfx,def_i32_point(0,0),def_i32_point(3,2));
+
+		io_graphics_context_begin (gfx);
+		io_graphics_stack_append_rectangle (
+			io_graphics_context_get_command_stack(gfx),
+			def_i32_point(0,0),def_i32_point(3,2),false
+		);
+		io_graphics_context_run (gfx);
+
 		VERIFY (check_gfx_pattern (expect,10,10,gfx),NULL);
 
 		free_io_graphics_context(gfx);
@@ -1918,7 +2413,12 @@ TEST_BEGIN(test_io_graphics_rectangle_2) {
 		};
 
 		io_graphics_context_set_colour (gfx,IO_WHITE_8BIT);
-		io_graphics_context_draw_filled_rectangle(gfx,def_i32_point(0,0),def_i32_point(3,2));
+		io_graphics_context_begin (gfx);
+		io_graphics_stack_append_rectangle (
+			io_graphics_context_get_command_stack(gfx),
+			def_i32_point(0,0),def_i32_point(3,2),true
+		);
+		io_graphics_context_run (gfx);
 		VERIFY (check_gfx_pattern (expect,10,10,gfx),NULL);
 
 		free_io_graphics_context(gfx);
@@ -2010,6 +2510,7 @@ io_graphics_font_roboto_unit_test (V_unit_test_t *unit) {
 #endif /* IMPLEMENT_VERIFY_IO_GRAPHICS_FONT_ROBOTO */
 
 #define IO_GRAPHICS_UNIT_TESTS	\
+	io_graphics_commands_unit_test,\
 	io_graphics_unit_test,
 	/**/
 #else

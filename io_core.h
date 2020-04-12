@@ -136,6 +136,13 @@ void	io_byte_memory_get_info (io_byte_memory_t*,memory_info_t *info);
 #define io_byte_memory_free umm_free
 #define io_byte_memory_reallocate umm_realloc
 
+INLINE_FUNCTION void*
+io_byte_memory_allocate_and_zero (io_byte_memory_t *bm,uint32_t size) {
+	void *alloc = io_byte_memory_allocate (bm,size);
+	memset (alloc,0,size);
+	return alloc;
+}
+
 //
 // block sizes as pow_2 (only 8 for now)
 //
@@ -405,7 +412,7 @@ bool	is_io_encoding_pipe (io_pipe_t const*);
 
 io_encoding_pipe_t* mk_io_encoding_pipe (io_byte_memory_t*,uint16_t);
 void free_io_encoding_pipe (io_encoding_pipe_t*,io_byte_memory_t*);
-bool	io_encoding_pipe_get_encoding (io_encoding_pipe_t*,io_encoding_t**);
+bool	io_encoding_pipe_pop_encoding (io_encoding_pipe_t*);
 bool	io_encoding_pipe_put_encoding (io_encoding_pipe_t*,io_encoding_t*);
 bool	io_encoding_pipe_peek (io_encoding_pipe_t*,io_encoding_t**);
 void	io_encoding_pipe_put (io_t *io,io_pipe_t*,const char*,va_list);
@@ -603,6 +610,7 @@ vref_get_as_builtin_integer (vref_t r_value) {
 }
 
 extern EVENT_DATA io_value_reference_implementation_t reference_to_constant_value;
+extern EVENT_DATA io_value_reference_implementation_t reference_to_data_section_value;
 
 #define INVALID_VREF 				def_vref (NULL,NULL)
 #define vref_is_valid(v)			(vref_implementation(v) != NULL)
@@ -704,6 +712,7 @@ void free_string_hash_table (string_hash_table_t*);
 bool string_hash_table_insert (string_hash_table_t*,const char*,uint32_t,string_hash_table_mapping_t);
 bool string_hash_table_remove (string_hash_table_t*,const char*,uint32_t);
 bool string_hash_table_map (string_hash_table_t*,const char*,uint32_t,string_hash_table_mapping_t*);
+void iterate_string_hash_table (string_hash_table_t*,bool (*) (string_hash_table_entry_t*,void*),void*);
 
 //
 // cht
@@ -979,6 +988,7 @@ typedef struct PACK_STRUCTURE {
 
 bool	is_io_text_encoding (io_encoding_t const*);
 bool	io_text_encoding_iterate_characters (io_encoding_t const*,io_character_iterator_t,void*);
+vref_hash_table_t* io_text_encoding_get_visited (io_text_encoding_t*);
 
 INLINE_FUNCTION io_encoding_t*
 mk_io_text_encoding (io_byte_memory_t *bm) {
@@ -1277,6 +1287,13 @@ io_value_mode_t const* io_modal_value_get_modes (io_value_t const*);
 	.current_mode = (T)->modes, \
 	/**/
 
+#define decl_io_modal_value_m(T,S,M) \
+	.implementation = IO_VALUE_IMPLEMENTATION(T), \
+	.reference_count_ = 0, \
+	.size_ = S, \
+	.current_mode = M, \
+	/**/
+	
 extern EVENT_DATA io_modal_value_implementation_t io_modal_value_implementation;
 
 /*
@@ -1557,6 +1574,43 @@ bool	io_cpu_clock_function_iterate_outputs (io_cpu_clock_pointer_t,bool (*) (io_
 bool	io_cpu_clock_iterate_outputs_nop (io_cpu_clock_pointer_t,bool (*) (io_cpu_clock_pointer_t,void*),void*);
 
 //
+// address
+//
+typedef struct io_address {
+	uint32_t size;
+	union PACK_STRUCTURE {
+		uint32_t u32;
+		uint16_t u16;
+		uint8_t u8;
+		uint8_t *bytes;
+	} value;
+} io_address_t;
+
+#define io_address_size(a)			(a).size
+#define io_address_bytes(a)		(a).value.bytes
+#define get_io_address_bytes(a)	((io_address_size(a) > 4) ? io_address_bytes(a) : &io_u8_address_value(a))
+
+#define io_any_address()			(io_address_t) {.size = 0,}
+#define is_any_io_address(a)		(io_address_size(a) == 0)
+
+#define def_io_u8_address(a)		(io_address_t) {.size = 1,.value.u8 = a,}
+#define def_io_u16_address(a)		(io_address_t) {.size = 1,.value.u16 = a,}
+#define def_io_u32_address(a)		(io_address_t) {.size = 1,.value.u32 = a,}
+
+#define io_u8_address_value(a)	(a).value.u8
+#define io_u16_address_value(a)	(a).value.u16
+#define io_u32_address_value(a)	(a).value.u32
+
+io_address_t mk_io_address(io_t*,uint32_t,uint8_t const*);
+void free_io_address (io_t*,io_address_t);
+int32_t compare_io_addresses (io_address_t,io_address_t);
+
+INLINE_FUNCTION io_address_t
+duplicate_io_address (io_t *io,io_address_t a) {
+	return mk_io_address (io,io_address_size(a),io_address_bytes(a));
+}
+
+//
 // sockets
 //
 
@@ -1583,10 +1637,15 @@ typedef struct PACK_STRUCTURE io_socket_constructor {
 	bool (*open) (io_socket_t*);\
 	void (*close) (io_socket_t*);\
 	bool (*is_closed) (io_socket_t const*);\
-	io_t*	(*get_io) (io_socket_t*); \
+	bool (*bind_inner) (io_socket_t*,io_address_t,io_event_t*,io_event_t*);\
+	bool (*bind_to_outer_socket) (io_socket_t *socket,io_socket_t *outer);\
+	\
+	/* depreciate*/\
 	io_pipe_t* (*bindt) (io_socket_t*,io_event_t*);\
 	io_event_t* (*bindr) (io_socket_t*,io_event_t*);\
 	void (*bindc) (io_socket_t*,io_socket_constructor_t*);\
+	/* depreciate*/\
+	\
 	io_encoding_t*	(*new_message) (io_socket_t*); \
 	bool (*send_message) (io_socket_t*,io_encoding_t*);\
 	bool (*iterate_inner_sockets) (io_socket_t*,io_socket_iterator_t,void*);\
@@ -1600,12 +1659,20 @@ struct PACK_STRUCTURE io_socket_implementation {
 
 #define IO_SOCKET_STRUCT_MEMBERS \
 	io_socket_implementation_t const *implementation;\
+	io_address_t address;\
+	io_t *io;\
 	/**/
 
 struct PACK_STRUCTURE io_socket {
 	IO_SOCKET_STRUCT_MEMBERS
 };
 
+#define io_socket_io(s)				(s)->io
+#define io_socket_address(s)		(s)->address
+
+#define IO_SOCKET(s)	((io_socket_t*) (s))
+
+void	initialise_io_socket (io_socket_t*,io_t*);
 bool	is_io_socket_of_type (io_socket_t const*,io_socket_implementation_t const*);
 bool	is_physical_io_socket (io_socket_t const*);
 bool	is_constructed_io_socket (io_socket_t const*);
@@ -1639,11 +1706,6 @@ io_socket_is_closed (io_socket_t const *socket) {
 	return socket->implementation->is_closed (socket);
 }
 
-INLINE_FUNCTION io_t*
-io_socket_get_io (io_socket_t *socket) {
-	return socket->implementation->get_io (socket);
-}
-
 INLINE_FUNCTION io_encoding_t*
 io_socket_new_message (io_socket_t *socket) {
 	return socket->implementation->new_message (socket);
@@ -1662,6 +1724,16 @@ io_socket_bindr (io_socket_t *socket,io_event_t *ev) {
 INLINE_FUNCTION io_pipe_t*
 io_socket_bindt (io_socket_t *socket,io_event_t *ev) {
 	return socket->implementation->bindt (socket,ev);
+}
+
+INLINE_FUNCTION bool
+io_socket_bind_inner (io_socket_t *socket,io_address_t a,io_event_t *tx,io_event_t *rx) {
+	return socket->implementation->bind_inner (socket,a,tx,rx);
+}
+
+INLINE_FUNCTION bool
+io_socket_bind_to_outer_socket (io_socket_t *socket,io_socket_t *outer) {
+	return socket->implementation->bind_to_outer_socket (socket,outer);
 }
 
 //
@@ -2226,6 +2298,112 @@ read_only_power_domain_implementation = {
 	.get_as_read_write = ro_pd_get_as_read_write,
 };
 
+io_address_t
+mk_io_address (io_t *io,uint32_t size,uint8_t const *bytes) {
+	switch (size) {
+		case 0:
+			return io_any_address();
+
+		case 1:
+			return def_io_u8_address(*bytes);
+
+		case 2:
+			return def_io_u16_address(read_le_uint16(bytes));
+
+		case 4:
+			return def_io_u32_address(read_le_uint32(bytes));
+
+		default:{
+			io_address_t a = {
+				.size = size,
+				.value.bytes = io_byte_memory_allocate (
+					io_get_byte_memory (io),size
+				)
+			};
+			memcpy (io_address_bytes(a),bytes,size);
+			return a;
+		}
+	}
+}
+
+//
+// size > 0
+//
+int32_t
+compare_as_big_int_values (uint8_t const *a_bytes,uint32_t a_size,uint8_t const *b_bytes,uint32_t b_size) {
+	uint8_t const *a_head = a_bytes + a_size - 1;
+	uint8_t const *b_head = b_bytes + b_size - 1;
+	int32_t cmp = 0;
+
+	while (a_head > a_bytes && *a_head == 0) a_head--;
+	while (b_head > b_bytes && *b_head == 0) b_head--;
+
+	{
+		uint32_t s1 = (a_head - a_bytes);
+		uint32_t s2 = (b_head - b_bytes);
+		
+		if ( s1 > s2 ) {
+			cmp = 1;
+		} else if (s1 > s2) {
+			cmp = -1;
+		} else {
+			uint8_t const *end = a_bytes - 1;
+			while (a_head > end) {
+				if (*a_head > *b_head) {
+					cmp = 1;
+					break;
+				} else if (*a_head < *b_head) {
+					cmp = -1;
+					break;
+				}
+				a_head--;
+				b_head--;
+			}
+		}
+	}
+	
+	return cmp;
+}
+
+int32_t
+compare_io_address_values (io_address_t a,io_address_t b) {
+	return compare_as_big_int_values (
+		get_io_address_bytes(a),io_address_size(a),
+		get_io_address_bytes(b),io_address_size(b)
+	);
+}
+
+//
+// compare as little endian big numbers
+//
+int32_t
+compare_io_addresses (io_address_t a,io_address_t b) {
+	int32_t cmp = 0;
+	
+	if (is_any_io_address (a)) {
+		if (!is_any_io_address (b)) {
+			cmp = -1;
+		} else {
+			cmp = compare_io_address_values(a,b);
+		}
+	} else {
+		if (is_any_io_address (b)) {
+			cmp = 1;
+		} else {
+			cmp = compare_io_address_values(a,b);
+		}
+	}
+	
+	return cmp;
+}
+
+void
+free_io_address (io_t *io,io_address_t a) {
+	if (io_address_size(a) > 4) {
+		io_byte_memory_free (io_get_byte_memory (io),io_address_bytes(a));
+	}
+}
+
 //
 // io socket base
 //
@@ -2254,11 +2432,6 @@ io_socket_open_nop (io_socket_t *socket) {
 
 static void
 io_socket_close_nop (io_socket_t *socket) {
-}
-
-static io_t*
-io_socket_get_io_null (io_socket_t *socket) {
-	return NULL;
 }
 
 static io_pipe_t*
@@ -2303,7 +2476,6 @@ EVENT_DATA io_socket_implementation_t io_socket_implementation_base = {
 	.open = io_socket_open_nop,
 	.close = io_socket_close_nop,
 	.is_closed = io_socket_is_closed_always,
-	.get_io = io_socket_get_io_null,
 	.bindt = io_socket_bindt_nop,
 	.bindr = io_socket_bindr_nop,
 	.bindc = io_socket_bindc_nop,
@@ -2313,6 +2485,11 @@ EVENT_DATA io_socket_implementation_t io_socket_implementation_base = {
 	.iterate_outer_sockets = NULL,
 	.mtu = io_socket_mtu_nop,
 };
+
+void
+initialise_io_socket (io_socket_t *this,io_t *io) {
+	this->io = io;
+}
 
 bool
 is_io_socket_of_type (
@@ -2334,7 +2511,6 @@ EVENT_DATA io_socket_implementation_t io_physical_socket_implementation_base = {
 	.free = io_socket_free_panic,
 	.open = io_socket_open_nop,
 	.close = io_socket_close_nop,
-	.get_io = io_socket_get_io_null,
 	.bindt = io_socket_bindt_nop,
 	.bindr = io_socket_bindr_nop,
 	.bindc = io_socket_bindc_nop,
@@ -2357,7 +2533,6 @@ EVENT_DATA io_socket_implementation_t io_constructed_socket_implementation_base 
 	.free = io_socket_free_panic,
 	.open = io_socket_open_nop,
 	.close = io_socket_close_nop,
-	.get_io = io_socket_get_io_null,
 	.bindt = io_socket_bindt_nop,
 	.bindr = io_socket_bindr_nop,
 	.bindc = io_socket_bindc_nop,
@@ -2458,25 +2633,34 @@ static const io_implementation_t	io_base = {
 	.panic = NULL,
 };
 
-
 void 
 add_io_implementation_core_methods (io_implementation_t *io_i) {	
 	memcpy (io_i,&io_base,sizeof(io_implementation_t));
 }
 
-# define decl_particular_value(REF_NAME,VALUE_TYPE,VALUE_VAR) \
+# define decl_particular_value_R(REF_NAME,VALUE_TYPE,VALUE_VAR,RI) \
 	extern EVENT_DATA VALUE_TYPE VALUE_VAR;\
-	EVENT_DATA vref_t REF_NAME = def_vref (&reference_to_constant_value,&VALUE_VAR);\
+	EVENT_DATA vref_t REF_NAME = def_vref (RI,&VALUE_VAR);\
 	bool io_value_is_##REF_NAME (vref_t r_value) {\
 		return io_typesafe_ro_cast(r_value,REF_NAME);\
 	}\
 	/**/
+
+# define decl_particular_value(REF_NAME,VALUE_TYPE,VALUE_VAR) \
+	decl_particular_value_R(REF_NAME,VALUE_TYPE,VALUE_VAR,&reference_to_constant_value)
+
+# define decl_particular_data_value(REF_NAME,VALUE_TYPE,VALUE_VAR) \
+	decl_particular_value_R(REF_NAME,VALUE_TYPE,VALUE_VAR,&reference_to_data_section_value)
+
 #else
 # define decl_particular_value(REF_NAME,VALUE_TYPE,VALUE_VAR) \
 	extern EVENT_DATA vref_t REF_NAME;\
 	bool io_value_is_##REF_NAME (vref_t);\
 	/**/
-#endif
+
+# define decl_particular_data_value	decl_particular_value
+
+#endif /* IMPLEMENT_IO_CORE */
 
 decl_particular_value(cr_NIL,					io_nil_value_t,cr_nil_v)
 decl_particular_value(cr_UNIV,				io_univ_value_t,cr_univ_v)
@@ -3183,6 +3367,10 @@ mk_io_encoding_pipe (io_byte_memory_t *bm,uint16_t length) {
 
 void
 free_io_encoding_pipe (io_encoding_pipe_t *this,io_byte_memory_t *bm) {
+//	io_encoding_t *enc;
+	while (io_encoding_pipe_pop_encoding (this)) {
+//		unreference_io_encoding (enc);
+	}
 	io_byte_memory_free (bm,this->encoding_ring);
 	io_byte_memory_free (bm,this);
 }
@@ -3197,9 +3385,9 @@ io_encoding_pipe_increment_index (io_encoding_pipe_t *this,int16_t i,int16_t n) 
 }
 
 bool
-io_encoding_pipe_get_encoding (io_encoding_pipe_t *this,io_encoding_t **encoding) {
+io_encoding_pipe_pop_encoding (io_encoding_pipe_t *this) {
 	if (io_encoding_pipe_is_readable (this)) {
-		*encoding = this->encoding_ring[this->read_index];
+		unreference_io_encoding (this->encoding_ring[this->read_index]);
 		this->read_index = io_encoding_pipe_increment_index (
 			this,this->read_index,1
 		);
@@ -3215,7 +3403,7 @@ io_encoding_pipe_put_encoding (io_encoding_pipe_t *this,io_encoding_t *encoding)
 	if (f > 0) {
 		int16_t j = this->write_index;
 		int16_t i = io_encoding_pipe_increment_index(this,j,1);
-		this->encoding_ring[j] = encoding;
+		this->encoding_ring[j] = reference_io_encoding (encoding);
 		this->write_index = i;
 		return true;
 	} else {
@@ -3467,7 +3655,6 @@ tommy_hash_u32 (uint32_t init_val,uint8_t const *key,uint32_t key_len) {
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-
 string_hash_table_entry_t*
 mk_string_hash_table_entry (
 	io_byte_memory_t *bm,char const *bytes,uint32_t size,string_hash_table_mapping_t map
@@ -3477,15 +3664,19 @@ mk_string_hash_table_entry (
 	);
 	
 	if (entry) {
-		entry->bytes = io_byte_memory_allocate (bm,size);
-		if (entry->bytes && size) {
-			entry->next_entry = NULL;
-			entry->size = size;
-			entry->mapping = map;
-			memcpy (entry->bytes,bytes,size);
+		entry->size = size;
+		if (size) {
+			entry->bytes = io_byte_memory_allocate (bm,size);
+			if (entry->bytes != NULL) {
+				entry->next_entry = NULL;
+				entry->mapping = map;
+				memcpy (entry->bytes,bytes,size);
+			} else {
+				io_byte_memory_free (bm,entry);
+				entry = NULL;
+			}
 		} else {
-			io_byte_memory_free (bm,entry);
-			entry = NULL;
+			entry->bytes = NULL;
 		}
 	}
 	
@@ -3541,6 +3732,19 @@ free_string_hash_table (string_hash_table_t *this) {
 	io_byte_memory_free (this->bm,this);
 }
 
+void
+iterate_string_hash_table (
+	string_hash_table_t *this,bool (*cb) (string_hash_table_entry_t*,void*),void *user_value
+) {
+	for (int i = 0; i < this->table_size; i++) {
+		string_hash_table_entry_t *cursor = this->table[i];
+		while (cursor != NULL) {
+			cb (cursor,user_value);
+			cursor = cursor->next_entry;
+		}
+	}
+}
+
 static string_hash_table_entry_t*
 string_hash_table_get_entry (
 	string_hash_table_t *this,const char *data,uint32_t size,int index,int *depth
@@ -3550,7 +3754,7 @@ string_hash_table_get_entry (
 	
 	while (cursor != NULL ) {
 		if (depth)  (*depth) ++;
-		if (cursor->size == size && memcmp(cursor->bytes,data,size) == 0) {
+		if (cursor->size == size && (size == 0 || memcmp(cursor->bytes,data,size) == 0)) {
 			break;
 		}
 		cursor = cursor->next_entry;
@@ -4050,6 +4254,48 @@ EVENT_DATA io_value_memory_implementation_t umm_value_memory_implementation = {
 };
 
 //
+// reference to values in the C data section
+//
+static vref_t
+io_reference_to_data_section_value_reference (vref_t r_value) {
+	return r_value;
+}
+
+static void
+io_reference_to_data_section_value_unreference (vref_t r_value) {
+}
+
+static int64_t
+io_reference_to_data_section_value_get_as_builtin_integer (vref_t r_value) {
+	return vref_expando(r_value).ptr;
+}
+
+static void const*
+io_reference_to_data_section_value_cast_to_ro_pointer (vref_t r_value) {
+	return (void const*) vref_expando(r_value).ptr;
+}
+
+static void*
+io_reference_to_data_section_value_cast_to_rw_pointer (vref_t r_value) {
+	return (void*) vref_expando(r_value).ptr;
+}
+
+static io_value_memory_t*
+io_reference_to_value_get_null_containing_memory (vref_t r_value) {
+	return NULL;
+}
+
+EVENT_DATA io_value_reference_implementation_t 
+reference_to_data_section_value = {
+	.reference = io_reference_to_data_section_value_reference,
+	.unreference = io_reference_to_data_section_value_unreference,
+	.cast_to_ro_pointer = io_reference_to_data_section_value_cast_to_ro_pointer,
+	.cast_to_rw_pointer = io_reference_to_data_section_value_cast_to_rw_pointer,
+	.get_as_builtin_integer = io_reference_to_data_section_value_get_as_builtin_integer,
+	.get_containing_memory = io_reference_to_value_get_null_containing_memory,
+};
+
+//
 // reference to constant values
 //
 static vref_t
@@ -4073,11 +4319,6 @@ io_reference_to_constant_value_cast_to_ro_pointer (vref_t r_value) {
 
 static void*
 io_reference_to_constant_value_cast_to_rw_pointer (vref_t r_value) {
-	return NULL;
-}
-
-static io_value_memory_t*
-io_reference_to_value_get_null_containing_memory (vref_t r_value) {
 	return NULL;
 }
 
@@ -4550,7 +4791,7 @@ io_text_encoding_new (io_byte_memory_t *bm) {
 		);
 		this->bm = bm;
 		this = io_binary_encoding_initialise ((io_binary_encoding_t*) this);
-		this->visited = mk_vref_bucket_hash_table (bm,17);
+		this->visited = NULL;//mk_vref_bucket_hash_table (bm,17);
 	}
 
 	return (io_encoding_t*) this;
@@ -4561,9 +4802,19 @@ io_text_encoding_free (io_encoding_t *encoding) {
 	if (encoding != NULL) {
 		io_text_encoding_t *this = (io_text_encoding_t*) encoding;
 		io_byte_memory_free (this->bm,this->data);
-		free_vref_bucket_hash_table (this->visited);
+		if (this->visited) {
+			free_vref_bucket_hash_table (this->visited);
+		}
 		io_byte_memory_free (this->bm,this);
 	}
+}
+
+vref_hash_table_t*
+io_text_encoding_get_visited (io_text_encoding_t *this) {
+	if (this->visited == NULL) {
+		this->visited = mk_vref_bucket_hash_table (this->bm,17);
+	}
+	return this->visited;
 }
 
 EVENT_DATA io_binary_encoding_implementation_t io_text_encoding_implementation = {
