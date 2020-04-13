@@ -1670,7 +1670,8 @@ struct PACK_STRUCTURE io_socket {
 #define io_socket_io(s)				(s)->io
 #define io_socket_address(s)		(s)->address
 
-#define IO_SOCKET(s)	((io_socket_t*) (s))
+#define IO_SOCKET(s)					((io_socket_t*) (s))
+#define INVALID_SOCKET_ID			0xffffffff
 
 void	initialise_io_socket (io_socket_t*,io_t*);
 bool	is_io_socket_of_type (io_socket_t const*,io_socket_implementation_t const*);
@@ -1735,6 +1736,27 @@ INLINE_FUNCTION bool
 io_socket_bind_to_outer_socket (io_socket_t *socket,io_socket_t *outer) {
 	return socket->implementation->bind_to_outer_socket (socket,outer);
 }
+
+//
+// socket builder
+//
+typedef struct PACK_STRUCTURE socket_builder_binding {
+	uint32_t inner;
+	uint32_t outer;
+} socket_builder_binding_t;
+
+typedef struct socket_builder {
+	uint32_t id;
+	io_socket_t *new;
+	io_socket_constructor_t const *C;
+	bool with_open;
+	socket_builder_binding_t const* bindings;
+} socket_builder_t;
+
+#define BINDINGS(...)		(const socket_builder_binding_t []) {__VA_ARGS__}
+#define END_OF_BINDINGS		{INVALID_SOCKET_ID,INVALID_SOCKET_ID}
+
+void	add_io_sockets_to_device (io_t*,io_socket_t**,socket_builder_t const*,uint32_t);
 
 //
 // cpu io pins
@@ -2546,6 +2568,63 @@ EVENT_DATA io_socket_implementation_t io_constructed_socket_implementation_base 
 bool
 is_constructed_io_socket (io_socket_t const *socket) {
 	return is_io_socket_of_type (socket,&io_constructed_socket_implementation_base);
+}
+
+
+void
+add_io_sockets_to_device (
+	io_t *io,io_socket_t **array,socket_builder_t const *construct,uint32_t length
+) {
+	socket_builder_t const *end = construct + length;
+	socket_builder_t const *build;
+	
+	build = construct;
+	while (build < end) {
+		array[build->id] = io_socket_initialise (
+			build->new,io,build->C
+		);
+		if (build->with_open) {
+			io_socket_open (build->new);
+		}
+		build++;
+	}
+
+	build = construct;
+	while (build < end) {
+		if (build->bindings) {
+			socket_builder_binding_t const *link = build->bindings;
+			while (link->inner != INVALID_SOCKET_ID) {
+				io_socket_bind_to_outer_socket (
+					array[link->inner],array[link->outer]
+				);
+				link++;
+			}
+		}
+		build++;
+	}
+/**/
+}
+
+void
+add_io_socket_bindings_to_device (
+	io_t *io,io_socket_t **array,socket_builder_t const *construct,uint32_t length
+) {
+	socket_builder_t const *end = construct + length;
+	socket_builder_t const *build;
+
+	build = construct;
+	while (build < end) {
+		if (build->bindings) {
+			socket_builder_binding_t const *link = build->bindings;
+			while (link->inner != INVALID_SOCKET_ID) {
+				io_socket_bind_to_outer_socket (
+					array[link->inner],array[link->outer]
+				);
+				link++;
+			}
+		}
+		build++;
+	}
 }
 
 //
