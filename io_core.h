@@ -60,6 +60,7 @@
 typedef struct io io_t;
 typedef struct io_encoding io_encoding_t;
 typedef struct io_pipe io_pipe_t;
+typedef union io_value_reference vref_t;
 
 //
 // identity
@@ -206,16 +207,9 @@ typedef struct PACK_STRUCTURE {
  *
  */
 typedef struct io_event io_event_t;
-typedef struct io_event_implementation io_event_implementation_t;
 typedef void (*io_event_handler_t) (io_event_t*);
 
-struct PACK_STRUCTURE io_event_implementation {
-	io_event_implementation_t const *specialisation_of;
-	io_pipe_t* (*cast_to_pipe) (io_event_t*);
-};
-
 #define IO_EVENT_STRUCT_MEMBERS \
-	io_event_implementation_t const *implementation;\
 	void (*event_handler) (io_event_t*);\
 	void *user_value;\
 	io_event_t *next_event;\
@@ -234,40 +228,16 @@ struct PACK_STRUCTURE io_event {
 #define io_event_is_valid(ev) 	((ev)->event_handler != NULL)
 #define io_event_is_active(ev) 	((ev)->next_event != NULL)
 
-#define merge_into_io_event(s,d) \
-	(d)->event_handler = (s)->event_handler;\
-	(d)->user_value = (s)->user_value;
-
-bool	io_is_event_of_type (io_event_t const*,io_event_implementation_t const*);
-
 extern io_event_t s_null_io_event;
-extern EVENT_DATA io_event_implementation_t io_event_base_implementation;
 
 INLINE_FUNCTION io_event_t*
 initialise_io_event (
 	io_event_t *ev,io_event_handler_t fn,void* user_value
 ) {
-	ev->implementation = &io_event_base_implementation;
 	ev->event_handler = fn;
 	ev->user_value = user_value;
 	ev->next_event = NULL;
 	return ev;
-}
-
-INLINE_FUNCTION io_event_t*
-initialise_typed_io_event (
-	io_event_t *ev,io_event_implementation_t const *I,io_event_handler_t fn,void* user_value
-) {
-	ev->implementation = I;
-	ev->event_handler = fn;
-	ev->user_value = user_value;
-	ev->next_event = NULL;
-	return ev;
-}
-
-INLINE_FUNCTION io_pipe_t*
-io_event_cast_to_pipe (io_event_t *ev) {
-	return ev->implementation->cast_to_pipe (ev);
 }
 
 //
@@ -333,7 +303,6 @@ struct PACK_STRUCTURE io_pipe_implementation {
 };
 
 #define IO_PIPE_STRUCT_MEMBERS \
-	io_event_t ev; /* MUST BE FIRST */\
 	io_pipe_implementation_t const *implementation;\
 	int16_t size_of_ring;\
 	int16_t write_index;\
@@ -344,8 +313,6 @@ struct PACK_STRUCTURE io_pipe_implementation {
 struct PACK_STRUCTURE io_pipe {
 	IO_PIPE_STRUCT_MEMBERS
 };
-
-#define io_pipe_event(p)	(&(p)->ev)
 
 INLINE_FUNCTION bool
 io_pipe_is_readable (io_pipe_t const *this) {
@@ -383,7 +350,6 @@ bool		io_byte_pipe_get_byte (io_byte_pipe_t*,uint8_t*);
 bool		io_byte_pipe_put_byte (io_byte_pipe_t*,uint8_t);
 uint32_t	io_byte_pipe_put_bytes (io_byte_pipe_t*,uint8_t const*,uint32_t);
 
-bool	is_io_byte_pipe_event (io_event_t const*);
 bool	is_io_byte_pipe (io_pipe_t const*);
 
 #define io_byte_pipe_count_free_slots(p) io_pipe_count_free_slots ((io_pipe_t const*) (p))
@@ -401,13 +367,9 @@ typedef struct PACK_STRUCTURE io_encoding_pipe_implementation {
 typedef struct PACK_STRUCTURE io_encoding_pipe {
 	IO_PIPE_STRUCT_MEMBERS
 	io_encoding_t **encoding_ring;
-	
-	void *user_value;
-	void* (*user_action) (void*);
-	
+		
 } io_encoding_pipe_t;
 
-bool	is_io_encoding_pipe_event (io_event_t const*);
 bool	is_io_encoding_pipe (io_pipe_t const*);
 
 io_encoding_pipe_t* mk_io_encoding_pipe (io_byte_memory_t*,uint16_t);
@@ -415,19 +377,11 @@ void free_io_encoding_pipe (io_encoding_pipe_t*,io_byte_memory_t*);
 bool	io_encoding_pipe_pop_encoding (io_encoding_pipe_t*);
 bool	io_encoding_pipe_put_encoding (io_encoding_pipe_t*,io_encoding_t*);
 bool	io_encoding_pipe_peek (io_encoding_pipe_t*,io_encoding_t**);
-void	io_encoding_pipe_put (io_t *io,io_pipe_t*,const char*,va_list);
 
 #define io_encoding_pipe_count_occupied_slots(p) io_pipe_count_occupied_slots ((io_pipe_t const*) (p))
 #define io_encoding_pipe_count_free_slots(p) io_pipe_count_free_slots ((io_pipe_t const*) (p))
 #define io_encoding_pipe_is_readable(p) io_pipe_is_readable ((io_pipe_t const*) (p))
 #define io_encoding_pipe_is_writeable(p) io_pipe_is_writeable ((io_pipe_t const*) (p))
-
-
-INLINE_FUNCTION io_encoding_t*
-io_encoding_pipe_new_encoding (io_pipe_t *pipe) {
-	return ((io_encoding_pipe_implementation_t const*) pipe->implementation)->new_encoding((io_pipe_t*)pipe);
-}
-typedef union io_value_reference vref_t;
 
 //
 // dma
@@ -1638,14 +1592,8 @@ typedef struct PACK_STRUCTURE io_socket_constructor {
 	void (*close) (io_socket_t*);\
 	bool (*is_closed) (io_socket_t const*);\
 	bool (*bind_inner) (io_socket_t*,io_address_t,io_event_t*,io_event_t*);\
-	bool (*bind_to_outer_socket) (io_socket_t *socket,io_socket_t *outer);\
-	\
-	/* depreciate*/\
-	io_pipe_t* (*bindt) (io_socket_t*,io_event_t*);\
-	io_event_t* (*bindr) (io_socket_t*,io_event_t*);\
-	void (*bindc) (io_socket_t*,io_socket_constructor_t*);\
-	/* depreciate*/\
-	\
+	bool (*bind_to_outer_socket) (io_socket_t*,io_socket_t*);\
+	io_pipe_t* (*get_receive_pipe) (io_socket_t*);\
 	io_encoding_t*	(*new_message) (io_socket_t*); \
 	bool (*send_message) (io_socket_t*,io_encoding_t*);\
 	bool (*iterate_inner_sockets) (io_socket_t*,io_socket_iterator_t,void*);\
@@ -1717,16 +1665,6 @@ io_socket_send_message (io_socket_t *socket,io_encoding_t *m) {
 	return socket->implementation->send_message (socket,m);
 }
 
-INLINE_FUNCTION io_event_t*
-io_socket_bindr (io_socket_t *socket,io_event_t *ev) {
-	return socket->implementation->bindr (socket,ev);
-}
-
-INLINE_FUNCTION io_pipe_t*
-io_socket_bindt (io_socket_t *socket,io_event_t *ev) {
-	return socket->implementation->bindt (socket,ev);
-}
-
 INLINE_FUNCTION bool
 io_socket_bind_inner (io_socket_t *socket,io_address_t a,io_event_t *tx,io_event_t *rx) {
 	return socket->implementation->bind_inner (socket,a,tx,rx);
@@ -1736,6 +1674,12 @@ INLINE_FUNCTION bool
 io_socket_bind_to_outer_socket (io_socket_t *socket,io_socket_t *outer) {
 	return socket->implementation->bind_to_outer_socket (socket,outer);
 }
+
+INLINE_FUNCTION io_pipe_t*
+io_socket_get_receive_pipe (io_socket_t *socket) {
+	return socket->implementation->get_receive_pipe (socket);
+}
+
 
 //
 // socket builder
@@ -2456,20 +2400,6 @@ static void
 io_socket_close_nop (io_socket_t *socket) {
 }
 
-static io_pipe_t*
-io_socket_bindt_nop (io_socket_t *socket,io_event_t *ev) {
-	return NULL;
-}
-
-static io_event_t*
-io_socket_bindr_nop (io_socket_t *socket,io_event_t *ev) {
-	return NULL;
-}
-
-static void
-io_socket_bindc_nop (io_socket_t *socket,io_socket_constructor_t *C) {
-}
-
 static io_encoding_t*
 io_socket_new_message_null (io_socket_t *socket) {
 	return NULL;
@@ -2498,9 +2428,8 @@ EVENT_DATA io_socket_implementation_t io_socket_implementation_base = {
 	.open = io_socket_open_nop,
 	.close = io_socket_close_nop,
 	.is_closed = io_socket_is_closed_always,
-	.bindt = io_socket_bindt_nop,
-	.bindr = io_socket_bindr_nop,
-	.bindc = io_socket_bindc_nop,
+	.bind_to_outer_socket = NULL,
+	.bind_inner = NULL,
 	.new_message = io_socket_new_message_null,
 	.send_message = io_socket_send_message_nop,
 	.iterate_inner_sockets = NULL,
@@ -2533,9 +2462,6 @@ EVENT_DATA io_socket_implementation_t io_physical_socket_implementation_base = {
 	.free = io_socket_free_panic,
 	.open = io_socket_open_nop,
 	.close = io_socket_close_nop,
-	.bindt = io_socket_bindt_nop,
-	.bindr = io_socket_bindr_nop,
-	.bindc = io_socket_bindc_nop,
 	.new_message = io_socket_new_message_null,
 	.send_message = io_socket_send_message_nop,
 	.iterate_inner_sockets = NULL,
@@ -2555,9 +2481,6 @@ EVENT_DATA io_socket_implementation_t io_constructed_socket_implementation_base 
 	.free = io_socket_free_panic,
 	.open = io_socket_open_nop,
 	.close = io_socket_close_nop,
-	.bindt = io_socket_bindt_nop,
-	.bindr = io_socket_bindr_nop,
-	.bindc = io_socket_bindc_nop,
 	.new_message = io_socket_new_message_null,
 	.send_message = io_socket_send_message_nop,
 	.iterate_inner_sockets = NULL,
@@ -2569,7 +2492,6 @@ bool
 is_constructed_io_socket (io_socket_t const *socket) {
 	return is_io_socket_of_type (socket,&io_constructed_socket_implementation_base);
 }
-
 
 void
 add_io_sockets_to_device (
@@ -2602,7 +2524,6 @@ add_io_sockets_to_device (
 		}
 		build++;
 	}
-/**/
 }
 
 void
@@ -2960,29 +2881,6 @@ STBSP__PUBLICDEF void STB_SPRINTF_DECORATE(set_separators)(char comma, char peri
 //
 //-----------------------------------------------------------------------------
 
-static io_pipe_t*
-cast_io_event_to_null_pipe (io_event_t *ev) {
-	return NULL;
-}
-
-EVENT_DATA io_event_implementation_t io_event_base_implementation = {
-	.specialisation_of = NULL,
-	.cast_to_pipe = cast_io_event_to_null_pipe,
-};
-
-bool
-io_is_event_of_type (
-	io_event_t const *ev,io_event_implementation_t const *T
-) {
-	io_event_implementation_t const *E = ev->implementation;
-	bool is = false;
-	do {
-		is = (E == T);
-	} while (!is && (E = E->specialisation_of) != NULL);
-
-	return is && (E != NULL);
-}
-
 static void
 null_event_handler (io_event_t *ev) {
 }
@@ -3269,37 +3167,6 @@ EVENT_DATA io_cpu_clock_implementation_t io_dependent_clock_implementation = {
 // pipes
 //
 
-static io_pipe_t*
-cast_io_pipe_event_to_pipe (io_event_t *ev) {
-	// BECAUSE ev is first member in pipe
-	return (io_pipe_t*) ev;
-}
-
-static EVENT_DATA io_event_implementation_t io_event_implementation_base = {
-	.specialisation_of = &io_event_base_implementation,
-	.cast_to_pipe = cast_io_pipe_event_to_pipe,
-};
-
-static EVENT_DATA io_event_implementation_t io_byte_pipe_event_implementation = {
-	.specialisation_of = &io_event_implementation_base,
-	.cast_to_pipe = cast_io_pipe_event_to_pipe,
-};
-
-bool
-is_io_byte_pipe_event (io_event_t const *ev) {
-	return io_is_event_of_type (ev,&io_byte_pipe_event_implementation);
-}
-
-EVENT_DATA io_event_implementation_t io_encoding_pipe_event_implementation = {
-	.specialisation_of = &io_event_implementation_base,
-	.cast_to_pipe = cast_io_pipe_event_to_pipe,
-};
-
-bool
-is_io_encoding_pipe_event (io_event_t const *ev) {
-	return io_is_event_of_type (ev,&io_encoding_pipe_event_implementation);
-}
-
 static EVENT_DATA io_pipe_implementation_t io_pipe_implementation_base = {
 	.specialisation_of = NULL,
 };
@@ -3326,15 +3193,9 @@ is_io_byte_pipe (io_pipe_t const *pipe) {
 	return io_is_pipe_of_type (pipe,&io_byte_pipe_implementation);
 }
 
-static io_encoding_t*
-encoding_pipe_new_encoding (io_pipe_t *pipe) {
-	io_encoding_pipe_t *this = (io_encoding_pipe_t*) pipe;
-	return this->user_action(this->user_value);
-}
-
 static EVENT_DATA io_encoding_pipe_implementation_t io_encoding_pipe_implementation = {
 	.specialisation_of = &io_pipe_implementation_base,
-	.new_encoding = encoding_pipe_new_encoding,
+	.new_encoding = NULL,
 };
 
 bool
@@ -3350,9 +3211,6 @@ mk_io_byte_pipe (io_byte_memory_t *bm,uint16_t length) {
 	
 	if (this) {
 		this->implementation = &io_byte_pipe_implementation,
-		initialise_typed_io_event (
-			io_pipe_event(this),&io_byte_pipe_event_implementation,NULL,NULL
-		);
 		this->write_index = this->read_index = 0;
 		this->size_of_ring = length;
 		this->overrun = 0;
@@ -3426,15 +3284,10 @@ mk_io_encoding_pipe (io_byte_memory_t *bm,uint16_t length) {
 		this->implementation = (
 			(io_pipe_implementation_t const*) &io_encoding_pipe_implementation
 		),
-		initialise_typed_io_event (
-			io_pipe_event(this),&io_encoding_pipe_event_implementation,NULL,NULL
-		);
 		this->write_index = this->read_index = 0;
 		this->size_of_ring = length;
 		this->overrun = 0;
 		this->encoding_ring = io_byte_memory_allocate (bm,sizeof(io_encoding_t*) * length);
-		this->user_value = NULL;
-		this->user_action = NULL;
 		if (this->encoding_ring == NULL) {
 			io_byte_memory_free (bm,this);
 			this = NULL;
@@ -3446,9 +3299,7 @@ mk_io_encoding_pipe (io_byte_memory_t *bm,uint16_t length) {
 
 void
 free_io_encoding_pipe (io_encoding_pipe_t *this,io_byte_memory_t *bm) {
-//	io_encoding_t *enc;
 	while (io_encoding_pipe_pop_encoding (this)) {
-//		unreference_io_encoding (enc);
 	}
 	io_byte_memory_free (bm,this->encoding_ring);
 	io_byte_memory_free (bm,this);
@@ -3500,14 +3351,6 @@ io_encoding_pipe_peek (io_encoding_pipe_t *this,io_encoding_t **encoding) {
 	}
 }
 
-void
-io_encoding_pipe_put (io_t *io,io_pipe_t *this,const char *fmt,va_list va) {
-	io_encoding_t *msg = io_encoding_pipe_new_encoding (this);
-	io_encoding_print (msg,fmt,va);
-	io_encoding_pipe_put_encoding ((io_encoding_pipe_t*) this,msg);
-	io_enqueue_event (io,io_pipe_event(this));
-}
-
 static EVENT_DATA io_pipe_implementation_t io_value_pipe_implementation = {
 	.specialisation_of = &io_pipe_implementation_base,
 };
@@ -3516,11 +3359,6 @@ bool
 is_io_value_pipe (io_pipe_t const *pipe) {
 	return io_is_pipe_of_type (pipe,&io_value_pipe_implementation);
 }
-
-static EVENT_DATA io_event_implementation_t io_value_pipe_event_implementation = {
-	.specialisation_of = &io_event_implementation_base,
-	.cast_to_pipe = cast_io_pipe_event_to_pipe,
-};
 
 INLINE_FUNCTION int16_t
 io_value_pipe_increment_index (io_value_pipe_t *this,int16_t i,int16_t n) {
@@ -3537,9 +3375,6 @@ mk_io_value_pipe (io_byte_memory_t *bm,uint16_t length) {
 	
 	if (this) {
 		this->implementation = &io_value_pipe_implementation,
-		initialise_typed_io_event (
-			io_pipe_event(this),&io_value_pipe_event_implementation,NULL,NULL
-		);
 		this->size_of_ring = length;
 		this->overrun = 0;
 		this->value_ring = io_byte_memory_allocate (bm,sizeof(vref_t) * length);
