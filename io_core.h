@@ -361,7 +361,6 @@ bool	is_io_byte_pipe (io_pipe_t const*);
 //
 typedef struct PACK_STRUCTURE io_encoding_pipe_implementation {
 	IO_PIPE_IMPLEMENTATION_STRUCT_MEMBERS
-	io_encoding_t* (*new_encoding) (io_pipe_t*);
 } io_encoding_pipe_implementation_t;
 
 typedef struct PACK_STRUCTURE io_encoding_pipe {
@@ -374,6 +373,7 @@ bool	is_io_encoding_pipe (io_pipe_t const*);
 
 io_encoding_pipe_t* mk_io_encoding_pipe (io_byte_memory_t*,uint16_t);
 void free_io_encoding_pipe (io_encoding_pipe_t*,io_byte_memory_t*);
+void reset_io_encoding_pipe (io_encoding_pipe_t*);
 bool	io_encoding_pipe_pop_encoding (io_encoding_pipe_t*);
 bool	io_encoding_pipe_put_encoding (io_encoding_pipe_t*,io_encoding_t*);
 bool	io_encoding_pipe_peek (io_encoding_pipe_t*,io_encoding_t**);
@@ -744,6 +744,8 @@ typedef vref_t (*io_value_decoder_t) (io_encoding_t*,io_value_memory_t*);
 	void* (*get_rw_header) (io_encoding_t*); \
 	void (*get_content) (io_encoding_t const*,uint8_t const**,uint8_t const**);\
 	vref_t (*decode_to_io_value) (io_encoding_t*,io_value_decoder_t,io_value_memory_t*);\
+	size_t (*fill) (io_encoding_t*,uint8_t,size_t);\
+	bool (*grow) (io_encoding_t*,uint32_t);\
 	uint32_t (*grow_increment) (io_encoding_t*);\
 	int32_t (*limit) (void);\
 	size_t (*length) (io_encoding_t const*);\
@@ -844,9 +846,19 @@ io_encoding_get_grow_increment (io_encoding_t *encoding) {
 	return encoding->implementation->grow_increment(encoding);
 }
 
+INLINE_FUNCTION bool
+io_encoding_grow (io_encoding_t *encoding,uint32_t inc) {
+	return encoding->implementation->grow(encoding,inc);
+}
+
 INLINE_FUNCTION size_t
 io_encoding_length (io_encoding_t const *encoding) {
 	return encoding->implementation->length(encoding);
+}
+
+INLINE_FUNCTION size_t
+io_encoding_fill (io_encoding_t *encoding,uint8_t byte,size_t s) {
+	return encoding->implementation->fill(encoding,byte,s);
 }
 
 /*
@@ -856,7 +868,6 @@ io_encoding_length (io_encoding_t const *encoding) {
  */
 #define IO_BINARY_ENCODING_IMPLEMENTATION_STRUCT_MEMBERS \
 	IO_ENCODING_IMPLEMENTATION_STRUCT_MEMBERS	\
-	size_t (*fill) (io_encoding_t*,uint8_t,size_t);\
 	bool (*append_byte) (io_encoding_t*,uint8_t);\
 	bool (*append_bytes) (io_encoding_t*,uint8_t const*,size_t);\
 	bool (*pop_last_byte) (io_encoding_t*,uint8_t*);\
@@ -992,9 +1003,8 @@ typedef struct PACK_STRUCTURE io_twi_transfer {
 	IO_PACKET_STRUCT_PROPERTIES
 	struct {
 		uint32_t bus_address:8;
-		uint32_t tx_length:8;
-		uint32_t rx_length:8;
-		uint32_t :8;
+		uint32_t tx_length:12;
+		uint32_t rx_length:12;
 	} cmd;
 } io_twi_transfer_t;
 
@@ -2650,7 +2660,12 @@ add_io_implementation_core_methods (io_implementation_t *io_i) {
 	decl_particular_value_R(REF_NAME,VALUE_TYPE,VALUE_VAR,&reference_to_constant_value)
 
 # define decl_particular_data_value(REF_NAME,VALUE_TYPE,VALUE_VAR) \
-	decl_particular_value_R(REF_NAME,VALUE_TYPE,VALUE_VAR,&reference_to_data_section_value)
+	extern VALUE_TYPE VALUE_VAR;\
+	EVENT_DATA vref_t REF_NAME = def_vref (&reference_to_data_section_value,&VALUE_VAR);\
+	bool io_value_is_##REF_NAME (vref_t r_value) {\
+		return io_typesafe_ro_cast(r_value,REF_NAME);\
+	}\
+//	decl_particular_value_R(REF_NAME,VALUE_TYPE,VALUE_VAR,&reference_to_data_section_value)
 
 #else
 # define decl_particular_value(REF_NAME,VALUE_TYPE,VALUE_VAR) \
@@ -3195,7 +3210,6 @@ is_io_byte_pipe (io_pipe_t const *pipe) {
 
 static EVENT_DATA io_encoding_pipe_implementation_t io_encoding_pipe_implementation = {
 	.specialisation_of = &io_pipe_implementation_base,
-	.new_encoding = NULL,
 };
 
 bool
@@ -3298,9 +3312,14 @@ mk_io_encoding_pipe (io_byte_memory_t *bm,uint16_t length) {
 }
 
 void
-free_io_encoding_pipe (io_encoding_pipe_t *this,io_byte_memory_t *bm) {
+reset_io_encoding_pipe (io_encoding_pipe_t *this) {
 	while (io_encoding_pipe_pop_encoding (this)) {
 	}
+}
+
+void
+free_io_encoding_pipe (io_encoding_pipe_t *this,io_byte_memory_t *bm) {
+	reset_io_encoding_pipe (this);
 	io_byte_memory_free (bm,this->encoding_ring);
 	io_byte_memory_free (bm,this);
 }
@@ -4363,6 +4382,16 @@ io_encoding_no_content (io_encoding_t const *encoding,uint8_t const** b,uint8_t 
 	*b = *e = NULL;
 }
 
+static size_t
+io_encoding_no_fill (io_encoding_t *encoding,uint8_t b,size_t s) {
+	return 0;
+}
+
+static bool
+io_encoding_no_grow (io_encoding_t *encoding,uint32_t g) {
+	return false;
+}
+
 EVENT_DATA io_encoding_implementation_t io_encoding_implementation_base = {
 	.specialisation_of = NULL,
 	.make_encoding = mk_null_encoding,
@@ -4374,6 +4403,8 @@ EVENT_DATA io_encoding_implementation_t io_encoding_implementation_base = {
 	.decode_to_io_value = io_value_encoding_decode_to_io_value,
 	.limit = null_encoding_limit,
 	.length = null_encoding_length,
+	.fill = io_encoding_no_fill,
+	.grow = io_encoding_no_grow,
 	.grow_increment = null_encoding_grow_increment,
 	.cast_outer = null_io_encoding_no_cast,
 	.cast_inner_with_add = null_io_encoding_no_cast,
@@ -4404,6 +4435,8 @@ EVENT_DATA io_encoding_implementation_t io_value_int64_encoding_implementation =
 	.decode_to_io_value = io_value_encoding_decode_to_io_value,
 	.limit = null_encoding_limit,
 	.length = null_encoding_length,
+	.fill = io_encoding_no_fill,
+	.grow = io_encoding_no_grow,
 	.grow_increment = null_encoding_grow_increment,
 	.cast_outer = null_io_encoding_no_cast,
 	.cast_inner_with_add = null_io_encoding_no_cast,
@@ -4427,6 +4460,8 @@ EVENT_DATA io_encoding_implementation_t io_value_float64_encoding_implementation
 	.decode_to_io_value = io_value_encoding_decode_to_io_value,
 	.limit = null_encoding_limit,
 	.length = null_encoding_length,
+	.fill = io_encoding_no_fill,
+	.grow = io_encoding_no_grow,
 	.grow_increment = null_encoding_grow_increment,
 	.cast_outer = null_io_encoding_no_cast,
 	.cast_inner_with_add = null_io_encoding_no_cast,
@@ -4473,19 +4508,18 @@ io_binary_encoding_free (io_encoding_t *encoding) {
 }
 
 static bool
-io_binary_encoding_grow (io_binary_encoding_t *this) {
+io_binary_encoding_grow (io_encoding_t *encoding,uint32_t increase) {
+	io_binary_encoding_t *this = (io_binary_encoding_t*) encoding;
 	uint32_t old_size = io_binary_encoding_allocation_size (this);
-	uint32_t new_size = (
-			old_size 
-		+	(io_encoding_get_grow_increment((io_encoding_t*) this) * sizeof(uint8_t))
-	);
-
+	uint32_t new_size = (old_size +	(increase * sizeof(uint8_t)));
+	uint32_t cursor_offset = io_binary_encoding_data_size (this);
+	
 	this->data = io_byte_memory_reallocate (
 		this->bm,this->data,new_size
 	);
 
 	if (this->data) {
-		this->cursor = this->data + old_size;
+		this->cursor = this->data + cursor_offset;
 		this->end = this->data + new_size;
 		return true;
 	} else {
@@ -4501,7 +4535,9 @@ io_binary_encoding_append_byte (io_encoding_t *encoding,uint8_t byte) {
 				io_encoding_limit (encoding) < 0
 			||	io_binary_encoding_data_size (this) < io_encoding_limit (encoding)
 		) {
-			io_binary_encoding_grow (this);
+			io_encoding_grow (
+				encoding,io_encoding_get_grow_increment(encoding)
+			);
 		}
 	}
 
@@ -4526,14 +4562,28 @@ static size_t
 io_binary_encoding_fill_bytes (
 	io_encoding_t *encoding,uint8_t byte,size_t size
 ) {
-	size_t len = size;
-	while (len) {
-		if (!io_binary_encoding_append_byte (encoding,byte)) {
-			break;
+	io_binary_encoding_t *this = (io_binary_encoding_t*) encoding;
+	if ((this->cursor + size) >= this->end) {
+		if (
+				io_encoding_limit (encoding) < 0
+			||	io_binary_encoding_data_size (this) < io_encoding_limit (encoding)
+		) {
+			io_encoding_grow (
+				encoding,
+				(
+						(size - (this->end - this->cursor))
+					+	io_encoding_get_grow_increment(encoding)
+				)
+			);
+		} else {
+			return 0;
 		}
-		len --;
 	}
-	return size - len;
+
+	memset (this->cursor,byte,size);
+	this->cursor += size;
+	
+	return size;
 }
 
 static bool
@@ -4652,7 +4702,7 @@ io_binary_encoding_nolimit (void) {
 }
 
 static uint32_t
-io_text_encoding_grow_increment (io_encoding_t *encoding) {
+default_io_encoding_grow_increment (io_encoding_t *encoding) {
 	return TEXT_ENCODING_GROWTH_INCREMENT;
 }
 
@@ -4670,7 +4720,8 @@ EVENT_DATA io_binary_encoding_implementation_t io_binary_encoding_implementation
 	.get_io = io_binary_encoding_get_io,
 	.length = io_binary_encoding_length,
 	.limit = io_binary_encoding_nolimit,
-	.grow_increment = io_text_encoding_grow_increment,
+	.grow = io_binary_encoding_grow,
+	.grow_increment = default_io_encoding_grow_increment,
 	.fill = io_binary_encoding_fill_bytes,
 	.append_byte = io_binary_encoding_append_byte,
 	.append_bytes = io_binary_encoding_append_bytes,
@@ -4739,6 +4790,8 @@ EVENT_DATA io_binary_encoding_implementation_t io_text_encoding_implementation =
 	.make_encoding = io_text_encoding_new,
 	.free = io_text_encoding_free,
 	.get_io = io_binary_encoding_get_io,
+	.grow = io_binary_encoding_grow,
+	.grow_increment = default_io_encoding_grow_increment,
 	.cast_outer = null_io_encoding_no_cast,
 	.cast_inner_with_add = null_io_encoding_no_cast,
 	.cast_inner= null_io_encoding_no_cast,
@@ -4853,6 +4906,8 @@ EVENT_DATA io_binary_encoding_implementation_t io_x70_encoding_implementation = 
 	.make_encoding = io_x70_encoding_new,
 	.free = io_binary_encoding_free,
 	.get_io = io_binary_encoding_get_io,
+	.grow = io_binary_encoding_grow,
+	.grow_increment = default_io_encoding_grow_increment,
 	.cast_outer = null_io_encoding_no_cast,
 	.cast_inner_with_add = null_io_encoding_no_cast,
 	.cast_inner= null_io_encoding_no_cast,
@@ -4932,6 +4987,26 @@ io_twi_encoding_new (io_byte_memory_t *bm) {
 	return (io_encoding_t*) this;
 };
 
+static bool
+io_packet_encoding_grow (io_encoding_t *encoding,uint32_t increase) {
+	io_packet_encoding_t *this = (io_packet_encoding_t*) encoding;
+	uint32_t old_size = io_binary_encoding_allocation_size (this);
+	uint32_t new_size = (old_size +	(increase * sizeof(uint8_t)));
+	uint32_t cursor_offset = io_binary_encoding_data_size (this);
+
+	this->data = io_byte_memory_reallocate (
+		this->bm,this->data,new_size
+	);
+
+	if (this->data) {
+		this->cursor = this->data + cursor_offset;
+		this->end = this->data + new_size;
+		return true;
+	} else {
+		return false;
+	}
+}
+
 EVENT_DATA io_binary_encoding_implementation_t io_twi_encoding_implementation = {
 	.specialisation_of = IO_ENCODING_IMPLEMENATAION (
 		&io_binary_encoding_implementation
@@ -4940,6 +5015,8 @@ EVENT_DATA io_binary_encoding_implementation_t io_twi_encoding_implementation = 
 	.make_encoding = io_twi_encoding_new,
 	.free = io_binary_encoding_free,
 	.get_io = io_binary_encoding_get_io,
+	.grow = io_packet_encoding_grow,
+	.grow_increment = default_io_encoding_grow_increment,
 	.cast_outer = null_io_encoding_no_cast,
 	.cast_inner_with_add = null_io_encoding_no_cast,
 	.cast_inner= null_io_encoding_no_cast,

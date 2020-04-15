@@ -1932,7 +1932,7 @@ free_test_io_graphics_graphics_context (io_graphics_context_t *gfx) {
 	io_byte_memory_free (gfx->bm,gfx);
 }
 
-io_graphics_command_stack_t*
+static io_graphics_command_stack_t*
 test_io_graphics_graphics_context_get_command_stack (io_graphics_context_t *gfx) {
 	test_io_graphics_graphics_context_t *this = (test_io_graphics_graphics_context_t*) gfx;
 	return this->stack;

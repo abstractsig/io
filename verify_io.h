@@ -332,6 +332,40 @@ TEST_BEGIN(test_io_text_encoding_1) {
 }
 TEST_END
 
+TEST_BEGIN(test_io_text_encoding_2) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t begin,end;
+
+	io_byte_memory_get_info (bm,&begin);
+
+	io_encoding_t *encoding = mk_io_text_encoding (bm);
+
+	if (VERIFY(encoding != NULL,NULL)) {
+		const uint8_t *b,*e;
+		
+		reference_io_encoding (encoding);
+
+		VERIFY (io_encoding_fill (encoding,'a',4) == 4,NULL);
+		VERIFY (io_encoding_length (encoding) == 4,NULL);
+
+		io_encoding_get_content (encoding,&b,&e);
+		VERIFY ((e - b) == 4,NULL);
+		VERIFY (memcmp ("aaaa",b,4) == 0,NULL);
+
+		io_encoding_reset (encoding);
+		io_encoding_append_byte (encoding,'c');
+		VERIFY (io_encoding_fill (encoding,'b',250) == 250,NULL);
+		io_encoding_get_content (encoding,&b,&e);
+		VERIFY (memcmp ("cbbb",b,4) == 0,NULL);
+
+		unreference_io_encoding(encoding);
+	}
+
+	io_byte_memory_get_info (bm,&end);
+	VERIFY (end.used_bytes == begin.used_bytes,NULL);
+}
+TEST_END
+
 TEST_BEGIN(test_io_x70_encoding_1) {
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
 	memory_info_t begin,end;
@@ -1281,6 +1315,7 @@ void
 io_core_values_unit_test (V_unit_test_t *unit) {
 	static V_test_t const tests[] = {
 		test_io_text_encoding_1,
+		test_io_text_encoding_2,
 		test_io_x70_encoding_1,
 		test_io_packet_encoding_1,
 		test_io_constant_values_1,
