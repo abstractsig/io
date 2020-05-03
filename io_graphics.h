@@ -2508,10 +2508,10 @@ io_graphics_font_roboto_unit_test (V_unit_test_t *unit) {
 #else
 #define IO_GRAPHICS_FONT_ROBOTO_UNIT_TEST
 #endif /* IMPLEMENT_VERIFY_IO_GRAPHICS_FONT_ROBOTO */
-
+	
 #define IO_GRAPHICS_UNIT_TESTS	\
 	io_graphics_commands_unit_test,\
-	io_graphics_unit_test,
+	io_graphics_unit_test,\
 	/**/
 #else
 #define IO_GRAPHICS_UNIT_TESTS

@@ -71,7 +71,7 @@ uint32_t		print_unit_test_report (V_runner_t*);
 #ifdef IMPLEMENT_VERIFY_IO_CORE
 //-----------------------------------------------------------------------------
 //
-// implementtaion of verify
+// implementaion of verify
 //
 //-----------------------------------------------------------------------------
 #include <io_device.h>
@@ -393,40 +393,6 @@ TEST_BEGIN(test_io_x70_encoding_1) {
 		io_encoding_reset (encoding);
 		VERIFY (io_encoding_length (encoding) == 0,NULL);
 		
-		unreference_io_encoding(encoding);
-	}
-
-	io_byte_memory_get_info (bm,&end);
-	VERIFY (end.used_bytes == begin.used_bytes,NULL);
-}
-TEST_END
-
-TEST_BEGIN(test_io_packet_encoding_1) {
-	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
-	memory_info_t begin,end;
-
-	io_byte_memory_get_info (bm,&begin);
-	
-	io_encoding_t *encoding = mk_io_twi_encoding (bm);
-
-	if (VERIFY(encoding != NULL,NULL)) {
-		const uint8_t *b,*e;
-		io_twi_transfer_t *h;
-
-		reference_io_encoding (encoding);
-
-		VERIFY (is_io_twi_encoding (encoding),NULL);
-
-		io_encoding_get_content (encoding,&b,&e);
-		VERIFY ((e - b) == 0,NULL);
-
-		h = io_encoding_get_get_rw_header (encoding);
-		if (VERIFY (h != NULL,NULL)) {
-			h->cmd.bus_address = 0x42;
-			h->cmd.tx_length = 1;
-			h->cmd.rx_length = 0;
-		}
-
 		unreference_io_encoding(encoding);
 	}
 
@@ -1317,7 +1283,6 @@ io_core_values_unit_test (V_unit_test_t *unit) {
 		test_io_text_encoding_1,
 		test_io_text_encoding_2,
 		test_io_x70_encoding_1,
-		test_io_packet_encoding_1,
 		test_io_constant_values_1,
 		test_io_constant_values_2,
 		test_io_int64_value_1,
@@ -1481,7 +1446,7 @@ TEST_BEGIN(test_io_encoding_pipe_1) {
 		VERIFY (!io_encoding_pipe_is_readable (pipe),NULL);
 		VERIFY (io_encoding_pipe_is_writeable (pipe),NULL);
 
-		VERIFY (is_io_encoding_pipe ((io_pipe_t*) (pipe)),NULL);
+		VERIFY (cast_to_io_encoding_pipe ((io_pipe_t*) pipe) != NULL,NULL);
 
 		free_io_encoding_pipe (pipe,bm);
 	}
@@ -2104,51 +2069,56 @@ TEST_BEGIN(test_io_address_1) {
 
 	a = io_any_address();
 	VERIFY (is_any_io_address (a),NULL);
+
+	VERIFY (io_address_size(def_io_u8_address(1)) == 1,NULL);
+	VERIFY (io_address_size(def_io_u16_address(1)) == 2,NULL);
+	VERIFY (io_address_size(def_io_u32_address(1)) == 4,NULL);
 	
 	{
 		uint8_t t = 42;
-		a = mk_io_address(TEST_IO,1,&t);
+		a = mk_io_address(bm,1,&t);
 		VERIFY (io_u8_address_value(a) == 42,NULL);
 		VERIFY (compare_io_addresses (a,io_any_address()) == 1,NULL);
 		VERIFY (compare_io_addresses (io_any_address(),a) == -1,NULL);
-		free_io_address (TEST_IO,a);
+		free_io_address (bm,a);
 	}
 	
 	{
 		uint16_t t = 4296;
-		a = mk_io_address(TEST_IO,2,(uint8_t const*) &t);
+		a = mk_io_address(bm,2,(uint8_t const*) &t);
 		VERIFY (io_u16_address_value(a) == t,NULL);
 		VERIFY (compare_io_addresses (a,io_any_address()) == 1,NULL);
 		VERIFY (compare_io_addresses (io_any_address(),a) == -1,NULL);
-		free_io_address (TEST_IO,a);
+		free_io_address (bm,a);
 	}
 
 	{
 		uint32_t t = 0x8000000;
-		a = mk_io_address(TEST_IO,4,(uint8_t const*) &t);
+		a = mk_io_address(bm,4,(uint8_t const*) &t);
 		VERIFY (io_u32_address_value(a) == t,NULL);
 		VERIFY (compare_io_addresses (a,io_any_address()) == 1,NULL);
 		VERIFY (compare_io_addresses (io_any_address(),a) == -1,NULL);
-		free_io_address (TEST_IO,a);
+		free_io_address (bm,a);
 	}
 
 	{
 		uint8_t t[] = {1,0,0,0,0};
-		a = mk_io_address (TEST_IO,sizeof(t),t);
+		a = mk_io_address (bm,sizeof(t),t);
+		VERIFY (io_address_size(a) == sizeof(t),NULL);
 		VERIFY (compare_io_addresses (a,def_io_u8_address(1)) == 0,NULL);
 		VERIFY (compare_io_addresses (def_io_u8_address(1),a) == 0,NULL);
 		VERIFY (compare_io_addresses (def_io_u8_address(2),a) == 1,NULL);
 		VERIFY (compare_io_addresses (a,def_io_u8_address(2)) == -1,NULL);
-		free_io_address (TEST_IO,a);
+		free_io_address (bm,a);
 	}
 
 	{
 		uint8_t d1[] = {1,0,0,1,0,2};
 		uint8_t d2[] = {1,0,0,1,0,2};
 		uint8_t d3[] = {1,0,0,0,0,2};
-		io_address_t a1 = mk_io_address (TEST_IO,sizeof(d1),d1);
-		io_address_t a2 = mk_io_address (TEST_IO,sizeof(d2),d2);
-		io_address_t a3 = mk_io_address (TEST_IO,sizeof(d3),d3);
+		io_address_t a1 = mk_io_address (bm,sizeof(d1),d1);
+		io_address_t a2 = mk_io_address (bm,sizeof(d2),d2);
+		io_address_t a3 = mk_io_address (bm,sizeof(d3),d3);
 
 		VERIFY (compare_io_addresses (a1,a2) == 0,NULL);
 		VERIFY (compare_io_addresses (a1,a3) == 1,NULL);
@@ -2156,9 +2126,9 @@ TEST_BEGIN(test_io_address_1) {
 
 		VERIFY (compare_io_addresses (a3,io_any_address()) == 1,NULL);
 
-		free_io_address (TEST_IO,a1);
-		free_io_address (TEST_IO,a2);
-		free_io_address (TEST_IO,a3);
+		free_io_address (bm,a1);
+		free_io_address (bm,a2);
+		free_io_address (bm,a3);
 	}
 
 	VERIFY (compare_io_addresses (io_any_address(),io_any_address()) == 0,NULL);

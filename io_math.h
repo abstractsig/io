@@ -48,6 +48,8 @@ int64_t		read_le_int64 (uint8_t const*);
 float64_t	read_le_float64 (uint8_t const*);
 float64_t	read_be_float64 (uint8_t const*);
 
+void			write_le_uint32 (uint8_t*,uint32_t);
+
 typedef int32_t	q32f31_t;
 #ifdef IMPLEMENT_IO_CORE
 //-----------------------------------------------------------------------------
@@ -114,6 +116,17 @@ read_be_float64 (uint8_t const *ptr8) {
 	conv.b[6] = ptr8[1];
 	conv.b[7] = ptr8[0];
 	return conv.f;
+}
+
+void
+write_le_uint32 (uint8_t *ptr,uint32_t value) {
+	*ptr++ = value;
+	value >>= 8;
+	*ptr++ = value;
+	value >>= 8;
+	*ptr++ = value;
+	value >>= 8;
+	*ptr++ = value;
 }
 
 //
