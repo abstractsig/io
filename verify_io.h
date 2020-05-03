@@ -163,7 +163,7 @@ print_unit_test_report (V_runner_t *runner) {
 	vprintf (runner,"\n");
 	if (runner->total_failed == 0) {
 		vprintf (
-			runner,"%-*s%-*scompleted with %d test%s",
+			runner,"%-*s%-*scompleted with %d test%s OK\n",
 			DBP_FIELD1,DEVICE_NAME,
 			DBP_FIELD2,"self test",
 			runner->total_tests,
@@ -171,12 +171,11 @@ print_unit_test_report (V_runner_t *runner) {
 		);
 		if (runner->skipped_unit_count > 0) {
 			vprintf (
-				runner,"%-*s(%u unit%s skipped)",
+				runner,"%-*s(%u unit%s skipped)\n",
 				DBP_FIELD1+DBP_FIELD2,"",
 				runner->skipped_unit_count,plural(runner->skipped_unit_count)
 			);
 		}
-		vprintf (runner," OK\n");
 	} else {
 		vprintf (
 			runner,"%-*s%-*sfailed, %d tests of %d\n",
