@@ -752,7 +752,7 @@ typedef struct io_encoding_layer_api {
 	void (*free) (io_encoding_t*);\
 	io_t* (*get_io) (io_encoding_t*);\
 	void* (*get_byte_stream) (io_encoding_t*); \
-	void (*get_content) (io_encoding_t const*,uint8_t const**,uint8_t const**);\
+	void (*get_content) (io_encoding_t*,uint8_t const**,uint8_t const**);\
 	vref_t (*decode_to_io_value) (io_encoding_t*,io_value_decoder_t,io_value_memory_t*);\
 	size_t (*print) (io_encoding_t*,char const*,va_list);\
 	size_t (*fill) (io_encoding_t*,uint8_t,size_t);\
@@ -817,7 +817,7 @@ io_encoding_get_byte_stream (io_encoding_t *encoding) {
 }
 
 INLINE_FUNCTION void
-io_encoding_get_content (io_encoding_t const *encoding,uint8_t const **begin,uint8_t const **end) {
+io_encoding_get_content (io_encoding_t *encoding,uint8_t const **begin,uint8_t const **end) {
 	encoding->implementation->get_content (encoding,begin,end);
 }
 
@@ -842,7 +842,12 @@ io_encoding_get_inner_layer (io_encoding_t *encoding,io_layer_t *L) {
 }
 
 INLINE_FUNCTION void*
-io_encoding_get_outter_layer (io_encoding_t *encoding,io_layer_t *L) {
+io_encoding_get_innermost_layer (io_encoding_t *encoding) {
+	return io_encoding_get_inner_layer (encoding,NULL);
+}
+
+INLINE_FUNCTION void*
+io_encoding_get_outer_layer (io_encoding_t *encoding,io_layer_t *L) {
 	return encoding->implementation->layer->get_outer_layer (encoding,L);
 }
 
@@ -952,6 +957,8 @@ size_t	io_binary_encoding_print (io_encoding_t*,char const*,va_list);
 bool		io_binary_encoding_pop_last_byte (io_encoding_t*,uint8_t*);
 vref_t	io_binary_encoding_decode_to_io_value (io_encoding_t*,io_value_decoder_t,io_value_memory_t*);
 io_t*		io_binary_encoding_get_io (io_encoding_t*);
+void*		io_binary_encoding_get_byte_stream (io_encoding_t*);
+void		io_binary_encoding_get_content (io_encoding_t*,uint8_t const**,uint8_t const**);
 bool		io_binary_encoding_grow (io_encoding_t*,uint32_t);
 uint32_t	default_io_encoding_grow_increment (io_encoding_t*);
 size_t	io_binary_encoding_length (io_encoding_t const*);
@@ -972,7 +979,7 @@ typedef struct PACK_STRUCTURE {
 } io_text_encoding_t;
 
 bool	is_io_text_encoding (io_encoding_t const*);
-bool	io_text_encoding_iterate_characters (io_encoding_t const*,io_character_iterator_t,void*);
+bool	io_text_encoding_iterate_characters (io_encoding_t*,io_character_iterator_t,void*);
 vref_hash_table_t* io_text_encoding_get_visited (io_text_encoding_t*);
 
 INLINE_FUNCTION io_encoding_t*
@@ -1518,13 +1525,14 @@ bool	io_cpu_clock_iterate_outputs_nop (io_cpu_clock_pointer_t,bool (*) (io_cpu_c
 typedef struct io_address {
 	struct PACK_STRUCTURE {
 		uint32_t size:31;
-		uint32_t long_volatile:1;
+		uint32_t is_volatile:1;
 	} tag;
 	union PACK_STRUCTURE {
 		uint32_t u32;
 		uint16_t u16;
 		uint8_t u8;
-		uint8_t *bytes;
+		uint8_t *rw_bytes;
+		uint8_t const *ro_bytes;
 		uint8_t m8[4];
 	} value;
 } io_address_t;
@@ -1532,10 +1540,12 @@ typedef struct io_address {
 #define IO_ADDRESS_INVALID_SIZE	0x7fffffff
 
 #define io_address_size(a)			(a).tag.size
-#define io_address_bytes(a)		(a).value.bytes
-#define get_io_address_bytes(a)	((io_address_size(a) > 4) ? io_address_bytes(a) : &io_u8_address_value(a))
+#define io_address_is_volatile(a)(a).tag.is_volatile
+#define io_address_rw_bytes(a)	(a).value.rw_bytes
+#define io_address_ro_bytes(a)	(a).value.ro_bytes
+#define get_pointer_to_io_address_value(a)	((io_address_size(a) > 4) ? io_address_rw_bytes(a) : &io_u8_address_value(a))
 
-#define io_invalid_address()		(io_address_t) {.tag.size = IO_ADDRESS_INVALID_SIZE,.tag.long_volatile = 0,}
+#define io_invalid_address()		(io_address_t) {.tag.size = IO_ADDRESS_INVALID_SIZE,.tag.is_volatile = 0,}
 #define is_invalid_io_address(a)	(io_address_size(a) == IO_ADDRESS_INVALID_SIZE)
 #define io_address_is_invalid(a) (io_address_size(a) == IO_ADDRESS_INVALID_SIZE)
 #define io_address_is_valid(a) 	(io_address_size(a) != IO_ADDRESS_INVALID_SIZE)
@@ -1543,34 +1553,45 @@ typedef struct io_address {
 #define io_any_address()			(io_address_t) {.tag.size = 0,}
 #define is_any_io_address(a)		(io_address_size(a) == 0)
 
-#define def_io_u8_address(a)		(io_address_t) {.tag.size = 1,.tag.long_volatile = 0,.value.u8 = a,}
-#define def_io_u16_address(a)		(io_address_t) {.tag.size = 2,.tag.long_volatile = 0,.value.u16 = a,}
-#define def_io_u32_address(a)		(io_address_t) {.tag.size = 4,.tag.long_volatile = 0,.value.u32 = a,}
+#define def_io_u8_address(a)		(io_address_t) {.tag.size = 1,.tag.is_volatile = 0,.value.u8 = a,}
+#define def_io_u16_address(a)		(io_address_t) {.tag.size = 2,.tag.is_volatile = 0,.value.u16 = a,}
+#define def_io_u32_address(a)		(io_address_t) {.tag.size = 4,.tag.is_volatile = 0,.value.u32 = a,}
 
 #define io_u8_address_value(a)	(a).value.u8
 #define io_u16_address_value(a)	(a).value.u16
 #define io_u32_address_value(a)	(a).value.u32
 
 io_address_t mk_io_address(io_byte_memory_t*,uint32_t,uint8_t const*);
-void free_io_address (io_byte_memory_t*,io_address_t);
 int32_t compare_io_addresses (io_address_t,io_address_t);
 
 INLINE_FUNCTION io_address_t
 duplicate_io_address (io_byte_memory_t *bm,io_address_t a) {
-	return mk_io_address (bm,io_address_size(a),get_io_address_bytes(a));
+	return mk_io_address (bm,io_address_size(a),get_pointer_to_io_address_value(a));
 }
 
 INLINE_FUNCTION io_address_t
 io_long_address (io_byte_memory_t *bm,uint32_t size,uint8_t const *bytes) {
 	io_address_t a = {
 		.tag.size = size,
-		.tag.long_volatile = 1,
-		.value.bytes = io_byte_memory_allocate (bm,size)
+		.tag.is_volatile = 1,
+		.value.rw_bytes = io_byte_memory_allocate (bm,size)
 	};
-	memcpy (io_address_bytes(a),bytes,size);
+	memcpy (io_address_rw_bytes(a),bytes,size);
 	return a;
 }
 
+INLINE_FUNCTION void
+free_io_address (io_byte_memory_t *bm,io_address_t a) {
+	if (io_address_size(a) > 4 && io_address_is_volatile(a)) {
+		io_byte_memory_free (bm,io_address_rw_bytes(a));
+	}
+}
+
+INLINE_FUNCTION void
+assign_io_address (io_byte_memory_t *bm,io_address_t *location,io_address_t new_address) {
+	free_io_address (bm,*location);
+	*location = duplicate_io_address (bm,new_address);
+}
 
 //
 // sockets
@@ -1579,26 +1600,35 @@ io_long_address (io_byte_memory_t *bm,uint32_t size,uint8_t const *bytes) {
 typedef struct io_socket_implementation io_socket_implementation_t;
 
 typedef bool (*io_socket_iterator_t) (io_socket_t*,void*);
+typedef bool (*io_socket_constructor_t) (io_t*,io_address_t,io_socket_t**,io_socket_t**);
+
+typedef struct PACK_STRUCTURE io_notify_event {
+	IO_EVENT_STRUCT_MEMBERS
+	io_socket_t *socket;
+} io_notify_event_t;
 
 typedef struct PACK_STRUCTURE io_settings {
 	io_encoding_implementation_t const *encoding;
 	uint16_t transmit_pipe_length;
 	uint16_t receive_pipe_length;
+	io_socket_constructor_t make;
+	io_notify_event_t *notify;
 	uint32_t speed;
 } io_settings_t;
 
-#define io_socket_constructor_receive_pipe_length(c)	(c)->receive_pipe_length
+#define io_settings_receive_pipe_length(c)	(c)->receive_pipe_length
 #define io_settings_transmit_pipe_length(c)	(c)->transmit_pipe_length
 
 #define IO_SOCKET_IMPLEMENTATION_STRUCT_MEMBERS \
 	io_socket_implementation_t const *specialisation_of;\
 	io_socket_t* (*initialise) (io_socket_t*,io_t*,io_settings_t const*);\
-	io_socket_t* (*reference) (io_socket_t*);\
+	io_socket_t* (*reference) (io_socket_t*,int32_t);\
 	void (*free) (io_socket_t*);\
 	bool (*open) (io_socket_t*);\
 	void (*close) (io_socket_t*);\
 	bool (*is_closed) (io_socket_t const*);\
 	bool (*bind_inner) (io_socket_t*,io_address_t,io_event_t*,io_event_t*);\
+	bool (*bind_inner_constructor) (io_socket_t*,io_address_t,io_socket_constructor_t,io_notify_event_t*);\
 	void (*unbind_inner) (io_socket_t*,io_address_t);\
 	bool (*bind_to_outer_socket) (io_socket_t*,io_socket_t*);\
 	io_pipe_t* (*get_receive_pipe) (io_socket_t*,io_address_t);\
@@ -1615,7 +1645,6 @@ struct PACK_STRUCTURE io_socket_implementation {
 
 #define IO_SOCKET_STRUCT_MEMBERS \
 	io_socket_implementation_t const *implementation;\
-	uint32_t reference_count;\
 	io_address_t address;\
 	io_t *io;\
 	/**/
@@ -1626,25 +1655,27 @@ struct PACK_STRUCTURE io_socket {
 
 #define io_socket_io(s)				(s)->io
 #define io_socket_address(s)		(s)->address
+#define io_socket_byte_memory(s)	io_get_byte_memory(io_socket_io(s))
 
 #define IO_SOCKET(s)					((io_socket_t*) (s))
 #define INVALID_SOCKET_ID			0xffffffff
 
 void	initialise_io_socket (io_socket_t*,io_t*);
+void 	free_io_socket (io_socket_t*);
 bool	is_io_socket_of_type (io_socket_t const*,io_socket_implementation_t const*);
 bool	is_physical_io_socket (io_socket_t const*);
 bool	is_constructed_io_socket (io_socket_t const*);
 
-io_socket_t* io_socket_increment_reference (io_socket_t*);
-void io_socket_free_panic (io_socket_t*);
-
 io_socket_t*	io_virtual_socket_initialise (io_socket_t*,io_t*,io_settings_t const*);
-io_socket_t*	io_virtual_socket_increment_reference (io_socket_t*);
+io_socket_t*	io_virtual_socket_increment_reference (io_socket_t*,int32_t);
+void 				io_virtual_socket_free (io_socket_t*);
 bool				io_virtual_socket_open (io_socket_t*);
 void				io_virtual_socket_close (io_socket_t*);
 bool				io_virtual_socket_is_closed (io_socket_t const*);
 bool				io_virtual_socket_bind_inner (io_socket_t*,io_address_t,io_event_t*,io_event_t*);
+bool				io_virtual_socket_bind_inner_constructor (io_socket_t*,io_address_t,io_socket_constructor_t,io_notify_event_t*);
 void				io_virtual_socket_unbind_inner (io_socket_t*,io_address_t);
+bool				io_virtual_socket_bind_to_outer_socket (io_socket_t*,io_socket_t*);
 io_encoding_t*	io_virtual_socket_new_message (io_socket_t*);
 bool				io_virtual_socket_send_message (io_socket_t*,io_encoding_t*);
 size_t			io_virtual_socket_mtu (io_socket_t const*);
@@ -1653,13 +1684,15 @@ size_t			io_virtual_socket_mtu (io_socket_t const*);
 	.specialisation_of = S, \
 	.reference = io_virtual_socket_increment_reference, \
 	.initialise = io_virtual_socket_initialise, \
-	.free = io_socket_free_panic, \
+	.free = io_virtual_socket_free, \
 	.open = io_virtual_socket_open, \
 	.close = io_virtual_socket_close, \
 	.is_closed = io_virtual_socket_is_closed, \
 	.bind_to_outer_socket = NULL, \
 	.bind_inner = io_virtual_socket_bind_inner, \
+	.bind_inner_constructor = io_virtual_socket_bind_inner_constructor,\
 	.unbind_inner = io_virtual_socket_unbind_inner,\
+	.bind_to_outer_socket = io_virtual_socket_bind_to_outer_socket,\
 	.new_message = io_virtual_socket_new_message, \
 	.send_message = io_virtual_socket_send_message, \
 	.iterate_inner_sockets = NULL, \
@@ -1668,7 +1701,7 @@ size_t			io_virtual_socket_mtu (io_socket_t const*);
 	/**/
 	
 extern EVENT_DATA io_socket_implementation_t io_socket_implementation_base;
-extern EVENT_DATA io_socket_implementation_t io_physical_socket_implementation_base;
+extern EVENT_DATA io_socket_implementation_t io_physical_socket_implementation;
 
 //
 // inline io socket implementation
@@ -1679,9 +1712,12 @@ io_socket_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) {
 }
 
 INLINE_FUNCTION io_socket_t*
-io_socket_reference (io_socket_t *socket) {
-	return socket->implementation->reference(socket);
+io_socket_increment_reference (io_socket_t *socket,int32_t incr) {
+	return socket->implementation->reference(socket,incr);
 }
+
+#define io_socket_reference(s)	io_socket_increment_reference(s,1)
+#define io_socket_unreference(s)	io_socket_increment_reference(s,-11)
 
 INLINE_FUNCTION void
 io_socket_free (io_socket_t *socket) {
@@ -1726,6 +1762,13 @@ io_socket_unbind_inner (io_socket_t *socket,io_address_t a) {
 }
 
 INLINE_FUNCTION bool
+io_socket_bind_inner_constructor (
+	io_socket_t *socket,io_address_t a,io_socket_constructor_t make,io_notify_event_t *notify
+) {
+	return socket->implementation->bind_inner_constructor (socket,a,make,notify);
+}
+
+INLINE_FUNCTION bool
 io_socket_bind_to_outer_socket (io_socket_t *socket,io_socket_t *outer) {
 	return socket->implementation->bind_to_outer_socket (socket,outer);
 }
@@ -1738,6 +1781,34 @@ io_socket_get_receive_pipe (io_socket_t *socket,io_address_t a) {
 INLINE_FUNCTION size_t
 io_socket_mtu (io_socket_t *socket) {
 	return socket->implementation->mtu (socket);
+}
+
+//
+// counted socket
+//
+
+#define IO_COUNTED_SOCKET_STRUCT_MEMBERS \
+	IO_SOCKET_STRUCT_MEMBERS\
+	uint32_t reference_count;\
+	/**/
+
+typedef struct PACK_STRUCTURE io_counted_socket {
+	IO_COUNTED_SOCKET_STRUCT_MEMBERS
+} io_counted_socket_t;
+
+void				initialise_io_counted_socket (io_counted_socket_t*,io_t*);
+io_socket_t*	io_counted_socket_increment_reference (io_socket_t*,int32_t);
+void 				io_counted_socket_free (io_socket_t*);
+
+extern EVENT_DATA io_socket_implementation_t io_counted_socket_implementation;
+
+INLINE_FUNCTION io_counted_socket_t*
+cast_to_io_counted_socket (io_socket_t *socket) {
+	if (is_io_socket_of_type (socket,&io_counted_socket_implementation)) {
+		return (io_counted_socket_t*) socket;
+	} else {
+		return NULL;
+	}
 }
 
 //
@@ -2334,16 +2405,11 @@ mk_io_address (io_byte_memory_t *bm,uint32_t size,uint8_t const *bytes) {
 		case 4:
 			return def_io_u32_address(read_le_uint32(bytes));
 
+		case IO_ADDRESS_INVALID_SIZE:
+			return io_invalid_address();
+			
 		default:{
 			return io_long_address (bm,size,bytes);
-/*
-			io_address_t a = {
-				.size = size,
-				.value.bytes = io_byte_memory_allocate (bm,size)
-			};
-			memcpy (io_address_bytes(a),bytes,size);
-			return a;
-*/
 		}
 	}
 }
@@ -2387,11 +2453,11 @@ compare_as_big_int_values (uint8_t const *a_bytes,uint32_t a_size,uint8_t const 
 	return cmp;
 }
 
-int32_t
+static int32_t
 compare_io_address_values (io_address_t a,io_address_t b) {
 	return compare_as_big_int_values (
-		get_io_address_bytes(a),io_address_size(a),
-		get_io_address_bytes(b),io_address_size(b)
+		get_pointer_to_io_address_value(a),io_address_size(a),
+		get_pointer_to_io_address_value(b),io_address_size(b)
 	);
 }
 
@@ -2402,7 +2468,11 @@ int32_t
 compare_io_addresses (io_address_t a,io_address_t b) {
 	int32_t cmp = 0;
 	
-	if (is_any_io_address (a)) {
+	if (io_address_is_invalid(b)) {
+		return (io_address_is_invalid(a)) ? 0 : -1;
+	} else if (io_address_is_invalid(a)) {
+		return (io_address_is_invalid(b)) ? 0 : 1;
+	} else if (is_any_io_address (a)) {
 		if (!is_any_io_address (b)) {
 			cmp = -1;
 		} else {
@@ -2419,19 +2489,6 @@ compare_io_addresses (io_address_t a,io_address_t b) {
 	return cmp;
 }
 
-void
-free_io_address (io_byte_memory_t *bm,io_address_t a) {
-	if (io_address_size(a) > 4) {
-		io_byte_memory_free (bm,io_address_bytes(a));
-	}
-}
-
-io_socket_t*
-io_socket_increment_reference (io_socket_t *socket) {
-	socket->reference_count ++;
-	return socket;
-}
-
 //
 // io socket base
 //
@@ -2444,13 +2501,12 @@ io_virtual_socket_initialise (
 }
 
 io_socket_t*
-io_virtual_socket_increment_reference (io_socket_t *socket) {
+io_virtual_socket_increment_reference (io_socket_t *socket,int32_t incr) {
 	return socket;
 }
 
 void
-io_socket_free_panic (io_socket_t *socket) {
-	io_panic (io_socket_io(socket),IO_PANIC_INVALID_OPERATION);
+io_virtual_socket_free (io_socket_t *socket) {
 }
 
 bool
@@ -2473,8 +2529,20 @@ io_virtual_socket_bind_inner (
 	return false;
 }
 
+bool
+io_virtual_socket_bind_inner_constructor (
+	io_socket_t *socket,io_address_t address,io_socket_constructor_t make,io_notify_event_t *notify
+) {
+	return false;
+}
+
 void
 io_virtual_socket_unbind_inner (io_socket_t *socket,io_address_t address) {
+}
+
+bool
+io_virtual_socket_bind_to_outer_socket (io_socket_t *socket,io_socket_t *outer) {
+	return false;
 }
 
 io_encoding_t*
@@ -2492,19 +2560,24 @@ io_virtual_socket_mtu (io_socket_t const *socket) {
 	return 0;
 }
 
-
 EVENT_DATA io_socket_implementation_t io_socket_implementation_base = {
 	SPECIALISE_IO_VIRTUAL_SOCKET (NULL)
 };
 
-EVENT_DATA io_socket_implementation_t io_physical_socket_implementation_base = {
+EVENT_DATA io_socket_implementation_t io_physical_socket_implementation = {
 	SPECIALISE_IO_VIRTUAL_SOCKET (&io_socket_implementation_base)
 };
 
 void
 initialise_io_socket (io_socket_t *this,io_t *io) {
 	this->io = io;
-	this->reference_count = 0;
+}
+
+void
+free_io_socket (io_socket_t *socket) {
+	io_byte_memory_t *bm = io_socket_byte_memory(socket);
+	free_io_address (bm,socket->address);
+	io_byte_memory_free (bm,socket);
 }
 
 bool
@@ -2522,7 +2595,7 @@ is_io_socket_of_type (
 
 bool
 is_physical_io_socket (io_socket_t const *socket) {
-	return is_io_socket_of_type (socket,&io_physical_socket_implementation_base);
+	return is_io_socket_of_type (socket,&io_physical_socket_implementation);
 }
 
 void
@@ -2534,19 +2607,19 @@ build_io_sockets (
 	
 	build = construct;
 	while (build < end) {
-		array[build->id] = io_socket_initialise (
+		array[build->index] = io_socket_initialise (
 			build->allocate(io),io,build->C
 		);
 		if (build->with_open) {
-			io_socket_open (array[build->id]);
+			io_socket_open (array[build->index]);
 		}
 		build++;
 	}
 
 	build = construct;
 	while (build < end) {
-		if (build->bindings) {
-			socket_builder_binding_t const *link = build->bindings;
+		if (build->inner_bindings) {
+			socket_builder_binding_t const *link = build->inner_bindings;
 			while (link->inner != INVALID_SOCKET_ID) {
 				io_socket_bind_to_outer_socket (
 					array[link->inner],array[link->outer]
@@ -2558,26 +2631,36 @@ build_io_sockets (
 	}
 }
 
-void
-add_io_socket_bindings_to_device (
-	io_t *io,io_socket_t **array,socket_builder_t const *construct,uint32_t length
-) {
-	socket_builder_t const *end = construct + length;
-	socket_builder_t const *build;
+EVENT_DATA io_socket_implementation_t io_counted_socket_implementation = {
+	SPECIALISE_IO_VIRTUAL_SOCKET (&io_socket_implementation_base)
+};
 
-	build = construct;
-	while (build < end) {
-		if (build->bindings) {
-			socket_builder_binding_t const *link = build->bindings;
-			while (link->inner != INVALID_SOCKET_ID) {
-				io_socket_bind_to_outer_socket (
-					array[link->inner],array[link->outer]
-				);
-				link++;
-			}
+void
+initialise_io_counted_socket (io_counted_socket_t *this,io_t *io) {
+	this->reference_count = 0;
+	initialise_io_socket((io_socket_t*) this,io);
+}
+
+io_socket_t*
+io_counted_socket_increment_reference (io_socket_t *socket,int32_t incr) {
+	io_counted_socket_t *this = (io_counted_socket_t*) socket;
+	if (incr > 0) {
+		this->reference_count += incr;
+		return socket;
+	} else {
+		if (this->reference_count > 0) {
+			this->reference_count += incr;
 		}
-		build++;
+		if (this->reference_count == 0) {
+			io_socket_free (socket);
+		}
+		return NULL;
 	}
+}
+
+void
+io_counted_socket_free (io_socket_t *socket) {
+	free_io_socket (socket);
 }
 
 //
@@ -4409,7 +4492,7 @@ io_encoding_no_byte_stream (io_encoding_t *encoding) {
 }
 
 static void
-io_encoding_no_content (io_encoding_t const *encoding,uint8_t const** b,uint8_t const** e) {
+io_encoding_no_content (io_encoding_t *encoding,uint8_t const** b,uint8_t const** e) {
 	*b = *e = NULL;
 }
 
@@ -4617,9 +4700,9 @@ io_binary_encoding_append_byte (io_encoding_t *encoding,uint8_t byte) {
 	}
 }
 
-static void
+void
 io_binary_encoding_get_content (
-	io_encoding_t const *encoding,uint8_t const **begin,uint8_t const **end
+	io_encoding_t *encoding,uint8_t const **begin,uint8_t const **end
 ) {
 	io_binary_encoding_t *this = (io_binary_encoding_t*) encoding;
 	*begin = this->byte_stream,
@@ -4759,7 +4842,7 @@ is_io_text_encoding (io_encoding_t const *encoding) {
 
 bool
 io_text_encoding_iterate_characters (
-	io_encoding_t const *encoding,io_character_iterator_t cb,void *user_value
+	io_encoding_t *encoding,io_character_iterator_t cb,void *user_value
 ) {
 	bool ok = true;
 
@@ -4828,7 +4911,7 @@ io_binary_encoding_get_io (io_encoding_t *encoding) {
 	return this->bm->io;
 }
 
-static void*
+void*
 io_binary_encoding_get_byte_stream (io_encoding_t *encoding) {
 	io_binary_encoding_t *this = (io_binary_encoding_t*) encoding;
 	return this->byte_stream;

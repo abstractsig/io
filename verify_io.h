@@ -2057,8 +2057,6 @@ io_containers_unit_test (V_unit_test_t *unit) {
 
 #ifdef IMPLEMENT_VERIFY_IO_CORE_SOCKETS
 
-
-
 TEST_BEGIN(test_io_address_1) {
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
 	memory_info_t bmbegin,bmend;
@@ -2068,6 +2066,10 @@ TEST_BEGIN(test_io_address_1) {
 
 	a = io_any_address();
 	VERIFY (is_any_io_address (a),NULL);
+
+	VERIFY (compare_io_addresses(io_invalid_address(),io_invalid_address()) == 0,NULL);
+	VERIFY (compare_io_addresses(io_invalid_address(),def_io_u8_address(1)) == 1,NULL);
+	VERIFY (compare_io_addresses(def_io_u8_address(1),io_invalid_address()) == -1,NULL);
 
 	VERIFY (io_address_size(def_io_u8_address(1)) == 1,NULL);
 	VERIFY (io_address_size(def_io_u16_address(1)) == 2,NULL);
@@ -2108,6 +2110,7 @@ TEST_BEGIN(test_io_address_1) {
 		VERIFY (compare_io_addresses (def_io_u8_address(1),a) == 0,NULL);
 		VERIFY (compare_io_addresses (def_io_u8_address(2),a) == 1,NULL);
 		VERIFY (compare_io_addresses (a,def_io_u8_address(2)) == -1,NULL);
+		
 		free_io_address (bm,a);
 	}
 
@@ -2137,6 +2140,209 @@ TEST_BEGIN(test_io_address_1) {
 }
 TEST_END
 
+TEST_BEGIN(test_io_address_2) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bmbegin,bmend;
+	io_address_t a;
+	
+	io_byte_memory_get_info (bm,&bmbegin);
+
+	uint8_t t[] = {1,0,0,0,0};
+	a = mk_io_address (bm,sizeof(t),t);
+	assign_io_address (bm,&a,io_invalid_address());
+
+	io_byte_memory_get_info (bm,&bmend);
+	VERIFY (bmend.used_bytes == bmbegin.used_bytes,NULL);	
+}
+TEST_END
+
+io_socket_t*
+test_io_leaf_socket_1_allocate_a (io_t *io) {
+	io_socket_t *socket = io_byte_memory_allocate (
+		io_get_byte_memory (io),sizeof(io_leaf_socket_t)
+	);
+	static const uint8_t a[] = {'a',0,0,0,1};
+	socket->implementation = &io_leaf_socket_implementation;
+	socket->address = mk_io_address (io_get_byte_memory (io),sizeof(a),a);
+	return (io_socket_t*) socket;
+}
+
+TEST_BEGIN(test_io_leaf_socket_1) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bmbegin,bmend;
+	
+	io_byte_memory_get_info (bm,&bmbegin);
+
+	const socket_builder_t net[] = {
+		{0,test_io_leaf_socket_1_allocate_a,NULL,false,NULL},
+	};
+	io_socket_t* leaf[SIZEOF(net)];
+	
+	build_io_sockets(TEST_IO,leaf,net,SIZEOF(net));
+	
+	VERIFY (cast_to_io_counted_socket(leaf[0]) != NULL,NULL);
+	
+	io_wait_for_all_events (TEST_IO);
+	free_io_sockets (leaf,leaf + SIZEOF(net));
+	
+	io_byte_memory_get_info (bm,&bmend);
+	VERIFY (bmend.used_bytes == bmbegin.used_bytes,NULL);	
+}
+TEST_END
+
+io_socket_t*
+test_io_leaf_socket_2_allocate_a (io_t *io) {
+	io_socket_t *socket = io_byte_memory_allocate (
+		io_get_byte_memory (io),sizeof(io_leaf_socket_t)
+	);
+	socket->implementation = &io_leaf_socket_implementation;
+	socket->address = def_io_u8_address (22);
+	return (io_socket_t*) socket;
+}
+
+io_socket_t*
+test_io_leaf_socket_2_allocate_emulator_a (io_t *io) {
+	io_socket_emulator_t *socket = io_byte_memory_allocate (
+		io_get_byte_memory (io),sizeof(io_socket_emulator_t)
+	);
+	socket->implementation = &io_socket_emulator_implementation;
+	socket->address = def_io_u8_address (11);
+	return (io_socket_t*) socket;
+}
+
+io_socket_t*
+test_io_leaf_socket_2_allocate_b (io_t *io) {
+	io_socket_t *socket = io_byte_memory_allocate (
+		io_get_byte_memory (io),sizeof(io_leaf_socket_t)
+	);
+	socket->implementation = &io_leaf_socket_implementation;
+	socket->address = def_io_u8_address (11);
+	return (io_socket_t*) socket;
+}
+
+io_socket_t*
+test_io_leaf_socket_2_allocate_emulator_b (io_t *io) {
+	io_socket_emulator_t *socket = io_byte_memory_allocate (
+		io_get_byte_memory (io),sizeof(io_socket_emulator_t)
+	);
+	socket->implementation = &io_socket_emulator_implementation;
+	socket->address = def_io_u8_address (22);
+	return (io_socket_t*) socket;
+}
+
+uint32_t test_io_leaf_socket_2_result;
+
+void
+test_io_leaf_socket_2_rx_event (io_event_t *ev) {
+	io_socket_t *this = ev->user_value;
+
+	io_encoding_pipe_t* pipe = cast_to_io_encoding_pipe (
+		io_socket_get_receive_pipe (
+			this,io_socket_address (this)
+		)
+	);
+	
+	if (pipe) {
+		io_encoding_t *rx;
+		if (io_encoding_pipe_peek (pipe,&rx)) {
+			const uint8_t *b,*e;
+			io_encoding_get_content (rx,&b,&e);
+
+			if (e - b == 4 && memcmp (b,"gook",4) == 0) {
+				test_io_leaf_socket_2_result = 1;
+			}
+		}
+	}
+}
+
+TEST_BEGIN(test_io_leaf_socket_2) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bmbegin,bmend;
+	const io_settings_t bus = {
+		.transmit_pipe_length = 3,
+		.receive_pipe_length = 3,
+	};
+	
+	io_byte_memory_get_info (bm,&bmbegin);
+
+	const socket_builder_t net[] = {
+		{0,test_io_leaf_socket_2_allocate_a,NULL,false,BINDINGS({0,1},END_OF_BINDINGS)},
+		{1,test_io_leaf_socket_2_allocate_emulator_a,&bus,false,BINDINGS({1,2},END_OF_BINDINGS)},
+		{2,allocate_io_shared_media,&bus,false,NULL},
+		{3,test_io_leaf_socket_2_allocate_a,NULL,false,BINDINGS({3,4},END_OF_BINDINGS)},
+		{4,test_io_leaf_socket_2_allocate_emulator_b,&bus,false,BINDINGS({4,2},END_OF_BINDINGS)},
+	};
+	io_socket_t* leaf[SIZEOF(net)];
+	
+	io_event_t rx;
+	
+	build_io_sockets(TEST_IO,leaf,net,SIZEOF(net));
+	initialise_io_event (&rx,test_io_leaf_socket_2_rx_event,leaf[3]);
+	
+	io_socket_bind_inner (leaf[3],io_any_address(),NULL,&rx);
+	
+	VERIFY (cast_to_io_counted_socket(leaf[0]) != NULL,NULL);
+	VERIFY (cast_to_io_counted_socket(leaf[1]) != NULL,NULL);
+
+	{
+		io_encoding_t *msg = io_socket_new_message(leaf[0]);
+		if (VERIFY (msg != NULL,NULL)) {
+			io_socket_open (leaf[0]);
+			io_socket_open (leaf[3]);
+			test_io_leaf_socket_2_result = 0;
+			io_encoding_append_string (msg,"gook",4);
+			VERIFY (io_socket_send_message (leaf[0],msg),NULL);
+			io_wait_for_all_events (TEST_IO);
+			VERIFY (test_io_leaf_socket_2_result == 1,NULL);
+		}
+	}
+	
+	free_io_sockets (leaf,leaf + SIZEOF(net));
+	
+	io_byte_memory_get_info (bm,&bmend);
+	VERIFY (bmend.used_bytes == bmbegin.used_bytes,NULL);	
+}
+TEST_END
+
+TEST_BEGIN(test_io_multiplex_socket_1) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bmbegin,bmend;
+	
+	io_byte_memory_get_info (bm,&bmbegin);
+
+	const socket_builder_t net[] = {
+		{0,allocate_io_multiplex_socket,NULL,false,NULL},
+	};
+	
+	io_socket_t* mux[1];
+	build_io_sockets(TEST_IO,mux,net,1);
+	VERIFY (cast_to_io_counted_socket(mux[0]) != NULL,NULL);
+
+	io_socket_free(mux[0]);	
+	io_byte_memory_get_info (bm,&bmend);
+	VERIFY (bmend.used_bytes == bmbegin.used_bytes,NULL);	
+}
+TEST_END
+
+TEST_BEGIN(test_io_multiplexer_socket_1) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bmbegin,bmend;
+	
+	io_byte_memory_get_info (bm,&bmbegin);
+
+	const socket_builder_t net[] = {
+		{0,allocate_io_multiplexer_socket,NULL,false,NULL},
+	};
+	
+	io_socket_t* mux[1];
+	build_io_sockets(TEST_IO,mux,net,1);
+	io_socket_free(mux[0]);
+	
+	io_byte_memory_get_info (bm,&bmend);
+	VERIFY (bmend.used_bytes == bmbegin.used_bytes,NULL);	
+}
+TEST_END
+
 UNIT_SETUP(setup_io_sockets_unit_test) {
 	return VERIFY_UNIT_CONTINUE;
 }
@@ -2148,6 +2354,11 @@ static void
 io_sockets_unit_test (V_unit_test_t *unit) {
 	static V_test_t const tests[] = {
 		test_io_address_1,
+		test_io_address_2,
+		test_io_leaf_socket_1,
+		test_io_leaf_socket_2,
+		test_io_multiplex_socket_1,
+		test_io_multiplexer_socket_1,
 		0
 	};
 	unit->name = "io sockets";
@@ -2157,9 +2368,9 @@ io_sockets_unit_test (V_unit_test_t *unit) {
 	unit->teardown = teardown_io_sockets_unit_test;
 }
 
-
-
-#define IO_CORE_SOCKETS_UNIT_TEST io_sockets_unit_test,
+#define IO_CORE_SOCKETS_UNIT_TEST \
+	io_sockets_unit_test, \
+	/**/
 #else
 #define IO_CORE_SOCKETS_UNIT_TEST
 #endif /* IMPLEMENT_VERIFY_IO_CORE_SOCKETS */
