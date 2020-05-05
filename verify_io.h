@@ -2,14 +2,14 @@
  *
  * Verify Io
  *
- * A unit test library for testing io
+ * A unit test library for testing io: run_ut_io_core()
  *
  * LICENSE
  * See end of file for license terms.
  *
  * USAGE
  * Include this file in whatever places need to refer to it.
- * In one C/C++ define IMPLEMENT_VERIFY_IO_CORE.
+ * In one C-source file define IMPLEMENT_VERIFY_IO_CORE.
  *
  */
 #ifndef verify_io_core_H_
@@ -2143,29 +2143,23 @@ TEST_END
 TEST_BEGIN(test_io_address_2) {
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
 	memory_info_t bmbegin,bmend;
-	io_address_t a;
+	io_address_t a,b;
 	
 	io_byte_memory_get_info (bm,&bmbegin);
 
-	uint8_t t[] = {1,0,0,0,0};
+	static const uint8_t x[] = {1,0,0,0,1};
+	uint8_t t[] = {1,0,0,0,1};
 	a = mk_io_address (bm,sizeof(t),t);
-	assign_io_address (bm,&a,io_invalid_address());
+	b = def_io_const_address (SIZEOF(x),x);
+	
+	VERIFY (compare_io_addresses (a,b) == 0,NULL);
 
+	assign_io_address (bm,&a,io_invalid_address());
+	
 	io_byte_memory_get_info (bm,&bmend);
 	VERIFY (bmend.used_bytes == bmbegin.used_bytes,NULL);	
 }
 TEST_END
-
-io_socket_t*
-test_io_leaf_socket_1_allocate_a (io_t *io) {
-	io_socket_t *socket = io_byte_memory_allocate (
-		io_get_byte_memory (io),sizeof(io_leaf_socket_t)
-	);
-	static const uint8_t a[] = {'a',0,0,0,1};
-	socket->implementation = &io_leaf_socket_implementation;
-	socket->address = mk_io_address (io_get_byte_memory (io),sizeof(a),a);
-	return (io_socket_t*) socket;
-}
 
 TEST_BEGIN(test_io_leaf_socket_1) {
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
@@ -2173,10 +2167,14 @@ TEST_BEGIN(test_io_leaf_socket_1) {
 	
 	io_byte_memory_get_info (bm,&bmbegin);
 
+	static const uint8_t bytes[] = {'a',0,0,0,1};
+	io_address_t a =  mk_io_address (bm,sizeof(bytes),bytes);
+	
 	const socket_builder_t net[] = {
-		{0,test_io_leaf_socket_1_allocate_a,NULL,false,NULL},
+		{0,allocate_io_leaf_socket,a,NULL,false,NULL},
 	};
 	io_socket_t* leaf[SIZEOF(net)];
+	free_io_address(bm,a);
 	
 	build_io_sockets(TEST_IO,leaf,net,SIZEOF(net));
 	
@@ -2189,46 +2187,6 @@ TEST_BEGIN(test_io_leaf_socket_1) {
 	VERIFY (bmend.used_bytes == bmbegin.used_bytes,NULL);	
 }
 TEST_END
-
-io_socket_t*
-test_io_leaf_socket_2_allocate_a (io_t *io) {
-	io_socket_t *socket = io_byte_memory_allocate (
-		io_get_byte_memory (io),sizeof(io_leaf_socket_t)
-	);
-	socket->implementation = &io_leaf_socket_implementation;
-	socket->address = def_io_u8_address (22);
-	return (io_socket_t*) socket;
-}
-
-io_socket_t*
-test_io_leaf_socket_2_allocate_emulator_a (io_t *io) {
-	io_socket_emulator_t *socket = io_byte_memory_allocate (
-		io_get_byte_memory (io),sizeof(io_socket_emulator_t)
-	);
-	socket->implementation = &io_socket_emulator_implementation;
-	socket->address = def_io_u8_address (11);
-	return (io_socket_t*) socket;
-}
-
-io_socket_t*
-test_io_leaf_socket_2_allocate_b (io_t *io) {
-	io_socket_t *socket = io_byte_memory_allocate (
-		io_get_byte_memory (io),sizeof(io_leaf_socket_t)
-	);
-	socket->implementation = &io_leaf_socket_implementation;
-	socket->address = def_io_u8_address (11);
-	return (io_socket_t*) socket;
-}
-
-io_socket_t*
-test_io_leaf_socket_2_allocate_emulator_b (io_t *io) {
-	io_socket_emulator_t *socket = io_byte_memory_allocate (
-		io_get_byte_memory (io),sizeof(io_socket_emulator_t)
-	);
-	socket->implementation = &io_socket_emulator_implementation;
-	socket->address = def_io_u8_address (22);
-	return (io_socket_t*) socket;
-}
 
 uint32_t test_io_leaf_socket_2_result;
 
@@ -2266,11 +2224,11 @@ TEST_BEGIN(test_io_leaf_socket_2) {
 	io_byte_memory_get_info (bm,&bmbegin);
 
 	const socket_builder_t net[] = {
-		{0,test_io_leaf_socket_2_allocate_a,NULL,false,BINDINGS({0,1},END_OF_BINDINGS)},
-		{1,test_io_leaf_socket_2_allocate_emulator_a,&bus,false,BINDINGS({1,2},END_OF_BINDINGS)},
-		{2,allocate_io_shared_media,&bus,false,NULL},
-		{3,test_io_leaf_socket_2_allocate_a,NULL,false,BINDINGS({3,4},END_OF_BINDINGS)},
-		{4,test_io_leaf_socket_2_allocate_emulator_b,&bus,false,BINDINGS({4,2},END_OF_BINDINGS)},
+		{0,allocate_io_leaf_socket,io_any_address (),NULL,false,BINDINGS({0,1},END_OF_BINDINGS)},
+		{1,allocate_io_socket_emulator,def_io_u8_address(11),&bus,false,BINDINGS({1,2},END_OF_BINDINGS)},
+		{2,allocate_io_shared_media,io_invalid_address(),&bus,false,NULL},
+		{3,allocate_io_leaf_socket,io_any_address (),NULL,false,BINDINGS({3,4},END_OF_BINDINGS)},
+		{4,allocate_io_socket_emulator,def_io_u8_address(22),&bus,false,BINDINGS({4,2},END_OF_BINDINGS)},
 	};
 	io_socket_t* leaf[SIZEOF(net)];
 	
@@ -2311,7 +2269,7 @@ TEST_BEGIN(test_io_multiplex_socket_1) {
 	io_byte_memory_get_info (bm,&bmbegin);
 
 	const socket_builder_t net[] = {
-		{0,allocate_io_multiplex_socket,NULL,false,NULL},
+		{0,allocate_io_multiplex_socket,io_any_address(),NULL,false,NULL},
 	};
 	
 	io_socket_t* mux[1];
@@ -2331,7 +2289,7 @@ TEST_BEGIN(test_io_multiplexer_socket_1) {
 	io_byte_memory_get_info (bm,&bmbegin);
 
 	const socket_builder_t net[] = {
-		{0,allocate_io_multiplexer_socket,NULL,false,NULL},
+		{0,allocate_io_multiplexer_socket,io_any_address(),NULL,false,NULL},
 	};
 	
 	io_socket_t* mux[1];
@@ -2376,7 +2334,7 @@ io_sockets_unit_test (V_unit_test_t *unit) {
 #endif /* IMPLEMENT_VERIFY_IO_CORE_SOCKETS */
 
 void
-run_ut_io (V_runner_t *runner) {
+run_ut_io_core (V_runner_t *runner) {
 	static const unit_test_t test_set[] = {
 		io_containers_unit_test,
 		IO_CORE_VALUES_UNIT_TEST
@@ -2391,7 +2349,7 @@ run_ut_io (V_runner_t *runner) {
 
 void
 verify_io (V_runner_t *runner) {
-	run_ut_io (runner);
+	run_ut_io_core (runner);
 }
 
 #endif /* IMPLEMENT_VERIFY_IO_CORE */

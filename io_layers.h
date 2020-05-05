@@ -81,7 +81,7 @@ typedef struct PACK_STRUCTURE io_multiplex_socket {
 
 #define io_multiplex_socket_has_inner_bindings(s) 	((s)->slots != NULL)
 
-io_socket_t*	allocate_io_multiplex_socket (io_t*);
+io_socket_t*	allocate_io_multiplex_socket (io_t*,io_address_t);
 io_socket_t*	initialise_io_multiplex_socket (io_socket_t*,io_t*,io_settings_t const*);
 void				io_multiplex_socket_free (io_socket_t*);
 bool				io_multiplex_socket_bind_inner (io_socket_t*,io_address_t,io_event_t*,io_event_t*);
@@ -105,7 +105,7 @@ typedef struct PACK_STRUCTURE io_multiplexer_socket {
 	IO_MULTIPLEXER_SOCKET_STRUCT_MEMBERS
 } io_multiplexer_socket_t;
 
-io_socket_t*	allocate_io_multiplexer_socket (io_t*);
+io_socket_t*	allocate_io_multiplexer_socket (io_t*,io_address_t);
 io_socket_t*	initialise_io_multiplexer_socket (io_socket_t*,io_t*,io_settings_t const*);
 void				io_multiplexer_socket_free (io_socket_t*);
 void				close_io_multiplexer_socket (io_multiplexer_socket_t*);
@@ -322,6 +322,7 @@ typedef struct PACK_STRUCTURE io_leaf_socket {
 	IO_LEAF_SOCKET_STRUCT_MEMBERS	
 } io_leaf_socket_t;
 
+io_socket_t* allocate_io_leaf_socket (io_t*,io_address_t);
 void io_leaf_socket_free (io_socket_t*);
 
 extern EVENT_DATA io_socket_implementation_t io_leaf_socket_implementation;
@@ -334,7 +335,7 @@ typedef struct PACK_STRUCTURE socket_builder_binding {
 	uint32_t outer;
 } socket_builder_binding_t;
 
-typedef io_socket_t* (*allocate_io_socket_t) (io_t*);
+typedef io_socket_t* (*allocate_io_socket_t) (io_t*,io_address_t);
 
 typedef struct {
 	uint32_t index;
@@ -347,6 +348,7 @@ typedef struct {
 typedef struct socket_builder {
 	uint32_t index;
 	allocate_io_socket_t allocate;
+	io_address_t address;
 	io_settings_t const *C;
 	bool with_open;
 	socket_builder_binding_t const* inner_bindings;
@@ -369,6 +371,7 @@ typedef struct PACK_STRUCTURE io_socket_emulator {
 	
 } io_socket_emulator_t;
 
+io_socket_t* allocate_io_socket_emulator (io_t*,io_address_t);
 io_socket_t* io_socket_emulator_initialise (io_socket_t*,io_t*,io_settings_t const*);
 void io_socket_emulator_free (io_socket_t*);
 bool io_socket_emulator_open (io_socket_t*);
@@ -405,7 +408,7 @@ typedef struct PACK_STRUCTURE io_shared_media {
 	IO_MULTIPLEX_SOCKET_STRUCT_MEMBERS
 } io_shared_media_t;
 
-io_socket_t* allocate_io_shared_media (io_t*);
+io_socket_t* allocate_io_shared_media (io_t*,io_address_t);
 
 INLINE_FUNCTION void
 free_io_sockets (io_socket_t **cursor,io_socket_t **end) {
@@ -420,6 +423,44 @@ free_io_sockets (io_socket_t **cursor,io_socket_t **end) {
 // implementation
 //
 //-----------------------------------------------------------------------------
+
+void
+build_io_sockets (
+	io_t *io,io_socket_t **array,socket_builder_t const *construct,uint32_t length
+) {
+	socket_builder_t const *end = construct + length;
+	socket_builder_t const *build;
+	
+	build = construct;
+	while (build < end) {
+		array[build->index] = io_socket_initialise (
+			build->allocate(io,build->address),io,build->C
+		);
+		build++;
+	}
+
+	build = construct;
+	while (build < end) {
+		if (build->inner_bindings) {
+			socket_builder_binding_t const *link = build->inner_bindings;
+			while (link->inner != INVALID_SOCKET_ID) {
+				io_socket_bind_to_outer_socket (
+					array[link->inner],array[link->outer]
+				);
+				link++;
+			}
+		}
+		build++;
+	}
+
+	build = construct;
+	while (build < end) {
+		if (build->with_open) {
+			io_socket_open (array[build->index]);
+		}
+		build++;
+	}
+}
 
 //
 // layers
@@ -653,6 +694,16 @@ io_leaf_socket_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) 
 	return socket;
 }
 
+io_socket_t*
+allocate_io_leaf_socket (io_t *io,io_address_t address) {
+	io_socket_t *socket = io_byte_memory_allocate (
+		io_get_byte_memory (io),sizeof(io_leaf_socket_t)
+	);
+	socket->implementation = &io_leaf_socket_implementation;
+	socket->address = duplicate_io_address (io_get_byte_memory (io),address);
+	return (io_socket_t*) socket;
+}
+
 void
 io_leaf_socket_free (io_socket_t *socket) {
 	io_leaf_socket_t *this = (io_leaf_socket_t*) socket;
@@ -828,12 +879,12 @@ free_io_inner_port (io_byte_memory_t *bm,io_inner_port_t *this) {
 }
 
 io_socket_t*
-allocate_io_multiplex_socket (io_t *io) {
+allocate_io_multiplex_socket (io_t *io,io_address_t address) {
 	io_multiplex_socket_t *socket = io_byte_memory_allocate (
 		io_get_byte_memory (io),sizeof(io_multiplex_socket_t)
 	);
 	socket->implementation = &io_multiplex_socket_implementation;
-	socket->address = io_invalid_address();
+	socket->address = duplicate_io_address (io_get_byte_memory (io),address);
 	return (io_socket_t*) socket;
 }
 
@@ -1113,12 +1164,12 @@ EVENT_DATA io_socket_implementation_t io_multiplex_socket_implementation = {
 //
 
 io_socket_t*
-allocate_io_multiplexer_socket (io_t *io) {
+allocate_io_multiplexer_socket (io_t *io,io_address_t address) {
 	io_socket_t *socket = io_byte_memory_allocate (
 		io_get_byte_memory (io),sizeof(io_multiplexer_socket_t)
 	);
 	socket->implementation = &io_multiplexer_socket_implementation;
-	socket->address = io_invalid_address();
+	socket->address = duplicate_io_address (io_get_byte_memory (io),address);
 	return socket;
 }
 
@@ -1236,6 +1287,16 @@ io_socket_emulator_rx_event (io_event_t *ev) {
 			}
 		}
 	}
+}
+
+io_socket_t*
+allocate_io_socket_emulator (io_t *io,io_address_t address) {
+	io_socket_emulator_t *socket = io_byte_memory_allocate (
+		io_get_byte_memory (io),sizeof(io_socket_emulator_t)
+	);
+	socket->implementation = &io_socket_emulator_implementation;
+	socket->address = duplicate_io_address (io_get_byte_memory (io),address);
+	return (io_socket_t*) socket;
 }
 
 io_socket_t*
@@ -1653,12 +1714,12 @@ EVENT_DATA io_socket_implementation_t io_shared_media_implementation = {
 };
 
 io_socket_t*
-allocate_io_shared_media (io_t *io) {
+allocate_io_shared_media (io_t *io,io_address_t address) {
 	io_socket_t *socket = io_byte_memory_allocate (
 		io_get_byte_memory (io),sizeof(io_shared_media_t)
 	);
 	socket->implementation = &io_shared_media_implementation;
-	socket->address = io_invalid_address();
+	assign_io_address (io_get_byte_memory (io),&socket->address,address);
 	return socket;
 }
 

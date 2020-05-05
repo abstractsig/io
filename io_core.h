@@ -1539,23 +1539,24 @@ typedef struct io_address {
 
 #define IO_ADDRESS_INVALID_SIZE	0x7fffffff
 
-#define io_address_size(a)			(a).tag.size
-#define io_address_is_volatile(a)(a).tag.is_volatile
-#define io_address_rw_bytes(a)	(a).value.rw_bytes
-#define io_address_ro_bytes(a)	(a).value.ro_bytes
+#define io_address_size(a)				(a).tag.size
+#define io_address_is_volatile(a)	(a).tag.is_volatile
+#define io_address_rw_bytes(a)		(a).value.rw_bytes
+#define io_address_ro_bytes(a)		(a).value.ro_bytes
 #define get_pointer_to_io_address_value(a)	((io_address_size(a) > 4) ? io_address_rw_bytes(a) : &io_u8_address_value(a))
 
-#define io_invalid_address()		(io_address_t) {.tag.size = IO_ADDRESS_INVALID_SIZE,.tag.is_volatile = 0,}
-#define is_invalid_io_address(a)	(io_address_size(a) == IO_ADDRESS_INVALID_SIZE)
-#define io_address_is_invalid(a) (io_address_size(a) == IO_ADDRESS_INVALID_SIZE)
-#define io_address_is_valid(a) 	(io_address_size(a) != IO_ADDRESS_INVALID_SIZE)
+#define io_invalid_address()			(io_address_t) {.tag.size = IO_ADDRESS_INVALID_SIZE,.tag.is_volatile = 0,}
+#define is_invalid_io_address(a)		(io_address_size(a) == IO_ADDRESS_INVALID_SIZE)
+#define io_address_is_invalid(a) 	(io_address_size(a) == IO_ADDRESS_INVALID_SIZE)
+#define io_address_is_valid(a) 		(io_address_size(a) != IO_ADDRESS_INVALID_SIZE)
 
-#define io_any_address()			(io_address_t) {.tag.size = 0,}
-#define is_any_io_address(a)		(io_address_size(a) == 0)
+#define io_any_address()				(io_address_t) {.tag.size = 0,}
+#define is_any_io_address(a)			(io_address_size(a) == 0)
 
-#define def_io_u8_address(a)		(io_address_t) {.tag.size = 1,.tag.is_volatile = 0,.value.u8 = a,}
-#define def_io_u16_address(a)		(io_address_t) {.tag.size = 2,.tag.is_volatile = 0,.value.u16 = a,}
-#define def_io_u32_address(a)		(io_address_t) {.tag.size = 4,.tag.is_volatile = 0,.value.u32 = a,}
+#define def_io_u8_address(a)			(io_address_t) {.tag.size = 1,.tag.is_volatile = 0,.value.u8 = a,}
+#define def_io_u16_address(a)			(io_address_t) {.tag.size = 2,.tag.is_volatile = 0,.value.u16 = a,}
+#define def_io_u32_address(a)			(io_address_t) {.tag.size = 4,.tag.is_volatile = 0,.value.u32 = a,}
+#define def_io_const_address(s,ro)	(io_address_t) {.tag.size = s,.tag.is_volatile = 0,.value.ro_bytes = ro,}
 
 #define io_u8_address_value(a)	(a).value.u8
 #define io_u16_address_value(a)	(a).value.u16
@@ -1563,11 +1564,7 @@ typedef struct io_address {
 
 io_address_t mk_io_address(io_byte_memory_t*,uint32_t,uint8_t const*);
 int32_t compare_io_addresses (io_address_t,io_address_t);
-
-INLINE_FUNCTION io_address_t
-duplicate_io_address (io_byte_memory_t *bm,io_address_t a) {
-	return mk_io_address (bm,io_address_size(a),get_pointer_to_io_address_value(a));
-}
+io_address_t duplicate_io_address (io_byte_memory_t*,io_address_t);
 
 INLINE_FUNCTION io_address_t
 io_long_address (io_byte_memory_t *bm,uint32_t size,uint8_t const *bytes) {
@@ -2414,6 +2411,25 @@ mk_io_address (io_byte_memory_t *bm,uint32_t size,uint8_t const *bytes) {
 	}
 }
 
+io_address_t
+duplicate_io_address (io_byte_memory_t *bm,io_address_t a) {
+	switch (io_address_size(a)) {
+		case 0:
+		case 1:
+		case 2:
+		case 4:
+		case IO_ADDRESS_INVALID_SIZE:
+			return a;
+			
+		default:
+			if (io_address_is_volatile(a)) {
+				return io_long_address (bm,io_address_size(a),io_address_ro_bytes(a));
+			} else {
+				return a;
+			}
+	}
+}
+
 //
 // size > 0
 //
@@ -2596,39 +2612,6 @@ is_io_socket_of_type (
 bool
 is_physical_io_socket (io_socket_t const *socket) {
 	return is_io_socket_of_type (socket,&io_physical_socket_implementation);
-}
-
-void
-build_io_sockets (
-	io_t *io,io_socket_t **array,socket_builder_t const *construct,uint32_t length
-) {
-	socket_builder_t const *end = construct + length;
-	socket_builder_t const *build;
-	
-	build = construct;
-	while (build < end) {
-		array[build->index] = io_socket_initialise (
-			build->allocate(io),io,build->C
-		);
-		if (build->with_open) {
-			io_socket_open (array[build->index]);
-		}
-		build++;
-	}
-
-	build = construct;
-	while (build < end) {
-		if (build->inner_bindings) {
-			socket_builder_binding_t const *link = build->inner_bindings;
-			while (link->inner != INVALID_SOCKET_ID) {
-				io_socket_bind_to_outer_socket (
-					array[link->inner],array[link->outer]
-				);
-				link++;
-			}
-		}
-		build++;
-	}
 }
 
 EVENT_DATA io_socket_implementation_t io_counted_socket_implementation = {
