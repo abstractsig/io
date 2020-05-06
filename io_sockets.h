@@ -11,19 +11,29 @@
 #ifndef io_sockets_H_
 #define io_sockets_H_
 typedef struct io_inner_port_binding io_inner_port_binding_t;
+typedef struct io_inner_constructor_binding io_inner_constructor_binding_t;
 typedef struct io_multiplex_socket io_multiplex_socket_t;
-io_inner_port_binding_t*	io_multiplex_socket_find_inner_binding (io_multiplex_socket_t*,io_address_t);
-
-#include <io_layers.h>
-
 typedef struct io_socket_implementation io_socket_implementation_t;
 typedef bool (*io_socket_iterator_t) (io_socket_t*,void*);
 typedef bool (*io_socket_constructor_t) (io_t*,io_address_t,io_socket_t**,io_socket_t**);
+
+io_inner_port_binding_t* io_multiplex_socket_find_inner_port_binding (io_multiplex_socket_t*,io_address_t);
+io_inner_constructor_binding_t* io_multiplex_socket_find_inner_constructor_binding (io_multiplex_socket_t*,io_address_t);
+
+#include <io_layers.h>
 
 typedef struct PACK_STRUCTURE io_notify_event {
 	IO_EVENT_STRUCT_MEMBERS
 	io_socket_t *socket;
 } io_notify_event_t;
+
+INLINE_FUNCTION void
+initialise_io_notify (
+	io_notify_event_t *ev,io_event_handler_t fn,void* user_value,io_socket_t *socket
+) {
+	initialise_io_event ((io_event_t*) ev,fn,user_value);
+	ev->socket = socket;	// reference??
+}
 
 typedef struct PACK_STRUCTURE io_settings {
 	io_encoding_implementation_t const *encoding;
@@ -36,7 +46,6 @@ typedef struct PACK_STRUCTURE io_settings {
 
 #define io_settings_receive_pipe_length(c)	(c)->receive_pipe_length
 #define io_settings_transmit_pipe_length(c)	(c)->transmit_pipe_length
-
 
 #define IO_SOCKET_IMPLEMENTATION_STRUCT_MEMBERS \
 	io_socket_implementation_t const *specialisation_of;\
@@ -249,9 +258,19 @@ typedef struct PACK_STRUCTURE io_leaf_socket {
 } io_leaf_socket_t;
 
 io_socket_t* allocate_io_leaf_socket (io_t*,io_address_t);
+io_socket_t* io_leaf_socket_initialise (io_socket_t*,io_t*,io_settings_t const*);
 void io_leaf_socket_free (io_socket_t*);
 
 extern EVENT_DATA io_socket_implementation_t io_leaf_socket_implementation;
+
+INLINE_FUNCTION io_leaf_socket_t*
+cast_to_io_leaf_socket (io_socket_t *socket) {
+	if (is_io_socket_of_type (socket,&io_leaf_socket_implementation)) {
+		return (io_leaf_socket_t*) socket;
+	} else {
+		return NULL;
+	}
+}
 
 //
 // multiplex socket
@@ -277,11 +296,12 @@ struct PACK_STRUCTURE io_inner_port_binding {
 	io_inner_port_t *port;
 };
 
-typedef struct PACK_STRUCTURE {
+
+struct PACK_STRUCTURE io_inner_constructor_binding {
 	io_address_t address;
 	io_socket_constructor_t make;
 	io_notify_event_t *notify;
-} io_inner_constructor_binding_t;
+};
 
 typedef struct PACK_STRUCTURE {
 	io_inner_constructor_binding_t *begin;
@@ -316,6 +336,15 @@ io_inner_port_binding_t*	io_multiplex_socket_get_next_transmit_binding (io_multi
 
 extern EVENT_DATA io_socket_implementation_t io_multiplex_socket_implementation;
 
+INLINE_FUNCTION io_multiplex_socket_t*
+cast_to_io_multiplex_socket (io_socket_t *socket) {
+	if (is_io_socket_of_type (socket,&io_multiplex_socket_implementation)) {
+		return (io_multiplex_socket_t*) socket;
+	} else {
+		return NULL;
+	}
+}
+
 //
 // multiplexer socket
 //
@@ -342,6 +371,14 @@ size_t			io_multiplexer_socket_mtu (io_socket_t const*);
 
 extern EVENT_DATA io_socket_implementation_t io_multiplexer_socket_implementation;
 
+INLINE_FUNCTION io_multiplexer_socket_t*
+cast_to_io_multiplexer_socket (io_socket_t *socket) {
+	if (is_io_socket_of_type (socket,&io_multiplexer_socket_implementation)) {
+		return (io_multiplexer_socket_t*) socket;
+	} else {
+		return NULL;
+	}
+}
 
 //
 // director socket
@@ -386,7 +423,9 @@ typedef struct PACK_STRUCTURE io_socket_emulator {
 	
 } io_socket_emulator_t;
 
-io_socket_t* allocate_io_socket_emulator (io_t*,io_address_t);
+io_socket_t* allocate_io_socket_binary_emulator (io_t*,io_address_t);
+io_socket_t* allocate_io_socket_link_emulator (io_t*,io_address_t);
+
 io_socket_t* io_socket_emulator_initialise (io_socket_t*,io_t*,io_settings_t const*);
 void io_socket_emulator_free (io_socket_t*);
 bool io_socket_emulator_open (io_socket_t*);
@@ -410,7 +449,7 @@ extern EVENT_DATA io_socket_implementation_t io_socket_emulator_implementation;
 	.close = io_socket_emulator_close, \
 	.is_closed = io_socket_emulator_is_closed, \
 	.bind_inner = io_multiplex_socket_bind_inner, \
-	.bind_inner_constructor = io_virtual_socket_bind_inner_constructor,\
+	.bind_inner_constructor = io_multiplex_socket_bind_inner_constructor,\
 	.bind_to_outer_socket = io_socket_emulator_bind_to_outer_socket, \
 	.new_message = N, \
 	.send_message = T, \
@@ -632,7 +671,7 @@ io_socket_t*
 io_leaf_socket_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) {
 	io_leaf_socket_t *this = (io_leaf_socket_t*) socket;
 
-	initialise_io_socket (socket,io);
+	initialise_io_counted_socket ((io_counted_socket_t*) socket,io);
 	this->outer_socket = NULL;
 	
 	this->transmit_available = NULL;
@@ -701,6 +740,21 @@ io_leaf_socket_bind (
 	return io_socket_bind_to_outer_socket (socket,this->outer_socket);
 }
 
+void
+io_leaf_socket_unbind_inner (io_socket_t *socket,io_address_t address) {
+	io_leaf_socket_t *this = (io_leaf_socket_t*) socket;
+
+	io_dequeue_event (io_socket_io (socket),this->transmit_available);
+	io_dequeue_event (io_socket_io (socket),this->receive_data_available);
+
+	this->transmit_available = NULL;
+	this->receive_data_available = NULL;
+
+	if (this->outer_socket) {
+		io_socket_bind_to_outer_socket (socket,this->outer_socket);
+	}
+}
+
 static bool
 io_leaf_socket_bind_to_outer (io_socket_t *socket,io_socket_t *outer) {
 	io_leaf_socket_t *this = (io_leaf_socket_t*) socket;
@@ -726,11 +780,7 @@ io_leaf_socket_new_message (io_socket_t *socket) {
 		);
 		io_layer_t *inner = io_encoding_get_innermost_layer (message);
 		if (inner) {
-			//
-			// Requires that the leaf addresses are setup to 
-			//	crossover.
-			//
-			io_layer_set_remote_address (inner,message,io_socket_address (socket));
+			io_layer_set_destination_address (inner,message,io_socket_address (socket));
 		}
 		return message;
 	} else {
@@ -781,7 +831,7 @@ EVENT_DATA io_socket_implementation_t io_leaf_socket_implementation = {
 	.is_closed = io_leaf_socket_is_closed,
 	.bind_to_outer_socket = io_leaf_socket_bind_to_outer,
 	.bind_inner = io_leaf_socket_bind,
-	.unbind_inner = io_virtual_socket_unbind_inner,
+	.unbind_inner = io_leaf_socket_unbind_inner,
 	.new_message = io_leaf_socket_new_message,
 	.send_message = io_leaf_socket_send_message,
 	.get_receive_pipe = io_leaf_socket_get_receive_pipe,
@@ -876,6 +926,7 @@ io_multiplex_socket_free (io_socket_t *socket) {
 		io_inner_constructor_binding_t *cursor = this->inner_constructors.begin;
 		while (cursor < this->inner_constructors.end) {
 			free_io_address (bm,cursor->address);
+			io_dequeue_event (io_socket_io (this),(io_event_t*) cursor->notify);
 			cursor ++;
 		}
 		io_byte_memory_free (bm,this->inner_constructors.begin);
@@ -885,7 +936,9 @@ io_multiplex_socket_free (io_socket_t *socket) {
 }
 
 io_inner_port_binding_t*
-io_multiplex_socket_find_inner_binding (io_multiplex_socket_t *this,io_address_t sa) {
+io_multiplex_socket_find_inner_port_binding (
+	io_multiplex_socket_t *this,io_address_t sa
+) {
 	io_inner_port_binding_t *remote = NULL;
 	io_inner_port_binding_t *cursor = this->slots;
 	io_inner_port_binding_t *end = cursor + this->number_of_slots;
@@ -905,7 +958,7 @@ io_pipe_t*
 io_multiplex_socket_get_receive_pipe (io_socket_t *socket,io_address_t address) {
 	io_multiplex_socket_t *this = (io_multiplex_socket_t*) socket;
 	io_pipe_t *rx = NULL;
-	io_inner_port_binding_t *inner = io_multiplex_socket_find_inner_binding (this,address);
+	io_inner_port_binding_t *inner = io_multiplex_socket_find_inner_port_binding (this,address);
 	if (inner != NULL) {
 		rx = (io_pipe_t*) inner->port->receive_pipe;
 	}
@@ -932,7 +985,7 @@ io_multiplex_socket_bind_inner (
 	io_socket_t *socket,io_address_t address,io_event_t *tx,io_event_t *rx
 ) {
 	io_multiplex_socket_t *this = (io_multiplex_socket_t*) socket;
-	io_inner_port_binding_t *inner = io_multiplex_socket_find_inner_binding (this,address);
+	io_inner_port_binding_t *inner = io_multiplex_socket_find_inner_port_binding (this,address);
 	
 	if (inner == NULL) {
 		inner = io_multiplex_socket_get_free_binding (this);
@@ -979,7 +1032,9 @@ io_multiplex_socket_bind_inner (
 }
 
 io_inner_constructor_binding_t*
-io_multiplex_socket_find_inner_constructor (io_multiplex_socket_t *this,io_address_t address) {
+io_multiplex_socket_find_inner_constructor_binding (
+	io_multiplex_socket_t *this,io_address_t address
+) {
 	io_inner_constructor_binding_t *cursor = this->inner_constructors.begin;
 	while (cursor < this->inner_constructors.end) {
 		if (compare_io_addresses (cursor->address,address) == 0) {
@@ -996,7 +1051,7 @@ io_multiplex_socket_bind_inner_constructor (
 	io_socket_t *socket,io_address_t address,io_socket_constructor_t make,io_notify_event_t *notify
 ) {
 	io_multiplex_socket_t *this = (io_multiplex_socket_t*) socket;
-	io_inner_constructor_binding_t *inner = io_multiplex_socket_find_inner_constructor (
+	io_inner_constructor_binding_t *inner = io_multiplex_socket_find_inner_constructor_binding (
 		this,address
 	);
 
@@ -1011,7 +1066,9 @@ io_multiplex_socket_bind_inner_constructor (
 			this->inner_constructors.begin = bigger;
 			this->inner_constructors.end = bigger + (size + 1);
 			inner = this->inner_constructors.begin + size;
-			assign_io_address (io_socket_byte_memory (this),&inner->address,address);
+			inner->address = duplicate_io_address (io_socket_byte_memory (this),address);
+			inner->make = NULL;
+			inner->notify = NULL;
 		}
 	}
 	
@@ -1028,7 +1085,7 @@ io_multiplex_socket_bind_inner_constructor (
 void
 io_multiplex_socket_unbind_inner (io_socket_t *socket,io_address_t address) {
 	io_multiplex_socket_t *this = (io_multiplex_socket_t*) socket;
-	io_inner_port_binding_t *inner = io_multiplex_socket_find_inner_binding (this,address);
+	io_inner_port_binding_t *inner = io_multiplex_socket_find_inner_port_binding (this,address);
 	if (inner != NULL) {
 		io_inner_port_t *port = inner->port;
 		io_dequeue_event (io_socket_io (socket),port->tx_available);
@@ -1211,8 +1268,8 @@ io_socket_emulator_tx_event (io_event_t *ev) {
 }
 
 static void	
-io_socket_emulator_rx_event (io_event_t *ev) {
-	io_socket_emulator_t *this = ev->user_value;
+io_multiplexer_socket_rx_event (io_event_t *ev) {
+	io_multiplexer_socket_t *this = ev->user_value;
 	
 	if (this->outer_socket) {
 		io_encoding_pipe_t* rx = cast_to_io_encoding_pipe (
@@ -1225,7 +1282,7 @@ io_socket_emulator_rx_event (io_event_t *ev) {
 			if (io_encoding_pipe_peek (rx,&next)) {
 				io_layer_t *base = io_encoding_get_outermost_layer (next);
 				if (base) {
-					io_inner_port_binding_t *inner = io_layer_decode (
+					io_inner_port_binding_t *inner = io_layer_select_inner_binding (
 						base,next,(io_socket_t*) this
 					);
 					if (inner) {
@@ -1242,16 +1299,6 @@ io_socket_emulator_rx_event (io_event_t *ev) {
 }
 
 io_socket_t*
-allocate_io_socket_emulator (io_t *io,io_address_t address) {
-	io_socket_emulator_t *socket = io_byte_memory_allocate (
-		io_get_byte_memory (io),sizeof(io_socket_emulator_t)
-	);
-	socket->implementation = &io_socket_emulator_implementation;
-	socket->address = duplicate_io_address (io_get_byte_memory (io),address);
-	return (io_socket_t*) socket;
-}
-
-io_socket_t*
 io_socket_emulator_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) {
 	io_socket_emulator_t *this = (io_socket_emulator_t*) socket;
 
@@ -1262,7 +1309,7 @@ io_socket_emulator_initialise (io_socket_t *socket,io_t *io,io_settings_t const 
 	);
 	
 	initialise_io_event (
-		&this->rx,io_socket_emulator_rx_event,this
+		&this->rx,io_multiplexer_socket_rx_event,this
 	);
 
 	return socket;
@@ -1275,7 +1322,8 @@ io_socket_emulator_free (io_socket_t *socket) {
 
 bool
 io_socket_emulator_open (io_socket_t *socket) {
-	return false;
+	// always open?
+	return true;
 }
 
 void
@@ -1301,17 +1349,22 @@ io_socket_emulator_mtu (io_socket_t const *socket) {
 	return 0;
 }
 
+EVENT_DATA io_socket_implementation_t io_socket_emulator_implementation = {
+	SPECIALISE_IO_VIRTUAL_SOCKET (&io_multiplexer_socket_implementation)
+};
+
+//
+// emulator with binary frame
+//
 static io_encoding_t*
-io_socket_emulator_new_message (io_socket_t *socket) {
+io_socket_emulator_new_binary_message (io_socket_t *socket) {
 	io_encoding_t *message = reference_io_encoding (
-		mk_io_packet_encoding (
-			io_get_byte_memory(io_socket_io (socket))
-		)
+		mk_io_packet_encoding (io_get_byte_memory(io_socket_io (socket)))
 	);
 	if (message) {
-		io_layer_t *layer = push_io_binary_transmit_layer (message);
+		io_layer_t *layer = push_io_binary_layer (message);
 		if (layer) {
-			io_layer_set_local_address (layer,message,io_socket_address(socket));
+			io_layer_set_source_address (layer,message,io_socket_address(socket));
 		} else {
 			io_panic (io_socket_io(socket),IO_PANIC_OUT_OF_MEMORY);
 		}
@@ -1322,31 +1375,81 @@ io_socket_emulator_new_message (io_socket_t *socket) {
 
 static bool
 io_socket_emulator_send_binary_message (io_socket_t *socket,io_encoding_t *encoding) {
-	io_binary_frame_t *packet = io_encoding_get_byte_stream (encoding);
-	write_le_uint32 (packet->length,io_encoding_length (encoding));
-	return io_multiplexer_socket_send_message (socket,encoding);
+	io_layer_t *layer = get_io_binary_layer (encoding);
+	if (layer) {
+		io_layer_load_header (layer,encoding);
+		return io_multiplexer_socket_send_message (socket,encoding);
+	} else {
+		unreference_io_encoding (encoding);
+		return false;
+	}
 }
 
-EVENT_DATA io_socket_implementation_t io_socket_emulator_implementation = {
-	.specialisation_of = &io_multiplexer_socket_implementation,
-	.initialise = io_socket_emulator_initialise,
-	.reference = io_counted_socket_increment_reference,
-	.free = io_socket_emulator_free,
-	.open = io_socket_emulator_open,
-	.close = io_socket_emulator_close,
-	.is_closed = io_socket_emulator_is_closed,
-	.bind_inner = io_multiplex_socket_bind_inner,
-	.unbind_inner = io_multiplex_socket_unbind_inner,
-	.bind_inner_constructor = io_virtual_socket_bind_inner_constructor,
-	.bind_to_outer_socket = io_socket_emulator_bind_to_outer_socket,
-	.new_message = io_socket_emulator_new_message,
-	.send_message = io_socket_emulator_send_binary_message,
-	.get_receive_pipe = io_multiplex_socket_get_receive_pipe,
-	.iterate_inner_sockets = NULL,
-	.iterate_outer_sockets = NULL,
-	.mtu = io_socket_emulator_mtu,
+EVENT_DATA io_socket_implementation_t io_socket_binary_emulator_implementation = {
+	SPECIALISE_IO_SOCKET_EMULATOR (
+		io_socket_emulator_new_binary_message,
+		io_socket_emulator_send_binary_message
+	)
 };
 
+io_socket_t*
+allocate_io_socket_binary_emulator (io_t *io,io_address_t address) {
+	io_socket_emulator_t *socket = io_byte_memory_allocate (
+		io_get_byte_memory (io),sizeof(io_socket_emulator_t)
+	);
+	socket->implementation = &io_socket_binary_emulator_implementation;
+	socket->address = duplicate_io_address (io_get_byte_memory (io),address);
+	return (io_socket_t*) socket;
+}
+
+//
+// emulator with link frame
+//
+static io_encoding_t*
+io_socket_emulator_new_link_message (io_socket_t *socket) {
+	io_encoding_t *message = reference_io_encoding (
+		mk_io_packet_encoding (io_get_byte_memory(io_socket_io (socket)))
+	);
+	if (message) {
+		io_layer_t *layer = push_io_link_layer (message);
+		if (layer) {
+			io_layer_set_source_address (layer,message,io_socket_address(socket));
+		} else {
+			io_panic (io_socket_io(socket),IO_PANIC_OUT_OF_MEMORY);
+		}
+	}
+	
+	return message;
+}
+
+static bool
+io_socket_emulator_send_link_message (io_socket_t *socket,io_encoding_t *encoding) {
+	io_layer_t *layer = get_io_link_layer (encoding);
+	if (layer) {
+		io_layer_load_header (layer,encoding);
+		return io_multiplexer_socket_send_message (socket,encoding);
+	} else {
+		unreference_io_encoding (encoding);
+		return false;
+	}
+}
+
+EVENT_DATA io_socket_implementation_t io_socket_link_emulator_implementation = {
+	SPECIALISE_IO_SOCKET_EMULATOR (
+		io_socket_emulator_new_link_message,
+		io_socket_emulator_send_link_message
+	)
+};
+
+io_socket_t*
+allocate_io_socket_link_emulator (io_t *io,io_address_t address) {
+	io_socket_emulator_t *socket = io_byte_memory_allocate (
+		io_get_byte_memory (io),sizeof(io_socket_emulator_t)
+	);
+	socket->implementation = &io_socket_link_emulator_implementation;
+	socket->address = duplicate_io_address (io_get_byte_memory (io),address);
+	return (io_socket_t*) socket;
+}
 
 //
 // media
@@ -1392,7 +1495,7 @@ make_reveive_copy (io_packet_encoding_t *source_encoding) {
 		io_encoding_t *copy = io_encoding_duplicate (
 			(io_encoding_t*) source_encoding,source_encoding->bm
 		);
-		io_layer_t *rx_layer = io_layer_swap (base,copy);
+		io_layer_t *rx_layer = io_layer_push_receive_layer (base,copy);
 		
 		if (rx_layer) {
 			io_encoding_reset (copy);
@@ -1401,11 +1504,13 @@ make_reveive_copy (io_packet_encoding_t *source_encoding) {
 				io_encoding_get_byte_stream ((io_encoding_t*) source_encoding),
 				io_encoding_length((io_encoding_t*) source_encoding)
 			);
-			io_layer_set_local_address (
+/*
+			io_layer_set_source_address (
 				rx_layer,
 				copy,
-				io_layer_get_remote_address(base,(io_encoding_t*) source_encoding)
+				io_layer_get_destination_address(base,(io_encoding_t*) source_encoding)
 			);
+*/
 		}
 		
 		return copy;
@@ -1422,7 +1527,7 @@ io_shared_media_send_message (io_socket_t *socket,io_encoding_t *encoding) {
 	io_layer_t *layer = io_encoding_get_outermost_layer (encoding);
 	if (layer != NULL) {
 		io_multiplex_socket_t *this = (io_multiplex_socket_t*) socket;
-		io_address_t src = io_layer_get_local_address (layer,encoding);
+		io_address_t src = io_layer_get_source_address (layer,encoding);
 		io_inner_port_binding_t *cursor = this->slots;
 		io_inner_port_binding_t *end = cursor + this->number_of_slots;
 		io_encoding_t *receive_message = NULL;

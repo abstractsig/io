@@ -249,6 +249,7 @@ typedef union PACK_STRUCTURE io_time {
 	int64_t nanoseconds;
 	int64_t ns;
 	uint64_t u64;
+	uint8_t bytes[8];
 	volatile uint16_t u16[4];
 	volatile uint8_t u8[8];
 	volatile struct {
@@ -792,7 +793,7 @@ struct PACK_STRUCTURE io_encoding {
 #define io_encoding_implementation(e)		(e)->implementation
 #define io_encoding_reference_count(e)		(e)->tag.bit.reference_count
 
-bool	io_is_encoding_of_type (io_encoding_t const*,io_encoding_implementation_t const*);
+bool	io_encoding_has_implementation (io_encoding_t const*,io_encoding_implementation_t const*);
 io_encoding_t*	reference_io_encoding (io_encoding_t*);
 void	unreference_io_encoding (io_encoding_t*);
 void* io_encoding_no_layer (io_encoding_t*,io_layer_implementation_t const*);
@@ -1002,7 +1003,7 @@ mk_io_x70_encoding (io_byte_memory_t *bm) {
 INLINE_FUNCTION bool
 is_io_x70_encoding (io_encoding_t const *encoding) {
 	extern EVENT_DATA io_encoding_implementation_t io_x70_encoding_implementation;
-	return io_is_encoding_of_type (
+	return io_encoding_has_implementation (
 		encoding,IO_ENCODING_IMPLEMENATAION (&io_x70_encoding_implementation)
 	);
 }
@@ -1542,7 +1543,7 @@ typedef struct io_address {
 	} value;
 } io_address_t;
 
-#define IO_ADDRESS_INVALID_SIZE	0x7fffffff
+#define IO_ADDRESS_INVALID_SIZE	0
 
 #define io_address_size(a)				(a).tag.size
 #define io_address_is_volatile(a)	(a).tag.is_volatile
@@ -1555,9 +1556,6 @@ typedef struct io_address {
 #define io_address_is_invalid(a) 	(io_address_size(a) == IO_ADDRESS_INVALID_SIZE)
 #define io_address_is_valid(a) 		(io_address_size(a) != IO_ADDRESS_INVALID_SIZE)
 
-#define io_any_address()				(io_address_t) {.tag.size = 0,}
-#define is_any_io_address(a)			(io_address_size(a) == 0)
-
 #define def_io_u8_address(a)			(io_address_t) {.tag.size = 1,.tag.is_volatile = 0,.value.u8 = a,}
 #define def_io_u16_address(a)			(io_address_t) {.tag.size = 2,.tag.is_volatile = 0,.value.u16 = a,}
 #define def_io_u32_address(a)			(io_address_t) {.tag.size = 4,.tag.is_volatile = 0,.value.u32 = a,}
@@ -1567,9 +1565,11 @@ typedef struct io_address {
 #define io_u16_address_value(a)	(a).value.u16
 #define io_u32_address_value(a)	(a).value.u32
 
-io_address_t mk_io_address(io_byte_memory_t*,uint32_t,uint8_t const*);
-int32_t compare_io_addresses (io_address_t,io_address_t);
-io_address_t duplicate_io_address (io_byte_memory_t*,io_address_t);
+io_address_t	mk_io_address(io_byte_memory_t*,uint32_t,uint8_t const*);
+int32_t			compare_io_addresses (io_address_t,io_address_t);
+io_address_t	duplicate_io_address (io_byte_memory_t*,io_address_t);
+uint32_t			write_le_io_address (uint8_t*,uint32_t,io_address_t);
+uint32_t			read_le_io_address (io_byte_memory_t*,uint8_t const*,uint32_t,io_address_t*);
 
 INLINE_FUNCTION io_address_t
 io_long_address (io_byte_memory_t *bm,uint32_t size,uint8_t const *bytes) {
@@ -2177,9 +2177,6 @@ read_only_power_domain_implementation = {
 io_address_t
 mk_io_address (io_byte_memory_t *bm,uint32_t size,uint8_t const *bytes) {
 	switch (size) {
-		case 0:
-			return io_any_address();
-
 		case 1:
 			return def_io_u8_address(*bytes);
 
@@ -2201,7 +2198,6 @@ mk_io_address (io_byte_memory_t *bm,uint32_t size,uint8_t const *bytes) {
 io_address_t
 duplicate_io_address (io_byte_memory_t *bm,io_address_t a) {
 	switch (io_address_size(a)) {
-		case 0:
 		case 1:
 		case 2:
 		case 4:
@@ -2214,6 +2210,59 @@ duplicate_io_address (io_byte_memory_t *bm,io_address_t a) {
 			} else {
 				return a;
 			}
+	}
+}
+
+//
+// NB ptr MUST point to allocated memory of at least limit bytes
+//
+uint32_t
+write_le_io_address (uint8_t *ptr,uint32_t limit,io_address_t address) {
+	uint8_t *dest = ptr;
+	uint8_t *end = dest + limit;
+	uint8_t flag;
+	uint32_t size = io_address_size (address);
+
+	do {
+		flag = (size > 0x7f);
+		*dest++ = (size & 0x7f) | (flag << 7);
+		size >>= 7;
+	} while (flag && dest < end);
+
+	size = dest - ptr;
+	
+	if (ptr < end) {
+		uint8_t *address_cursor = get_pointer_to_io_address_value (address);
+		uint8_t *address_end = address_cursor + io_address_size(address);
+		
+		while (address_cursor < address_end && dest < end) {
+			*dest++ = *address_cursor++;
+		}
+
+		return (dest < end) ? io_address_size(address) + size : 0;
+	} else {
+		return 0;
+	}
+}
+
+uint32_t
+read_le_io_address (io_byte_memory_t *bm,uint8_t const *ptr,uint32_t limit,io_address_t *address) {
+	uint8_t const *cursor = ptr;
+	uint8_t const *end = cursor + limit;
+	uint32_t size = 0;
+	uint8_t byte = 0;
+
+	do {
+		byte = *cursor++;
+		size <<= 7;
+		size += (byte & 0x7f);
+	} while (byte & 0x80 && cursor < end);
+	
+	if (cursor < end && (byte & 0x80) == 0) {
+		*address = mk_io_address (bm,size,cursor);
+		return (cursor - ptr) + size;
+	} else {
+		return 0;
 	}
 }
 
@@ -2275,18 +2324,8 @@ compare_io_addresses (io_address_t a,io_address_t b) {
 		return (io_address_is_invalid(a)) ? 0 : -1;
 	} else if (io_address_is_invalid(a)) {
 		return (io_address_is_invalid(b)) ? 0 : 1;
-	} else if (is_any_io_address (a)) {
-		if (!is_any_io_address (b)) {
-			cmp = -1;
-		} else {
-			cmp = compare_io_address_values(a,b);
-		}
 	} else {
-		if (is_any_io_address (b)) {
-			cmp = 1;
-		} else {
-			cmp = compare_io_address_values(a,b);
-		}
+		cmp = compare_io_address_values(a,b);
 	}
 	
 	return cmp;
@@ -4189,7 +4228,7 @@ EVENT_DATA io_encoding_implementation_t io_encoding_implementation_base = {
 };
 
 bool
-io_is_encoding_of_type (
+io_encoding_has_implementation (
 	io_encoding_t const *encoding,io_encoding_implementation_t const *T
 ) {
 	io_encoding_implementation_t const *E = io_encoding_implementation(encoding);
@@ -4223,7 +4262,7 @@ EVENT_DATA io_encoding_implementation_t io_value_int64_encoding_implementation =
 };
 
 bool encoding_is_io_value_int64 (io_encoding_t *encoding) {
-	return io_is_encoding_of_type (
+	return io_encoding_has_implementation (
 		encoding,IO_ENCODING_IMPLEMENATAION(&io_value_int64_encoding_implementation)
 	);
 }
@@ -4251,7 +4290,7 @@ EVENT_DATA io_encoding_implementation_t io_value_float64_encoding_implementation
 
 bool
 encoding_is_io_value_float64 (io_encoding_t *encoding) {
-	return io_is_encoding_of_type (
+	return io_encoding_has_implementation (
 		encoding,IO_ENCODING_IMPLEMENATAION(&io_value_float64_encoding_implementation)
 	);
 }
@@ -4465,7 +4504,7 @@ io_binary_encoding_print (io_encoding_t *encoding,char const *fmt,va_list va) {
 bool
 is_io_text_encoding (io_encoding_t const *encoding) {
 	extern EVENT_DATA io_encoding_implementation_t io_text_encoding_implementation;
-	return io_is_encoding_of_type (
+	return io_encoding_has_implementation (
 		encoding,IO_ENCODING_IMPLEMENATAION (&io_text_encoding_implementation)
 	);
 }
@@ -4570,7 +4609,7 @@ EVENT_DATA io_encoding_implementation_t io_binary_encoding_implementation = {
 
 bool
 is_io_binary_encoding (io_encoding_t const *encoding) {
-	return io_is_encoding_of_type (
+	return io_encoding_has_implementation (
 		encoding,IO_ENCODING_IMPLEMENATAION (&io_binary_encoding_implementation)
 	);
 }
