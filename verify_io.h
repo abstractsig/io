@@ -2195,7 +2195,7 @@ TEST_BEGIN(test_io_address_3) {
 }
 TEST_END
 
-TEST_BEGIN(test_io_adapter_address_1) {
+TEST_BEGIN(test_io_adapter_socket_1) {
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
 	memory_info_t bmbegin,bmend;
 	
@@ -2224,10 +2224,10 @@ TEST_BEGIN(test_io_adapter_address_1) {
 }
 TEST_END
 
-uint32_t test_io_adapter_address_2_result;
+uint32_t test_io_adapter_socket_2_result;
 
 void
-test_io_adapter_address_2_rx_event (io_event_t *ev) {
+test_io_adapter_socket_2_rx_event (io_event_t *ev) {
 	io_socket_t *this = ev->user_value;
 
 	io_encoding_pipe_t* pipe = cast_to_io_encoding_pipe (
@@ -2243,13 +2243,13 @@ test_io_adapter_address_2_rx_event (io_event_t *ev) {
 			io_encoding_get_content (rx,&b,&e);
 
 			if (e - b == 4 && memcmp (b,"gook",4) == 0) {
-				test_io_adapter_address_2_result = 1;
+				test_io_adapter_socket_2_result = 1;
 			}
 		}
 	}
 }
 
-TEST_BEGIN(test_io_adapter_address_2) {
+TEST_BEGIN(test_io_adapter_socket_2) {
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
 	memory_info_t bmbegin,bmend;
 	const io_settings_t bus = {
@@ -2271,7 +2271,7 @@ TEST_BEGIN(test_io_adapter_address_2) {
 	io_event_t rx;
 	
 	build_io_sockets(TEST_IO,leaf,net,SIZEOF(net));
-	initialise_io_event (&rx,test_io_adapter_address_2_rx_event,leaf[3]);
+	initialise_io_event (&rx,test_io_adapter_socket_2_rx_event,leaf[3]);
 	
 	io_socket_bind_inner (leaf[3],io_invalid_address(),NULL,&rx);
 	
@@ -2284,11 +2284,11 @@ TEST_BEGIN(test_io_adapter_address_2) {
 		if (VERIFY (msg != NULL,NULL)) {
 			io_socket_open (leaf[0]);
 			io_socket_open (leaf[3]);
-			test_io_adapter_address_2_result = 0;
+			test_io_adapter_socket_2_result = 0;
 			io_encoding_append_string (msg,"gook",4);
 			VERIFY (io_socket_send_message (leaf[0],msg),NULL);
 			io_wait_for_all_events (TEST_IO);
-			VERIFY (test_io_adapter_address_2_result == 1,NULL);
+			VERIFY (test_io_adapter_socket_2_result == 1,NULL);
 		}
 	}
 	
@@ -2378,8 +2378,8 @@ io_sockets_unit_test (V_unit_test_t *unit) {
 		test_io_address_1,
 		test_io_address_2,
 		test_io_address_3,
-		test_io_adapter_address_1,
-		test_io_adapter_address_2,
+		test_io_adapter_socket_1,
+		test_io_adapter_socket_2,
 		test_io_multiplex_socket_1,
 		test_io_multiplexer_socket_1,
 		0
