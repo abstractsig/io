@@ -740,11 +740,13 @@ typedef struct io_layer io_layer_t;
 
 typedef vref_t (*io_value_decoder_t) (io_encoding_t*,io_value_memory_t*);
 
+typedef io_layer_t* (*io_make_layer_t) (io_byte_memory_t*,io_encoding_t*);
+
 typedef struct io_encoding_layer_api {
 	void* (*get_inner_layer) (io_encoding_t*,io_layer_t*);
 	void* (*get_outer_layer) (io_encoding_t*,io_layer_t*);
 	void* (*get_layer) (io_encoding_t*,io_layer_implementation_t const*);
-	io_layer_t* (*push_layer) (io_encoding_t*,io_layer_implementation_t const*);
+	io_layer_t* (*push_layer_2) (io_encoding_t*,io_make_layer_t);
 } io_encoding_layer_api_t;
 
 #define IO_ENCODING_IMPLEMENTATION_STRUCT_MEMBERS \
@@ -858,9 +860,9 @@ io_encoding_get_outermost_layer (io_encoding_t *encoding) {
 }
 
 INLINE_FUNCTION io_layer_t*
-io_encoding_push_layer (io_encoding_t *encoding,io_layer_implementation_t const *L) {
+io_encoding_push_layer_2 (io_encoding_t *encoding,io_make_layer_t make) {
 	if (encoding != NULL) {
-		return encoding->implementation->layer->push_layer (encoding,L);
+		return encoding->implementation->layer->push_layer_2 (encoding,make);
 	} else {
 		return NULL;
 	}
@@ -4203,7 +4205,7 @@ EVENT_DATA io_encoding_layer_api_t no_packet_layer_api = {
 	.get_inner_layer = NULL,
 	.get_outer_layer = NULL,
 	.get_layer = io_encoding_no_layer,
-	.push_layer = NULL,
+	.push_layer_2 = NULL,
 };
 
 EVENT_DATA io_encoding_implementation_t io_encoding_implementation_base = {
@@ -4379,29 +4381,23 @@ io_binary_encoding_get_content (
 };
 
 void*
-wordwise_32_unaligned_memset (void* s, int c, size_t sz) {
+wordwise_32_unaligned_memset (void* s,int c,size_t sz) {
 	uint32_t* p;
 	uint32_t x = c & 0xff;
 	uint8_t xx = c & 0xff;
 	uint8_t* pp = (uint8_t*)s;
 	size_t tail;
 
-	/* Let's introduce a prologue to bump the starting location forward to the
-	* next alignment boundary.
-	*/
-	while (((unsigned int)pp & 3) && sz--) {
+	// set up to the first alignment boundary.
+	while (((unsigned int)pp & 3) && sz) {
 		*pp++ = xx;
+		sz--;
 	}
 	p = (uint32_t*)pp;
 
-	/* Let's figure out the number of bytes that will be trailing when the
-	* word-wise loop taps out.
-	*/
+	// the number of bytes that will be trailing when the last word
 	tail = sz & 3;
 
-	/* The middle of this function is identical to the wordwise_32_memset minus
-	* the alignment checks.
-	*/
 	x |= x << 8;
 	x |= x << 16;
 
@@ -4411,7 +4407,7 @@ wordwise_32_unaligned_memset (void* s, int c, size_t sz) {
 	  *p++ = x;
 	}
 
-	/* Now we introduce an epilogue to account for the trailing bytes. */
+	// set after the last alignment boundary.
 	pp = (uint8_t*)p;
 	while (tail--) {
 		*pp++ = xx;
