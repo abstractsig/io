@@ -253,9 +253,9 @@ cast_to_io_counted_socket (io_socket_t *socket) {
 	io_socket_t *outer_socket; \
 	/**/
 
-typedef struct PACK_STRUCTURE io_adapter_address {
+typedef struct PACK_STRUCTURE io_adapter_socket {
 	IO_ADAPTER_SOCKET_STRUCT_MEMBERS	
-} io_adapter_address_t;
+} io_adapter_socket_t;
 
 io_socket_t* allocate_io_adapter_address (io_t*,io_address_t);
 io_socket_t* io_adapter_address_initialise (io_socket_t*,io_t*,io_settings_t const*);
@@ -263,10 +263,10 @@ void io_adapter_address_free (io_socket_t*);
 
 extern EVENT_DATA io_socket_implementation_t io_adapter_address_implementation;
 
-INLINE_FUNCTION io_adapter_address_t*
+INLINE_FUNCTION io_adapter_socket_t*
 cast_to_io_adapter_address (io_socket_t *socket) {
 	if (is_io_socket_of_type (socket,&io_adapter_address_implementation)) {
-		return (io_adapter_address_t*) socket;
+		return (io_adapter_socket_t*) socket;
 	} else {
 		return NULL;
 	}
@@ -669,7 +669,7 @@ io_counted_socket_free (io_socket_t *socket) {
 
 io_socket_t*
 io_adapter_address_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) {
-	io_adapter_address_t *this = (io_adapter_address_t*) socket;
+	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 
 	initialise_io_counted_socket ((io_counted_socket_t*) socket,io);
 	this->outer_socket = NULL;
@@ -683,7 +683,7 @@ io_adapter_address_initialise (io_socket_t *socket,io_t *io,io_settings_t const 
 io_socket_t*
 allocate_io_adapter_address (io_t *io,io_address_t address) {
 	io_socket_t *socket = io_byte_memory_allocate (
-		io_get_byte_memory (io),sizeof(io_adapter_address_t)
+		io_get_byte_memory (io),sizeof(io_adapter_socket_t)
 	);
 	socket->implementation = &io_adapter_address_implementation;
 	socket->address = duplicate_io_address (io_get_byte_memory (io),address);
@@ -692,7 +692,7 @@ allocate_io_adapter_address (io_t *io,io_address_t address) {
 
 void
 io_adapter_address_free (io_socket_t *socket) {
-	io_adapter_address_t *this = (io_adapter_address_t*) socket;
+	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 
 	io_dequeue_event (io_socket_io (socket),this->transmit_available);
 	io_dequeue_event (io_socket_io (socket),this->receive_data_available);
@@ -702,7 +702,7 @@ io_adapter_address_free (io_socket_t *socket) {
 
 bool
 io_adapter_address_open (io_socket_t *socket) {
-	io_adapter_address_t *this = (io_adapter_address_t*) socket;
+	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 	if (this->outer_socket != NULL) {
 		return io_socket_open (this->outer_socket);
 	} else {
@@ -712,7 +712,7 @@ io_adapter_address_open (io_socket_t *socket) {
 
 static void
 io_adapter_address_close (io_socket_t *socket) {
-	io_adapter_address_t *this = (io_adapter_address_t*) socket;
+	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 	if (this->outer_socket != NULL) {
 		io_socket_unbind_inner (this->outer_socket,io_socket_address(socket));
 	}
@@ -720,7 +720,7 @@ io_adapter_address_close (io_socket_t *socket) {
 
 static bool
 io_adapter_address_is_closed (io_socket_t const *socket) {
-	io_adapter_address_t *this = (io_adapter_address_t*) socket;
+	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 	if (this->outer_socket != NULL) {
 		return io_socket_is_closed (this->outer_socket);
 	} else {
@@ -732,7 +732,7 @@ static bool
 io_adapter_address_bind (
 	io_socket_t *socket,io_address_t a,io_event_t *tx,io_event_t *rx
 ) {
-	io_adapter_address_t *this = (io_adapter_address_t*) socket;
+	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 
 	this->transmit_available = tx;
 	this->receive_data_available = rx;
@@ -742,7 +742,7 @@ io_adapter_address_bind (
 
 void
 io_adapter_address_unbind_inner (io_socket_t *socket,io_address_t address) {
-	io_adapter_address_t *this = (io_adapter_address_t*) socket;
+	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 
 	io_dequeue_event (io_socket_io (socket),this->transmit_available);
 	io_dequeue_event (io_socket_io (socket),this->receive_data_available);
@@ -757,7 +757,7 @@ io_adapter_address_unbind_inner (io_socket_t *socket,io_address_t address) {
 
 static bool
 io_adapter_address_bind_to_outer (io_socket_t *socket,io_socket_t *outer) {
-	io_adapter_address_t *this = (io_adapter_address_t*) socket;
+	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 
 	this->outer_socket = outer;
 
@@ -773,7 +773,7 @@ io_adapter_address_bind_to_outer (io_socket_t *socket,io_socket_t *outer) {
 
 io_encoding_t*
 io_adapter_address_new_message (io_socket_t *socket) {
-	io_adapter_address_t *this = (io_adapter_address_t*) socket;
+	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 	if (this->outer_socket != NULL) {
 		io_encoding_t *message = reference_io_encoding (
 			io_socket_new_message (this->outer_socket)
@@ -790,7 +790,7 @@ io_adapter_address_new_message (io_socket_t *socket) {
 
 bool
 io_adapter_address_send_message (io_socket_t *socket,io_encoding_t *encoding) {
-	io_adapter_address_t *this = (io_adapter_address_t*) socket;
+	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 	bool ok = false;
 
 	if (this->outer_socket != NULL) {
@@ -803,7 +803,7 @@ io_adapter_address_send_message (io_socket_t *socket,io_encoding_t *encoding) {
 
 io_pipe_t*
 io_adapter_address_get_receive_pipe (io_socket_t *socket,io_address_t address) {
-	io_adapter_address_t *this = (io_adapter_address_t*) socket;
+	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 	if (this->outer_socket != NULL) {
 		return io_socket_get_receive_pipe (this->outer_socket,address);
 	} else {
@@ -813,7 +813,7 @@ io_adapter_address_get_receive_pipe (io_socket_t *socket,io_address_t address) {
 
 static size_t
 io_adapter_address_mtu (io_socket_t const *socket) {
-	io_adapter_address_t const *this = (io_adapter_address_t const*) socket;
+	io_adapter_socket_t const *this = (io_adapter_socket_t const*) socket;
 	if (this->outer_socket) {
 		return io_socket_mtu (this->outer_socket);
 	} else {
