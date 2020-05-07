@@ -2205,7 +2205,7 @@ TEST_BEGIN(test_io_adapter_address_1) {
 	io_address_t a =  mk_io_address (bm,sizeof(bytes),bytes);
 	
 	const socket_builder_t net[] = {
-		{0,allocate_io_adapter_address,a,NULL,false,NULL},
+		{0,allocate_io_adapter_socket,a,NULL,false,NULL},
 	};
 	io_socket_t* leaf[SIZEOF(net)];
 	free_io_address(bm,a);
@@ -2213,7 +2213,7 @@ TEST_BEGIN(test_io_adapter_address_1) {
 	build_io_sockets(TEST_IO,leaf,net,SIZEOF(net));
 	
 	VERIFY (cast_to_io_counted_socket(leaf[0]) != NULL,NULL);
-	VERIFY (cast_to_io_adapter_address(leaf[0]) != NULL,NULL);
+	VERIFY (cast_to_io_adapter_socket(leaf[0]) != NULL,NULL);
 	VERIFY (cast_to_io_multiplex_socket(leaf[0]) == NULL,NULL);
 	
 	io_wait_for_all_events (TEST_IO);
@@ -2260,10 +2260,10 @@ TEST_BEGIN(test_io_adapter_address_2) {
 	io_byte_memory_get_info (bm,&bmbegin);
 
 	const socket_builder_t net[] = {
-		{0,allocate_io_adapter_address,def_io_u8_address(22),NULL,false,BINDINGS({0,1},END_OF_BINDINGS)},
+		{0,allocate_io_adapter_socket,def_io_u8_address(22),NULL,false,BINDINGS({0,1},END_OF_BINDINGS)},
 		{1,allocate_io_socket_binary_emulator,def_io_u8_address(11),&bus,false,BINDINGS({1,2},END_OF_BINDINGS)},
 		{2,allocate_io_shared_media,io_invalid_address(),&bus,false,NULL},
-		{3,allocate_io_adapter_address,def_io_u8_address(11),NULL,false,BINDINGS({3,4},END_OF_BINDINGS)},
+		{3,allocate_io_adapter_socket,def_io_u8_address(11),NULL,false,BINDINGS({3,4},END_OF_BINDINGS)},
 		{4,allocate_io_socket_binary_emulator,def_io_u8_address(22),&bus,false,BINDINGS({4,2},END_OF_BINDINGS)},
 	};
 	io_socket_t* leaf[SIZEOF(net)];

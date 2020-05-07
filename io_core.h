@@ -756,6 +756,7 @@ typedef struct io_encoding_layer_api {
 	io_t* (*get_io) (io_encoding_t*);\
 	void* (*get_byte_stream) (io_encoding_t*); \
 	void (*get_content) (io_encoding_t*,uint8_t const**,uint8_t const**);\
+	uint32_t (*increment_decode_offest) (io_encoding_t*,uint32_t); \
 	vref_t (*decode_to_io_value) (io_encoding_t*,io_value_decoder_t,io_value_memory_t*);\
 	size_t (*print) (io_encoding_t*,char const*,va_list);\
 	size_t (*fill) (io_encoding_t*,uint8_t,size_t);\
@@ -799,7 +800,7 @@ bool	io_encoding_has_implementation (io_encoding_t const*,io_encoding_implementa
 io_encoding_t*	reference_io_encoding (io_encoding_t*);
 void	unreference_io_encoding (io_encoding_t*);
 void* io_encoding_no_layer (io_encoding_t*,io_layer_implementation_t const*);
-
+uint32_t io_encoding_no_decode_increment (io_encoding_t*,uint32_t);
 
 //
 // inline io_encoding methods
@@ -822,6 +823,11 @@ io_encoding_get_byte_stream (io_encoding_t *encoding) {
 INLINE_FUNCTION void
 io_encoding_get_content (io_encoding_t *encoding,uint8_t const **begin,uint8_t const **end) {
 	encoding->implementation->get_content (encoding,begin,end);
+}
+
+INLINE_FUNCTION uint32_t
+io_encoding_increment_decode_offest (io_encoding_t *encoding,uint32_t incr) {
+	return encoding->implementation->increment_decode_offest (encoding,incr);
 }
 
 INLINE_FUNCTION vref_t
@@ -922,11 +928,6 @@ io_encoding_append_string (io_encoding_t *encoding,char const* bytes,size_t size
 INLINE_FUNCTION bool
 io_encoding_pop_last_byte (io_encoding_t *encoding,uint8_t *byte) {
 	return encoding->implementation->pop_last_byte (encoding,byte);
-}
-
-INLINE_FUNCTION io_encoding_t*
-io_encoding_duplicate (io_encoding_t *encoding,io_byte_memory_t *bm) {
-	return encoding->implementation->make_encoding(bm);
 }
 
 /*
@@ -4201,6 +4202,11 @@ io_encoding_no_pop_last_byte (io_encoding_t *encoding,uint8_t *b) {
 	return false;
 }
 
+uint32_t
+io_encoding_no_decode_increment (io_encoding_t *encoding,uint32_t incr) {
+	return 0;
+}
+
 EVENT_DATA io_encoding_layer_api_t no_packet_layer_api = {
 	.get_inner_layer = NULL,
 	.get_outer_layer = NULL,
@@ -4216,6 +4222,7 @@ EVENT_DATA io_encoding_implementation_t io_encoding_implementation_base = {
 	.get_byte_stream = io_encoding_no_byte_stream,
 	.get_content = io_encoding_no_content,
 	.decode_to_io_value = io_value_encoding_decode_to_io_value,
+	.increment_decode_offest = io_encoding_no_decode_increment,
 	.limit = null_encoding_limit,
 	.length = null_encoding_length,
 	.fill = io_encoding_no_fill,
@@ -4250,6 +4257,7 @@ EVENT_DATA io_encoding_implementation_t io_value_int64_encoding_implementation =
 	.get_byte_stream = io_encoding_no_byte_stream,
 	.get_content = io_encoding_no_content,
 	.decode_to_io_value = io_value_encoding_decode_to_io_value,
+	.increment_decode_offest = io_encoding_no_decode_increment,
 	.limit = null_encoding_limit,
 	.length = null_encoding_length,
 	.fill = io_encoding_no_fill,
@@ -4277,6 +4285,7 @@ EVENT_DATA io_encoding_implementation_t io_value_float64_encoding_implementation
 	.get_byte_stream = io_encoding_no_byte_stream,
 	.get_content = io_encoding_no_content,
 	.decode_to_io_value = io_value_encoding_decode_to_io_value,
+	.increment_decode_offest = io_encoding_no_decode_increment,
 	.limit = null_encoding_limit,
 	.length = null_encoding_length,
 	.fill = io_encoding_no_fill,
@@ -4585,6 +4594,7 @@ io_binary_encoding_get_byte_stream (io_encoding_t *encoding) {
 EVENT_DATA io_encoding_implementation_t io_binary_encoding_implementation = {
 	.specialisation_of = &io_encoding_implementation_base,
 	.decode_to_io_value = io_binary_encoding_decode_to_io_value,
+	.increment_decode_offest = io_encoding_no_decode_increment,
 	.make_encoding = mk_null_encoding,
 	.free = free_null_encoding,
 	.get_io = io_binary_encoding_get_io,
@@ -4650,10 +4660,9 @@ io_text_encoding_get_visited (io_text_encoding_t *this) {
 }
 
 EVENT_DATA io_encoding_implementation_t io_text_encoding_implementation = {
-	.specialisation_of = IO_ENCODING_IMPLEMENATAION (
-		&io_binary_encoding_implementation
-	),
+	.specialisation_of = &io_binary_encoding_implementation,
 	.decode_to_io_value = io_binary_encoding_decode_to_io_value,
+	.increment_decode_offest = io_encoding_no_decode_increment,
 	.make_encoding = io_text_encoding_new,
 	.free = io_text_encoding_free,
 	.get_io = io_binary_encoding_get_io,

@@ -174,6 +174,7 @@ io_inner_port_binding_t* virtual_io_layer_select_inner_binding (io_layer_t*,io_e
 	IO_BINARY_ENCODING_STRUCT_MEMBERS \
 	io_layer_t **layers; \
 	io_layer_t **end_of_layers; \
+	uint32_t decode_cursor; \
 	/**/
 	
 struct PACK_STRUCTURE io_packet_encoding {
@@ -305,6 +306,7 @@ initialise_io_packet_encoding (io_packet_encoding_t *this) {
 	if (this) {
 		this->layers = NULL;
 		this->end_of_layers = NULL;
+		this->decode_cursor = 0;
 	}
 	return this;
 }
@@ -419,11 +421,20 @@ io_packet_encoding_default_limit (void) {
 	return (1<<16);
 }
 
+static uint32_t
+io_packet_encoding_increment_decode_offest (io_encoding_t *encoding,uint32_t incr) {
+	io_packet_encoding_t *packet = (io_packet_encoding_t*) encoding;
+	uint32_t offset = packet->decode_cursor;
+	packet->decode_cursor += incr;
+	return offset;
+}
+
 EVENT_DATA io_encoding_implementation_t io_packet_encoding_implementation = {
 	.specialisation_of = &io_binary_encoding_implementation,
-	.decode_to_io_value = io_binary_encoding_decode_to_io_value,
 	.make_encoding = io_packet_encoding_new,
 	.free = io_packet_encoding_free,
+	.decode_to_io_value = io_binary_encoding_decode_to_io_value,
+	.increment_decode_offest = io_packet_encoding_increment_decode_offest,
 	.get_io = io_binary_encoding_get_io,
 	.grow = io_binary_encoding_grow,
 	.grow_increment = default_io_encoding_grow_increment,
@@ -469,7 +480,6 @@ mk_io_binary_layer (io_byte_memory_t *bm,io_encoding_t *packet) {
 
 	if (this) {
 		this->implementation = &io_binary_layer_implementation;
-		this->layer_offset_in_byte_stream = io_encoding_length (packet);
 		this->source_address = io_invalid_address();
 		this->destination_address = io_invalid_address();
 	}
@@ -482,6 +492,7 @@ mk_io_binary_transmit_layer (io_byte_memory_t *bm,io_encoding_t *packet) {
 	io_binary_layer_t *this = mk_io_binary_layer (bm,packet);
 
 	if (this) {
+		this->layer_offset_in_byte_stream = io_encoding_length (packet);
 		io_encoding_fill (packet,0,sizeof(io_binary_frame_t));
 	}
 	
@@ -490,7 +501,15 @@ mk_io_binary_transmit_layer (io_byte_memory_t *bm,io_encoding_t *packet) {
 
 static io_layer_t*
 mk_io_binary_receive_layer (io_byte_memory_t *bm,io_encoding_t *packet) {
-	return (io_layer_t*) mk_io_binary_layer (bm,packet);
+	io_binary_layer_t *this = mk_io_binary_layer (bm,packet);
+
+	if (this) {
+		this->layer_offset_in_byte_stream = io_encoding_increment_decode_offest (
+			packet,sizeof(io_binary_frame_t)
+		);
+	}
+	
+	return (io_layer_t*) this;
 }
 
 static void
@@ -576,9 +595,6 @@ io_binary_layer_push_receive_layer (io_layer_t *layer,io_encoding_t *encoding) {
 	if (binary) {
 		io_layer_set_source_address (
 			binary,encoding,io_layer_get_source_address(layer,encoding)
-		);
-		io_layer_set_destination_address (
-			binary,encoding,io_layer_get_destination_address(layer,encoding)
 		);
 	}
 	
@@ -669,7 +685,6 @@ mk_io_link_layer (io_byte_memory_t *bm,io_encoding_t *packet) {
 
 	if (this) {
 		this->implementation = &io_link_layer_implementation;
-		this->layer_offset_in_byte_stream = io_encoding_length (packet);
 		this->source_address = io_invalid_address();
 		this->destination_address = io_invalid_address();
 		this->inner_address = io_invalid_address();
@@ -683,6 +698,7 @@ mk_io_link_transmit_layer (io_byte_memory_t *bm,io_encoding_t *packet) {
 	io_link_layer_t *this = mk_io_link_layer (bm,packet);
 
 	if (this) {
+		this->layer_offset_in_byte_stream = io_encoding_length (packet);
 		io_encoding_fill (packet,0,sizeof(io_a4_link_frame_t));
 	}
 	
@@ -691,7 +707,31 @@ mk_io_link_transmit_layer (io_byte_memory_t *bm,io_encoding_t *packet) {
 
 static io_layer_t*
 mk_io_link_receive_layer (io_byte_memory_t *bm,io_encoding_t *packet) {
-	return (io_layer_t*) mk_io_link_layer (bm,packet);
+	io_link_layer_t *this = mk_io_link_layer (bm,packet);
+
+	if (this) {
+		this->layer_offset_in_byte_stream = io_encoding_increment_decode_offest (
+			packet,sizeof(io_a4_link_frame_t)
+		);
+		io_a4_link_frame_t *frame = io_layer_get_byte_stream ((io_layer_t*) this,packet);
+		io_address_t address;
+		uint8_t *read_cursor = frame->address_buffer;
+		uint8_t *end_of_buffer = read_cursor + IO_A4_LINK_FRAME_BUFFER_LIMIT;
+	
+		address = io_invalid_address();
+		read_cursor += read_le_io_address (bm,read_cursor,end_of_buffer - read_cursor,&address);
+		io_layer_set_source_address ((io_layer_t*) this,packet,address);
+
+		address = io_invalid_address();
+		read_cursor += read_le_io_address (bm,read_cursor,end_of_buffer - read_cursor,&address);
+		io_layer_set_destination_address ((io_layer_t*) this,packet,address);
+
+		address = io_invalid_address();
+		read_cursor += read_le_io_address (bm,read_cursor,end_of_buffer - read_cursor,&address);
+		io_layer_set_inner_address ((io_layer_t*) this,packet,address);
+	}
+	
+	return (io_layer_t*) this;
 }
 
 static void
@@ -712,7 +752,7 @@ static void
 io_link_layer_get_content (
 	io_layer_t *layer,io_encoding_t *encoding,uint8_t const **begin,uint8_t const **end
 ) {
-	io_binary_frame_t *frame = io_layer_get_byte_stream (layer,encoding);
+	io_a4_link_frame_t *frame = io_layer_get_byte_stream (layer,encoding);
 	*begin = frame->content;
 	*end = frame->content + io_layer_get_length (layer,encoding);
 }
@@ -794,20 +834,8 @@ io_link_layer_select_inner_binding (
 
 static io_layer_t*
 io_link_layer_push_receive_layer (io_layer_t *layer,io_encoding_t *encoding) {
-	io_layer_t *new_layer = push_io_link_receive_layer (encoding);
-	if (new_layer) {
-		io_layer_set_source_address (
-			new_layer,encoding,io_layer_get_source_address(layer,encoding)
-		);
-		io_layer_set_destination_address (
-			new_layer,encoding,io_layer_get_destination_address(layer,encoding)
-		);
-		io_layer_set_inner_address (
-			new_layer,encoding,io_layer_get_inner_address(layer,encoding)
-		);
-	}
-	
-	return layer;
+	io_layer_t *new_layer = push_io_link_receive_layer (encoding);	
+	return new_layer;
 }
 
 static bool
