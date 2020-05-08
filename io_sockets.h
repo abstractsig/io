@@ -1485,10 +1485,6 @@ io_shared_media_new_message (io_socket_t *socket) {
 	return NULL;
 }
 
-io_encoding_t*
-io_encoding_make_empty_duplicate (io_encoding_t *encoding,io_byte_memory_t *bm) {
-	return encoding->implementation->make_encoding(bm);
-}
 
 io_encoding_t*
 io_packet_encoding_copy (io_encoding_t *source_encoding) {
@@ -1505,35 +1501,11 @@ io_packet_encoding_copy (io_encoding_t *source_encoding) {
 }
 
 static io_encoding_t*
-io_shared_media_make_reveive_copy (io_packet_encoding_t *source_encoding) {
+io_shared_media_make_receive_copy (io_packet_encoding_t *source_encoding) {
 	io_layer_t *base = io_encoding_get_outermost_layer ((io_encoding_t*) source_encoding);
 	if (base) {
-		#if 1
 		io_encoding_t *copy = io_packet_encoding_copy ((io_encoding_t*) source_encoding);
 		io_layer_push_receive_layer (base,copy);
-		
-		#else
-		io_encoding_t *copy = io_encoding_make_empty_duplicate (
-			(io_encoding_t*) source_encoding,source_encoding->bm
-		);
-
-		io_encoding_append_bytes (
-			copy,
-			io_encoding_get_byte_stream ((io_encoding_t*) source_encoding),
-			io_encoding_length((io_encoding_t*) source_encoding)
-		);
-
-		io_layer_t *rx_layer = io_layer_push_receive_layer (base,copy);
-		
-		if (rx_layer) {
-			io_encoding_reset (copy);
-			io_encoding_append_bytes (
-				copy,
-				io_encoding_get_byte_stream ((io_encoding_t*) source_encoding),
-				io_encoding_length((io_encoding_t*) source_encoding)
-			);
-		}
-		#endif
 		return copy;
 	} else {
 		return NULL;
@@ -1555,7 +1527,7 @@ io_shared_media_send_message (io_socket_t *socket,io_encoding_t *encoding) {
 		
 		if (cursor != end) {
 			//
-			receive_message = io_shared_media_make_reveive_copy ((io_packet_encoding_t*) encoding);
+			receive_message = io_shared_media_make_receive_copy ((io_packet_encoding_t*) encoding);
 			reference_io_encoding (receive_message);
 		}
 
