@@ -566,18 +566,6 @@ io_binary_layer_set_destination_address (
 	}
 }
 
-static io_address_t
-io_binary_layer_get_inner_address (io_layer_t *layer,io_encoding_t *message) {
-	return io_invalid_address();
-}
-
-static bool
-io_binary_layer_set_inner_address (
-	io_layer_t *layer,io_encoding_t *message,io_address_t address
-) {
-	return true;
-}
-
 static void
 io_binary_layer_get_content (
 	io_layer_t *layer,io_encoding_t *encoding,uint8_t const **begin,uint8_t const **end
@@ -635,8 +623,8 @@ EVENT_DATA io_layer_implementation_t io_binary_layer_implementation = {
 	.set_destination_address = io_binary_layer_set_destination_address,
 	.get_source_address = io_binary_layer_get_source_address,
 	.set_source_address = io_binary_layer_set_source_address,
-	.get_inner_address = io_binary_layer_get_inner_address,
-	.set_inner_address = io_binary_layer_set_inner_address,
+	.get_inner_address = io_binary_layer_get_source_address,
+	.set_inner_address = io_binary_layer_set_source_address,
 };
 
 io_layer_t*

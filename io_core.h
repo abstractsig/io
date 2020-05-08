@@ -27,7 +27,6 @@
  * COMMING SOON
  * ============
  * Add cycle detection to garbage collection
- * Layered communication sockets
  * Persistent storage of io_values
  * Additional io language support for Javascript and Python
  * A ms windows io cpu
@@ -6966,7 +6965,6 @@ io_source_decoder_pop_input (io_source_decoder_t *this) {
 		io_source_decoder_goto(this,this->error_state);
 	}
 }
-
 
 static bool
 io_source_decoder_push_context (io_source_decoder_t *this,vref_t r_value) {

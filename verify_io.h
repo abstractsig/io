@@ -71,7 +71,7 @@ uint32_t		print_unit_test_report (V_runner_t*);
 #ifdef IMPLEMENT_VERIFY_IO_CORE
 //-----------------------------------------------------------------------------
 //
-// implementaion of verify
+// implementation of verify
 //
 //-----------------------------------------------------------------------------
 #include <io_device.h>
@@ -189,6 +189,21 @@ print_unit_test_report (V_runner_t *runner) {
 }
 #ifdef IMPLEMENT_VERIFY_IO_MATH
 
+TEST_BEGIN(test_compiler_struct_handling_1) {
+	//
+	// implementation 'overloading' depends on this capability
+	// in the compiler
+	//
+	struct {
+		int a;
+	} v = {
+		.a = 2,
+		.a = 4,
+	};
+	VERIFY (v.a == 4,NULL);
+}
+TEST_END
+
 TEST_BEGIN(test_io_is_prime_1) {
 	VERIFY (!is_u32_integer_prime (0),NULL);
 	VERIFY (!is_u32_integer_prime (1),NULL);
@@ -270,6 +285,7 @@ UNIT_TEARDOWN(teardown_io_math_unit_test) {
 void
 io_math_unit_test (V_unit_test_t *unit) {
 	static V_test_t const tests[] = {
+		test_compiler_struct_handling_1,
 		test_io_is_prime_1,
 		test_io_next_prime_1,
 		test_read_le_uint32_1,
@@ -2282,8 +2298,8 @@ TEST_BEGIN(test_io_adapter_socket_2) {
 	{
 		io_encoding_t *msg = io_socket_new_message(leaf[0]);
 		if (VERIFY (msg != NULL,NULL)) {
-			io_socket_open (leaf[0]);
-			io_socket_open (leaf[3]);
+			io_socket_open (leaf[0],IO_SOCKET_OPEN_CONNECT);
+			io_socket_open (leaf[3],IO_SOCKET_OPEN_CONNECT);
 			test_io_adapter_socket_2_result = 0;
 			io_encoding_append_string (msg,"gook",4);
 			VERIFY (io_socket_send_message (leaf[0],msg),NULL);

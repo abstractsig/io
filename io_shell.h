@@ -25,7 +25,7 @@ def_constant_symbol(cr_T_STOP,		"stop",4)
 #ifdef IMPLEMENT_IO_SHELL
 //-----------------------------------------------------------------------------
 //
-// implementaion of io_shell
+// implementation of io_shell
 //
 //-----------------------------------------------------------------------------
 io_source_decoder_t*

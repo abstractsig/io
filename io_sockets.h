@@ -17,11 +17,71 @@ typedef struct io_socket_implementation io_socket_implementation_t;
 typedef bool (*io_socket_iterator_t) (io_socket_t*,void*);
 typedef bool (*io_socket_constructor_t) (io_t*,io_address_t,io_socket_t**,io_socket_t**);
 
+//
+// stuff referenced in layers
+//
+
 io_inner_port_binding_t* io_multiplex_socket_find_inner_port_binding (io_multiplex_socket_t*,io_address_t);
-io_inner_constructor_binding_t* io_multiplex_socket_find_inner_constructor_binding (io_multiplex_socket_t*,io_address_t);
 
 #include <io_layers.h>
 
+//
+// state
+//
+typedef struct io_socket_state io_socket_state_t;
+
+typedef enum {
+	IO_SOCKET_OPEN_CONNECT,
+	IO_SOCKET_OPEN_LISTEN
+} io_socket_open_flag_t;
+
+#define IO_SOCKET_STATE_STRUCT_MEMBERS \
+	io_socket_state_t const *specialisation_of; \
+	io_socket_state_t const* (*enter) (io_socket_t*); \
+	io_socket_state_t const* (*open) (io_socket_t*,io_socket_open_flag_t); \
+	io_socket_state_t const* (*close) (io_socket_t*); \
+	io_socket_state_t const* (*receive) (io_socket_t*); \
+	io_socket_state_t const* (*transmit) (io_socket_t*); \
+	io_socket_state_t const* (*timer) (io_socket_t*); \
+	/**/
+	
+struct PACK_STRUCTURE io_socket_state {
+	IO_SOCKET_STATE_STRUCT_MEMBERS
+};
+
+void io_socket_call_open (io_socket_t*,io_socket_open_flag_t);
+void io_socket_call_state (io_socket_t*,io_socket_state_t const* (*fn) (io_socket_t*));
+io_socket_state_t const* io_socket_state_ignore_event (io_socket_t*);
+io_socket_state_t const* io_socket_state_ignore_open_event (io_socket_t*,io_socket_open_flag_t);
+
+extern EVENT_DATA io_socket_state_t io_socket_state;
+
+#define SPECIALISE_IO_SOCKET_STATE(S) \
+	.specialisation_of = (io_socket_state_t const*) S, \
+	.enter = io_socket_state_ignore_event, \
+	.open = io_socket_state_ignore_open_event, \
+	.close = io_socket_state_ignore_event, \
+	.receive = io_socket_state_ignore_event, \
+	.transmit = io_socket_state_ignore_event, \
+	.timer = io_socket_state_ignore_event, \
+	/**/
+
+typedef struct PACK_STRUCTURE io_socket_open_event {
+	IO_EVENT_STRUCT_MEMBERS
+	uint32_t flag;
+} io_socket_open_event_t;
+
+io_event_t* mk_io_socket_open_event (io_byte_memory_t*,io_socket_open_flag_t);
+
+INLINE_FUNCTION void
+free_io_socket_open_event (io_byte_memory_t *bm,io_socket_open_event_t *this) {
+	io_byte_memory_free (bm,this);
+}
+
+
+//
+// notify
+//
 typedef struct PACK_STRUCTURE io_notify_event {
 	IO_EVENT_STRUCT_MEMBERS
 	io_socket_t *socket;
@@ -33,6 +93,11 @@ initialise_io_notify (
 ) {
 	initialise_io_event ((io_event_t*) ev,fn,user_value);
 	ev->socket = socket;	// reference??
+}
+
+INLINE_FUNCTION void
+free_io_notify (io_notify_event_t *ev) {
+	ev->socket = NULL;
 }
 
 typedef struct PACK_STRUCTURE io_settings {
@@ -52,7 +117,7 @@ typedef struct PACK_STRUCTURE io_settings {
 	io_socket_t* (*initialise) (io_socket_t*,io_t*,io_settings_t const*);\
 	io_socket_t* (*reference) (io_socket_t*,int32_t);\
 	void (*free) (io_socket_t*);\
-	bool (*open) (io_socket_t*);\
+	bool (*open) (io_socket_t*,io_socket_open_flag_t);\
 	void (*close) (io_socket_t*);\
 	bool (*is_closed) (io_socket_t const*);\
 	bool (*bind_inner) (io_socket_t*,io_address_t,io_event_t*,io_event_t*);\
@@ -74,6 +139,7 @@ struct PACK_STRUCTURE io_socket_implementation {
 #define IO_SOCKET_STRUCT_MEMBERS \
 	io_socket_implementation_t const *implementation;\
 	io_address_t address;\
+	io_socket_state_t const *State;\
 	io_t *io;\
 	/**/
 
@@ -100,6 +166,17 @@ extern EVENT_DATA io_socket_implementation_t io_physical_socket_implementation;
 //
 // inline io socket implementation
 //
+
+INLINE_FUNCTION void
+io_socket_enter_current_state (io_socket_t *socket) {
+	io_socket_call_state (socket,socket->State->enter);
+}
+
+INLINE_FUNCTION io_socket_state_t const*
+call_io_socket_state_enter (io_socket_t *socket) {
+	return socket->State->enter (socket);
+}
+
 INLINE_FUNCTION io_socket_t*
 io_socket_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) {
 	return socket->implementation->initialise(socket,io,C);
@@ -119,8 +196,8 @@ io_socket_free (io_socket_t *socket) {
 }
 
 INLINE_FUNCTION bool
-io_socket_open (io_socket_t *socket) {
-	return socket->implementation->open (socket);
+io_socket_open (io_socket_t *socket,io_socket_open_flag_t flag) {
+	return socket->implementation->open (socket,flag);
 }
 
 INLINE_FUNCTION void
@@ -184,7 +261,7 @@ io_socket_mtu (io_socket_t *socket) {
 io_socket_t*	io_virtual_socket_initialise (io_socket_t*,io_t*,io_settings_t const*);
 io_socket_t*	io_virtual_socket_increment_reference (io_socket_t*,int32_t);
 void 				io_virtual_socket_free (io_socket_t*);
-bool				io_virtual_socket_open (io_socket_t*);
+bool				io_virtual_socket_open (io_socket_t*,io_socket_open_flag_t);
 void				io_virtual_socket_close (io_socket_t*);
 bool				io_virtual_socket_is_closed (io_socket_t const*);
 bool				io_virtual_socket_bind_inner (io_socket_t*,io_address_t,io_event_t*,io_event_t*);
@@ -196,7 +273,7 @@ io_encoding_t*	io_virtual_socket_new_message (io_socket_t*);
 bool				io_virtual_socket_send_message (io_socket_t*,io_encoding_t*);
 size_t			io_virtual_socket_mtu (io_socket_t const*);
 
-#define SPECIALISE_IO_VIRTUAL_SOCKET(S) \
+#define SPECIALISE_IO_SOCKET_IMPLEMENTATION(S) \
 	.specialisation_of = S, \
 	.reference = io_virtual_socket_increment_reference, \
 	.initialise = io_virtual_socket_initialise, \
@@ -297,7 +374,6 @@ struct PACK_STRUCTURE io_inner_port_binding {
 	io_inner_port_t *port;
 };
 
-
 struct PACK_STRUCTURE io_inner_constructor_binding {
 	io_address_t address;
 	io_socket_constructor_t make;
@@ -309,11 +385,16 @@ typedef struct PACK_STRUCTURE {
 	io_inner_constructor_binding_t *end;
 } io_inner_constructor_bindings_t;
 
+io_inner_constructor_bindings_t* mk_io_inner_constructor_bindings (io_t*);
+void free_io_inner_constructor_bindings (io_inner_constructor_bindings_t*,io_t*);
+io_inner_constructor_binding_t* io_inner_constructor_bindings_find_binding (io_inner_constructor_bindings_t*,io_address_t);
+bool io_inner_constructor_bindings_bind (io_inner_constructor_bindings_t*,io_t*,io_address_t,io_socket_constructor_t,io_notify_event_t*);
+
 #define IO_MULTIPLEX_SOCKET_STRUCT_MEMBERS \
 	IO_COUNTED_SOCKET_STRUCT_MEMBERS \
 	io_inner_port_binding_t *slots; \
 	uint32_t number_of_slots; \
-	io_inner_constructor_bindings_t inner_constructors;\
+	io_inner_constructor_bindings_t *inner_constructors;\
 	io_inner_port_binding_t *transmit_cursor; \
 	uint16_t transmit_pipe_length; \
 	uint16_t receive_pipe_length; \
@@ -333,7 +414,8 @@ bool 				io_multiplex_socket_bind_inner_constructor (io_socket_t*,io_address_t,i
 void				io_multiplex_socket_unbind_inner (io_socket_t*,io_address_t);
 void				io_multiplex_socket_round_robin_signal_transmit_available (io_multiplex_socket_t*);
 io_pipe_t* 		io_multiplex_socket_get_receive_pipe (io_socket_t*,io_address_t);
-io_inner_port_binding_t*	io_multiplex_socket_get_next_transmit_binding (io_multiplex_socket_t*);
+io_inner_constructor_binding_t* io_multiplex_socket_find_inner_constructor_binding (io_multiplex_socket_t*,io_address_t);
+io_inner_port_binding_t* io_multiplex_socket_get_next_transmit_binding (io_multiplex_socket_t*);
 
 extern EVENT_DATA io_socket_implementation_t io_multiplex_socket_implementation;
 
@@ -429,7 +511,7 @@ io_socket_t* allocate_io_socket_link_emulator (io_t*,io_address_t);
 
 io_socket_t* io_socket_emulator_initialise (io_socket_t*,io_t*,io_settings_t const*);
 void io_socket_emulator_free (io_socket_t*);
-bool io_socket_emulator_open (io_socket_t*);
+bool io_socket_emulator_open (io_socket_t*,io_socket_open_flag_t);
 void io_socket_emulator_close (io_socket_t*);
 bool io_socket_emulator_is_closed (io_socket_t const*);
 bool io_socket_emulator_bind_to_outer_socket (io_socket_t*,io_socket_t*);
@@ -535,6 +617,61 @@ is_physical_io_socket (io_socket_t const *socket) {
 }
 
 //
+// state
+//
+io_event_t*
+mk_io_socket_open_event (io_byte_memory_t *bm,io_socket_open_flag_t flag) {
+	io_socket_open_event_t *this = io_byte_memory_allocate (bm,sizeof(io_socket_open_event_t));
+	if (this) {
+		initialise_io_event ((io_event_t*) this,NULL,NULL);
+		this->flag = flag;
+	}
+	return (io_event_t*) this;
+}
+
+void
+io_socket_call_open (
+	io_socket_t *socket,io_socket_open_flag_t flag
+) {
+	io_socket_state_t const *current = socket->State;
+	io_socket_state_t const *next = socket->State->open (socket,flag);
+	if (next != current) {
+		socket->State = next;
+		io_socket_enter_current_state (socket);
+	}
+}
+
+void
+io_socket_call_state (io_socket_t *socket,io_socket_state_t const* (*fn) (io_socket_t*)) {
+	io_socket_state_t const *current = socket->State;
+	io_socket_state_t const *next = fn (socket);
+	if (next != current) {
+		socket->State = next;
+	io_socket_enter_current_state (socket);
+	}
+}
+
+io_socket_state_t const*
+io_socket_state_ignore_event (io_socket_t *socket) {
+	return socket->State;
+}
+
+io_socket_state_t const*
+io_socket_state_ignore_open_event (io_socket_t *socket,io_socket_open_flag_t flag) {
+	return socket->State;
+}
+
+EVENT_DATA io_socket_state_t io_socket_state = {
+	.specialisation_of = NULL,
+	.enter = io_socket_state_ignore_event,
+	.open = io_socket_state_ignore_open_event,
+	.close = io_socket_state_ignore_event,
+	.receive = io_socket_state_ignore_event,
+	.transmit = io_socket_state_ignore_event,
+	.timer = io_socket_state_ignore_event,
+};
+
+//
 // virtual sockets
 //
 
@@ -555,7 +692,7 @@ io_virtual_socket_free (io_socket_t *socket) {
 }
 
 bool
-io_virtual_socket_open (io_socket_t *socket) {
+io_virtual_socket_open (io_socket_t *socket,io_socket_open_flag_t flag) {
 	return false;
 }
 
@@ -611,11 +748,11 @@ io_virtual_socket_mtu (io_socket_t const *socket) {
 }
 
 EVENT_DATA io_socket_implementation_t io_socket_implementation_base = {
-	SPECIALISE_IO_VIRTUAL_SOCKET (NULL)
+	SPECIALISE_IO_SOCKET_IMPLEMENTATION (NULL)
 };
 
 EVENT_DATA io_socket_implementation_t io_physical_socket_implementation = {
-	SPECIALISE_IO_VIRTUAL_SOCKET (&io_socket_implementation_base)
+	SPECIALISE_IO_SOCKET_IMPLEMENTATION (&io_socket_implementation_base)
 };
 
 //
@@ -638,7 +775,7 @@ free_io_socket (io_socket_t *socket) {
 // 
 
 EVENT_DATA io_socket_implementation_t io_counted_socket_implementation = {
-	SPECIALISE_IO_VIRTUAL_SOCKET (&io_socket_implementation_base)
+	SPECIALISE_IO_SOCKET_IMPLEMENTATION (&io_socket_implementation_base)
 };
 
 void
@@ -707,10 +844,10 @@ io_adapter_socket_free (io_socket_t *socket) {
 }
 
 bool
-io_adapter_socket_open (io_socket_t *socket) {
+io_adapter_socket_open (io_socket_t *socket,io_socket_open_flag_t flag) {
 	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 	if (this->outer_socket != NULL) {
-		return io_socket_open (this->outer_socket);
+		return io_socket_open (this->outer_socket,flag);
 	} else {
 		return false;
 	}
@@ -847,6 +984,93 @@ EVENT_DATA io_socket_implementation_t io_adapter_socket_implementation = {
 };
 
 //
+//
+//
+
+io_inner_constructor_bindings_t*
+mk_io_inner_constructor_bindings (io_t *io) {
+	io_inner_constructor_bindings_t *this = io_byte_memory_allocate (
+		io_get_byte_memory(io),sizeof(io_inner_constructor_bindings_t)
+	);
+	
+	if (this) {
+		this->begin = NULL;
+		this->end = NULL;
+	}
+	
+	return this;
+}
+
+void
+free_io_inner_constructor_bindings (
+	io_inner_constructor_bindings_t *bindings,io_t *io
+) {
+	io_inner_constructor_binding_t *cursor = bindings->begin;
+	io_byte_memory_t *bm = io_get_byte_memory (io);
+	while (cursor < bindings->end) {
+		free_io_address (bm,cursor->address);
+		io_dequeue_event (io,(io_event_t*) cursor->notify);
+		cursor ++;
+	}
+	io_byte_memory_free (bm,bindings->begin);
+	io_byte_memory_free (bm,bindings);
+}
+
+io_inner_constructor_binding_t*
+io_inner_constructor_bindings_find_binding (
+	io_inner_constructor_bindings_t *bindings,io_address_t address
+) {
+	io_inner_constructor_binding_t *cursor = bindings->begin;
+	while (cursor < bindings->end) {
+		if (compare_io_addresses (cursor->address,address) == 0) {
+			return cursor;
+		}
+		cursor ++;
+	}
+
+	return NULL;
+}
+
+bool
+io_inner_constructor_bindings_bind (
+	io_inner_constructor_bindings_t *this,
+	io_t *io,
+	io_address_t address,
+	io_socket_constructor_t make,
+	io_notify_event_t *notify
+) {
+	io_inner_constructor_binding_t *inner = io_inner_constructor_bindings_find_binding (
+		this,address
+	);
+
+	if (inner == NULL) {
+		uint32_t size = (this->end - this->begin);
+		io_inner_constructor_binding_t *bigger = io_byte_memory_reallocate (
+			io_get_byte_memory (io),
+			this->begin,
+			sizeof (io_inner_constructor_binding_t) * (size + 1)
+		);
+		if (bigger != NULL) {
+			this->begin = bigger;
+			this->end = bigger + (size + 1);
+			inner = this->begin + size;
+			inner->address = duplicate_io_address (io_get_byte_memory (io),address);
+			inner->make = NULL;
+			inner->notify = NULL;
+		}
+	}
+	
+	if (inner != NULL) {
+		io_dequeue_event (io,(io_event_t*) inner->notify);
+		inner->notify = notify;
+		inner->make = make;
+		return true;
+	} else {
+		return false;
+	}
+}
+
+//
 // multiplex socket
 //
 
@@ -901,8 +1125,7 @@ initialise_io_multiplex_socket (io_socket_t *socket,io_t *io,io_settings_t const
 	this->transmit_cursor = this->slots;
 	this->transmit_pipe_length = io_settings_transmit_pipe_length(C);
 	this->receive_pipe_length = io_settings_receive_pipe_length(C);
-	
-	this->inner_constructors = (io_inner_constructor_bindings_t) {NULL,NULL};
+	this->inner_constructors = mk_io_inner_constructor_bindings(io);
 	
 	return socket;
 }
@@ -928,16 +1151,8 @@ io_multiplex_socket_free (io_socket_t *socket) {
 		this->transmit_cursor = this->slots;
 	}
 	
-	{
-		io_inner_constructor_binding_t *cursor = this->inner_constructors.begin;
-		while (cursor < this->inner_constructors.end) {
-			free_io_address (bm,cursor->address);
-			io_dequeue_event (io_socket_io (this),(io_event_t*) cursor->notify);
-			cursor ++;
-		}
-		io_byte_memory_free (bm,this->inner_constructors.begin);
-	}
-	
+	free_io_inner_constructor_bindings (this->inner_constructors,io_socket_io (this));
+
 	io_counted_socket_free (socket);
 }
 
@@ -1041,15 +1256,9 @@ io_inner_constructor_binding_t*
 io_multiplex_socket_find_inner_constructor_binding (
 	io_multiplex_socket_t *this,io_address_t address
 ) {
-	io_inner_constructor_binding_t *cursor = this->inner_constructors.begin;
-	while (cursor < this->inner_constructors.end) {
-		if (compare_io_addresses (cursor->address,address) == 0) {
-			return cursor;
-		}
-		cursor ++;
-	}
-
-	return false;
+	return io_inner_constructor_bindings_find_binding (
+		this->inner_constructors,address
+	);
 }
 
 bool
@@ -1057,35 +1266,9 @@ io_multiplex_socket_bind_inner_constructor (
 	io_socket_t *socket,io_address_t address,io_socket_constructor_t make,io_notify_event_t *notify
 ) {
 	io_multiplex_socket_t *this = (io_multiplex_socket_t*) socket;
-	io_inner_constructor_binding_t *inner = io_multiplex_socket_find_inner_constructor_binding (
-		this,address
+	return io_inner_constructor_bindings_bind (
+		this->inner_constructors,io_socket_io (this),address,make,notify
 	);
-
-	if (inner == NULL) {
-		uint32_t size = (this->inner_constructors.end - this->inner_constructors.begin);
-		io_inner_constructor_binding_t *bigger = io_byte_memory_reallocate (
-			io_socket_byte_memory (this),
-			this->inner_constructors.begin,
-			sizeof (io_inner_constructor_binding_t) * (size + 1)
-		);
-		if (bigger != NULL) {
-			this->inner_constructors.begin = bigger;
-			this->inner_constructors.end = bigger + (size + 1);
-			inner = this->inner_constructors.begin + size;
-			inner->address = duplicate_io_address (io_socket_byte_memory (this),address);
-			inner->make = NULL;
-			inner->notify = NULL;
-		}
-	}
-	
-	if (inner != NULL) {
-		io_dequeue_event (io_socket_io (this),(io_event_t*) inner->notify);
-		inner->notify = notify;
-		inner->make = make;
-		return true;
-	} else {
-		return false;
-	}
 }
 
 void
@@ -1142,6 +1325,10 @@ io_multiplex_socket_round_robin_signal_transmit_available (io_multiplex_socket_t
 		
 		io_event_t *ev = this->transmit_cursor->port->tx_available;
 		if (ev) {
+			//
+			// really want to know if this binding wants the tx; if not
+			// we can offer to next binding
+			//
 			io_enqueue_event (io_socket_io (this),ev);
 			break;
 		}
@@ -1168,7 +1355,6 @@ EVENT_DATA io_socket_implementation_t io_multiplex_socket_implementation = {
 	.iterate_outer_sockets = NULL,
 	.mtu = io_virtual_socket_mtu,
 };
-
 
 //
 // multiplexer socket
@@ -1324,7 +1510,7 @@ io_socket_emulator_free (io_socket_t *socket) {
 }
 
 bool
-io_socket_emulator_open (io_socket_t *socket) {
+io_socket_emulator_open (io_socket_t *socket,io_socket_open_flag_t flag) {
 	// always open?
 	return true;
 }
@@ -1353,7 +1539,7 @@ io_socket_emulator_mtu (io_socket_t const *socket) {
 }
 
 EVENT_DATA io_socket_implementation_t io_socket_emulator_implementation = {
-	SPECIALISE_IO_VIRTUAL_SOCKET (&io_multiplexer_socket_implementation)
+	SPECIALISE_IO_SOCKET_IMPLEMENTATION (&io_multiplexer_socket_implementation)
 };
 
 //
@@ -1468,7 +1654,7 @@ io_shared_media_free (io_socket_t *socket) {
 }
 
 static bool
-io_shared_media_open (io_socket_t *socket) {
+io_shared_media_open (io_socket_t *socket,io_socket_open_flag_t flag) {
 	return true;
 }
 
@@ -1634,7 +1820,7 @@ build_io_sockets (
 	build = construct;
 	while (build < end) {
 		if (build->with_open) {
-			io_socket_open (array[build->index]);
+			io_socket_open (array[build->index],IO_SOCKET_OPEN_CONNECT);
 		}
 		build++;
 	}
