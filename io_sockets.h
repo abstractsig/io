@@ -189,6 +189,7 @@ void				io_virtual_socket_close (io_socket_t*);
 bool				io_virtual_socket_is_closed (io_socket_t const*);
 bool				io_virtual_socket_bind_inner (io_socket_t*,io_address_t,io_event_t*,io_event_t*);
 bool				io_virtual_socket_bind_inner_constructor (io_socket_t*,io_address_t,io_socket_constructor_t,io_notify_event_t*);
+io_pipe_t*		io_virtual_socket_get_receive_pipe (io_socket_t*,io_address_t);
 void				io_virtual_socket_unbind_inner (io_socket_t*,io_address_t);
 bool				io_virtual_socket_bind_to_outer_socket (io_socket_t*,io_socket_t*);
 io_encoding_t*	io_virtual_socket_new_message (io_socket_t*);
@@ -597,6 +598,11 @@ io_virtual_socket_new_message (io_socket_t *socket) {
 bool
 io_virtual_socket_send_message (io_socket_t *socket,io_encoding_t *msg) {
 	return false;
+}
+
+io_pipe_t*
+io_virtual_socket_get_receive_pipe (io_socket_t *socket,io_address_t address) {
+	return NULL;
 }
 
 size_t
