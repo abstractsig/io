@@ -10,6 +10,11 @@
  */
 #ifndef io_sockets_H_
 #define io_sockets_H_
+//
+// all io sockets must havs a mtu of at least IO_SOCKET_MINIMUM_MTU
+//
+#define IO_SOCKET_MINIMUM_MTU 128
+
 typedef struct io_inner_port_binding io_inner_port_binding_t;
 typedef struct io_inner_constructor_binding io_inner_constructor_binding_t;
 typedef struct io_multiplex_socket io_multiplex_socket_t;
@@ -43,6 +48,7 @@ typedef enum {
 	io_socket_state_t const* (*receive) (io_socket_t*); \
 	io_socket_state_t const* (*transmit) (io_socket_t*); \
 	io_socket_state_t const* (*timer) (io_socket_t*); \
+	io_socket_state_t const* (*timer_error) (io_socket_t*); \
 	/**/
 	
 struct PACK_STRUCTURE io_socket_state {
@@ -64,6 +70,7 @@ extern EVENT_DATA io_socket_state_t io_socket_state;
 	.receive = io_socket_state_ignore_event, \
 	.transmit = io_socket_state_ignore_event, \
 	.timer = io_socket_state_ignore_event, \
+	.timer_error = io_socket_state_ignore_event, \
 	/**/
 
 typedef struct PACK_STRUCTURE io_socket_open_event {
@@ -77,7 +84,6 @@ INLINE_FUNCTION void
 free_io_socket_open_event (io_byte_memory_t *bm,io_socket_open_event_t *this) {
 	io_byte_memory_free (bm,this);
 }
-
 
 //
 // notify
@@ -294,6 +300,26 @@ size_t			io_virtual_socket_mtu (io_socket_t const*);
 	/**/
 
 //
+// binding containers
+//
+
+struct PACK_STRUCTURE io_inner_constructor_binding {
+	io_address_t address;
+	io_socket_constructor_t make;
+	io_notify_event_t *notify;
+};
+
+typedef struct PACK_STRUCTURE {
+	io_inner_constructor_binding_t *begin;
+	io_inner_constructor_binding_t *end;
+} io_inner_constructor_bindings_t;
+
+io_inner_constructor_bindings_t* mk_io_inner_constructor_bindings (io_t*);
+void free_io_inner_constructor_bindings (io_inner_constructor_bindings_t*,io_t*);
+io_inner_constructor_binding_t* io_inner_constructor_bindings_find_binding (io_inner_constructor_bindings_t*,io_address_t);
+bool io_inner_constructor_bindings_bind (io_inner_constructor_bindings_t*,io_t*,io_address_t,io_socket_constructor_t,io_notify_event_t*);
+
+//
 // counted socket
 //
 
@@ -351,6 +377,27 @@ cast_to_io_adapter_socket (io_socket_t *socket) {
 }
 
 //
+// socket internal to communication stack, i.e. it does not 
+// support inner bindings
+//
+#define IO_LEAF_SOCKET_STRUCT_MEMBERS \
+	IO_COUNTED_SOCKET_STRUCT_MEMBERS \
+	io_event_t transmit_event; \
+	io_event_t receive_event; \
+	io_encoding_pipe_t *receive_pipe;\
+	io_socket_t *outer_socket; \
+	io_inner_constructor_bindings_t *inner_constructors;\
+	/**/
+
+typedef struct PACK_STRUCTURE {
+	IO_LEAF_SOCKET_STRUCT_MEMBERS
+} io_leaf_socket_t;
+
+void initialise_io_leaf_socket (io_leaf_socket_t*,io_t*,io_settings_t const*);
+void io_leaf_socket_free (io_socket_t*);
+bool io_leaf_socket_bind_inner_constructor (io_socket_t *socket,io_address_t address,io_socket_constructor_t make,io_notify_event_t *);
+
+//
 // multiplex socket
 //
 
@@ -373,22 +420,6 @@ struct PACK_STRUCTURE io_inner_port_binding {
 	io_address_t address;
 	io_inner_port_t *port;
 };
-
-struct PACK_STRUCTURE io_inner_constructor_binding {
-	io_address_t address;
-	io_socket_constructor_t make;
-	io_notify_event_t *notify;
-};
-
-typedef struct PACK_STRUCTURE {
-	io_inner_constructor_binding_t *begin;
-	io_inner_constructor_binding_t *end;
-} io_inner_constructor_bindings_t;
-
-io_inner_constructor_bindings_t* mk_io_inner_constructor_bindings (io_t*);
-void free_io_inner_constructor_bindings (io_inner_constructor_bindings_t*,io_t*);
-io_inner_constructor_binding_t* io_inner_constructor_bindings_find_binding (io_inner_constructor_bindings_t*,io_address_t);
-bool io_inner_constructor_bindings_bind (io_inner_constructor_bindings_t*,io_t*,io_address_t,io_socket_constructor_t,io_notify_event_t*);
 
 #define IO_MULTIPLEX_SOCKET_STRUCT_MEMBERS \
 	IO_COUNTED_SOCKET_STRUCT_MEMBERS \
@@ -647,7 +678,7 @@ io_socket_call_state (io_socket_t *socket,io_socket_state_t const* (*fn) (io_soc
 	io_socket_state_t const *next = fn (socket);
 	if (next != current) {
 		socket->State = next;
-	io_socket_enter_current_state (socket);
+		io_socket_enter_current_state (socket);
 	}
 }
 
@@ -662,13 +693,7 @@ io_socket_state_ignore_open_event (io_socket_t *socket,io_socket_open_flag_t fla
 }
 
 EVENT_DATA io_socket_state_t io_socket_state = {
-	.specialisation_of = NULL,
-	.enter = io_socket_state_ignore_event,
-	.open = io_socket_state_ignore_open_event,
-	.close = io_socket_state_ignore_event,
-	.receive = io_socket_state_ignore_event,
-	.transmit = io_socket_state_ignore_event,
-	.timer = io_socket_state_ignore_event,
+	SPECIALISE_IO_SOCKET_STATE(NULL)
 };
 
 //
@@ -804,6 +829,44 @@ io_counted_socket_increment_reference (io_socket_t *socket,int32_t incr) {
 void
 io_counted_socket_free (io_socket_t *socket) {
 	free_io_socket (socket);
+}
+
+//
+// leaf socket
+//
+
+//
+// leaf socket
+//
+void
+initialise_io_leaf_socket (io_leaf_socket_t *this,io_t *io,io_settings_t const *C) {
+
+	initialise_io_counted_socket ((io_counted_socket_t*) this,io);
+
+	this->outer_socket = NULL;
+	this->inner_constructors = mk_io_inner_constructor_bindings(io);
+	this->receive_pipe = mk_io_encoding_pipe (
+		io_get_byte_memory(io),io_settings_receive_pipe_length(C)
+	);
+
+}
+
+void
+io_leaf_socket_free (io_socket_t *socket) {
+	io_leaf_socket_t *this = (io_leaf_socket_t *) socket;
+	free_io_encoding_pipe (this->receive_pipe,io_socket_byte_memory(socket));
+	free_io_inner_constructor_bindings (this->inner_constructors,io_socket_io (this));
+	io_counted_socket_free (socket);
+}
+
+bool
+io_leaf_socket_bind_inner_constructor (
+	io_socket_t *socket,io_address_t address,io_socket_constructor_t make,io_notify_event_t *notify
+) {
+	io_leaf_socket_t *this = (io_leaf_socket_t*) socket;
+	return io_inner_constructor_bindings_bind (
+		this->inner_constructors,io_socket_io (this),address,make,notify
+	);
 }
 
 //
