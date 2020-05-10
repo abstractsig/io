@@ -31,7 +31,11 @@ io_inner_port_binding_t* io_multiplex_socket_find_inner_port_binding (io_multipl
 #include <io_layers.h>
 
 //
-// state
+// socket state
+//
+// A state machine that executes in the io event loop.  Care must
+// be taken by the programmer to ensure that all calls to
+// state machine methods are made from within the event loop.
 //
 typedef struct io_socket_state io_socket_state_t;
 
@@ -1476,6 +1480,12 @@ io_multiplexer_socket_send_message (io_socket_t *socket,io_encoding_t *encoding)
 
 	if (this->outer_socket != NULL) {
 		ok = io_socket_send_message (this->outer_socket,encoding);
+		
+		if (!ok) {
+			// try to queue, but this socket needs a reference to its layer implementation
+			// (or a bool (*) (io_encoding_t*) pointer) so we can get binding address from
+			// encoding
+		}
 	}
 	
 	unreference_io_encoding (encoding);

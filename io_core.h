@@ -201,6 +201,20 @@ typedef struct PACK_STRUCTURE {
 #define io_config_u32_ptr(c)	(&(c).first_run_flag)
 #define io_config_u32_size()	(sizeof(io_persistant_state_t)/sizeof(uint32_t))
 
+void io_gererate_authentication_key_pair (io_t*,io_authentication_key_t*,io_authentication_key_t*);
+
+INLINE_FUNCTION bool
+io_authentication_key_test_equal (io_authentication_key_t const *a,io_authentication_key_t const *b) {
+	return (
+			(a->long_words[0] == b->long_words[0])
+		&&	(a->long_words[1] == b->long_words[1])
+		&&	(a->long_words[2] == b->long_words[2])
+		&&	(a->long_words[3] == b->long_words[3])
+	);
+}
+
+#include <io_curve25519.h>
+
 /*
  *
  * Events
@@ -1639,17 +1653,19 @@ typedef struct PACK_STRUCTURE io_implementation {
 	void (*do_gc) (io_t*,int32_t);
 	io_cpu_clock_pointer_t (*get_core_clock) (io_t*);
 	bool (*is_first_run) (io_t*);
-	io_uid_t const* (*uid) (io_t*); 
 
 	//
 	// identity and security
 	//
+	io_uid_t const* (*uid) (io_t*);
+	bool (*get_shared_key) (io_t*,io_uid_t const*,io_authentication_key_t*);
 	uint32_t (*get_random_u32) (io_t*);
 	uint32_t (*get_next_prbs_u32) (io_t*);
 
 	void (*sha256_start) (io_sha256_context_t*);
 	void (*sha256_update) (io_sha256_context_t*,uint8_t const*,uint32_t);
 	void (*sha256_finish) (io_sha256_context_t*,uint8_t[32]);
+	
 	//
 	// communication
 	//
@@ -2156,7 +2172,7 @@ pq_sort (void** a,int n,quick_sort_compare_t compare) {
 #ifdef IMPLEMENT_IO_CORE
 //-----------------------------------------------------------------------------
 //
-// io core implementation
+// io core implementation (part 1)
 //
 //-----------------------------------------------------------------------------
 
@@ -2333,6 +2349,18 @@ compare_io_addresses (io_address_t a,io_address_t b) {
 	return cmp;
 }
 
+void
+io_gererate_authentication_key_pair (
+	io_t *io,io_authentication_key_t *secret,io_authentication_key_t *shared
+) {
+	uint8_t k[IO_AUTHENTICATION_KEY_BYTE_LENGTH] = {9};
+
+	for (int i = 0; i < IO_AUTHENTICATION_KEY_WORD_LENGTH; i++) {
+		secret->words[i] = io_get_random_u32 (io);
+	}
+
+	curve25519_donna (shared->bytes,secret->bytes,k);
+}
 
 //
 // io_t base
