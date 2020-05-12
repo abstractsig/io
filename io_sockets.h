@@ -46,6 +46,7 @@ typedef enum {
 
 #define IO_SOCKET_STATE_STRUCT_MEMBERS \
 	io_socket_state_t const *specialisation_of; \
+	const char *name;\
 	io_socket_state_t const* (*enter) (io_socket_t*); \
 	io_socket_state_t const* (*open) (io_socket_t*,io_socket_open_flag_t); \
 	io_socket_state_t const* (*close) (io_socket_t*); \
@@ -68,6 +69,7 @@ extern EVENT_DATA io_socket_state_t io_socket_state;
 
 #define SPECIALISE_IO_SOCKET_STATE(S) \
 	.specialisation_of = (io_socket_state_t const*) S, \
+	.name = "state", \
 	.enter = io_socket_state_ignore_event, \
 	.open = io_socket_state_ignore_open_event, \
 	.close = io_socket_state_ignore_event, \
@@ -137,7 +139,7 @@ typedef struct PACK_STRUCTURE io_settings {
 	io_pipe_t* (*get_receive_pipe) (io_socket_t*,io_address_t);\
 	io_encoding_t*	(*new_message) (io_socket_t*); \
 	bool (*send_message) (io_socket_t*,io_encoding_t*);\
-	bool (*iterate_inner_sockets) (io_socket_t*,io_socket_iterator_t,void*);\
+	void (*flush) (io_socket_t*);\
 	bool (*iterate_outer_sockets) (io_socket_t*,io_socket_iterator_t,void*);\
 	size_t (*mtu) (io_socket_t const*);\
 	/**/
@@ -230,6 +232,11 @@ io_socket_send_message (io_socket_t *socket,io_encoding_t *m) {
 	return socket->implementation->send_message (socket,m);
 }
 
+INLINE_FUNCTION void
+io_socket_flush (io_socket_t *socket) {
+	socket->implementation->flush (socket);
+}
+
 INLINE_FUNCTION bool
 io_socket_bind_inner (
 	io_socket_t *socket,io_address_t a,io_event_t *tx,io_event_t *rx
@@ -282,6 +289,7 @@ bool				io_virtual_socket_bind_to_outer_socket (io_socket_t*,io_socket_t*);
 io_encoding_t*	io_virtual_socket_new_message (io_socket_t*);
 bool				io_virtual_socket_send_message (io_socket_t*,io_encoding_t*);
 size_t			io_virtual_socket_mtu (io_socket_t const*);
+void				io_virtual_socket_flush (io_socket_t*);
 
 #define SPECIALISE_IO_SOCKET_IMPLEMENTATION(S) \
 	.specialisation_of = S, \
@@ -291,7 +299,6 @@ size_t			io_virtual_socket_mtu (io_socket_t const*);
 	.open = io_virtual_socket_open, \
 	.close = io_virtual_socket_close, \
 	.is_closed = io_virtual_socket_is_closed, \
-	.bind_to_outer_socket = NULL, \
 	.bind_inner = io_virtual_socket_bind_inner, \
 	.bind_inner_constructor = io_virtual_socket_bind_inner_constructor,\
 	.unbind_inner = io_virtual_socket_unbind_inner,\
@@ -299,7 +306,7 @@ size_t			io_virtual_socket_mtu (io_socket_t const*);
 	.new_message = io_virtual_socket_new_message, \
 	.send_message = io_virtual_socket_send_message, \
 	.get_receive_pipe = io_virtual_socket_get_receive_pipe, \
-	.iterate_inner_sockets = NULL, \
+	.flush = io_virtual_socket_flush, \
 	.iterate_outer_sockets = NULL, \
 	.mtu = io_virtual_socket_mtu, \
 	/**/
@@ -817,6 +824,10 @@ io_virtual_socket_send_message (io_socket_t *socket,io_encoding_t *msg) {
 io_pipe_t*
 io_virtual_socket_get_receive_pipe (io_socket_t *socket,io_address_t address) {
 	return NULL;
+}
+
+void
+io_virtual_socket_flush (io_socket_t *socket) {
 }
 
 size_t

@@ -305,6 +305,11 @@ initialise_io_alarm (
 	return ev;
 }
 
+INLINE_FUNCTION bool
+is_io_alarm_active (io_alarm_t *alarm) {
+	return alarm->next_alarm != NULL;
+}
+
 //
 // Pipes
 //
@@ -1744,6 +1749,7 @@ void	dequeue_io_event (io_t*,io_event_t*);
 bool	do_next_io_event (io_t*);
 
 int io_printf(io_t*,const char *fmt,...);
+void flush_io_printf (io_t*);
 
 INLINE_FUNCTION void
 initialise_io (io_t *io,io_implementation_t const *I) {
@@ -2944,6 +2950,14 @@ io_printf (io_t *io,const char *fmt,...) {
 	}
 	
 	return result;
+}
+
+void
+flush_io_printf (io_t* io) {
+	io_socket_t *print = io_get_socket (io,IO_PRINTF_SOCKET);
+	if (print) {
+		io_socket_flush (print);
+	}
 }
 
 //

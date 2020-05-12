@@ -76,7 +76,7 @@ uint32_t		print_unit_test_report (V_runner_t*);
 //-----------------------------------------------------------------------------
 #include <io_device.h>
 
-#define vprintf(r,fmt,...) io_printf(r->io,fmt,##__VA_ARGS__)
+#define vprintf(r,fmt,...) io_printf((r)->io,fmt,##__VA_ARGS__)
 
 unsigned int
 V_record_test_result (
@@ -160,7 +160,6 @@ V_run_unit_tests(V_runner_t *runner,unit_test_t const * unit_tests) {
 
 uint32_t
 print_unit_test_report (V_runner_t *runner) {
-	vprintf (runner,"\n");
 	if (runner->total_failed == 0) {
 		vprintf (
 			runner,"%-*s%-*scompleted with %d test%s OK\n",
