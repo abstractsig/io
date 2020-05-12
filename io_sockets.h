@@ -198,7 +198,7 @@ io_socket_increment_reference (io_socket_t *socket,int32_t incr) {
 }
 
 #define io_socket_reference(s)	io_socket_increment_reference(s,1)
-#define io_socket_unreference(s)	io_socket_increment_reference(s,-11)
+#define io_socket_unreference(s)	io_socket_increment_reference(s,-1)
 
 INLINE_FUNCTION void
 io_socket_free (io_socket_t *socket) {
@@ -298,6 +298,7 @@ size_t			io_virtual_socket_mtu (io_socket_t const*);
 	.bind_to_outer_socket = io_virtual_socket_bind_to_outer_socket,\
 	.new_message = io_virtual_socket_new_message, \
 	.send_message = io_virtual_socket_send_message, \
+	.get_receive_pipe = io_virtual_socket_get_receive_pipe, \
 	.iterate_inner_sockets = NULL, \
 	.iterate_outer_sockets = NULL, \
 	.mtu = io_virtual_socket_mtu, \
@@ -340,6 +341,12 @@ void				initialise_io_counted_socket (io_counted_socket_t*,io_t*);
 io_socket_t*	io_counted_socket_increment_reference (io_socket_t*,int32_t);
 void 				io_counted_socket_free (io_socket_t*);
 
+#define  SPECIALISE_IO_COUNTED_SOCKET_IMPLEMENTATION(S) \
+	SPECIALISE_IO_SOCKET_IMPLEMENTATION (S)\
+	.reference = io_counted_socket_increment_reference,\
+	.free = io_counted_socket_free,\
+	/**/
+
 extern EVENT_DATA io_socket_implementation_t io_counted_socket_implementation;
 
 INLINE_FUNCTION io_counted_socket_t*
@@ -368,7 +375,33 @@ typedef struct PACK_STRUCTURE io_adapter_socket {
 io_socket_t* allocate_io_adapter_socket (io_t*,io_address_t);
 io_socket_t* io_adapter_socket_initialise (io_socket_t*,io_t*,io_settings_t const*);
 void io_adapter_socket_free (io_socket_t*);
+bool io_adapter_socket_open (io_socket_t*,io_socket_open_flag_t);
+void io_adapter_socket_close (io_socket_t*);
+bool io_adapter_socket_is_closed (io_socket_t const*);
+bool io_adapter_socket_bind (io_socket_t*,io_address_t,io_event_t*,io_event_t*);
+void io_adapter_socket_unbind_inner (io_socket_t*,io_address_t);
+bool io_adapter_socket_bind_to_outer (io_socket_t*,io_socket_t*);
+io_encoding_t* io_adapter_socket_new_message (io_socket_t*);
+bool io_adapter_socket_send_message (io_socket_t*,io_encoding_t*);
+io_pipe_t* io_adapter_socket_get_receive_pipe (io_socket_t*,io_address_t);
+size_t io_adapter_socket_mtu (io_socket_t const*);
 
+#define  SPECIALISE_IO_ADAPTER_SOCKET_IMPLEMENTATION(S) \
+	SPECIALISE_IO_COUNTED_SOCKET_IMPLEMENTATION (S)\
+	.initialise = io_adapter_socket_initialise, \
+	.free = io_adapter_socket_free, \
+	.open = io_adapter_socket_open, \
+	.close = io_adapter_socket_close, \
+	.is_closed = io_adapter_socket_is_closed, \
+	.bind_inner = io_adapter_socket_bind, \
+	.unbind_inner = io_adapter_socket_unbind_inner, \
+	.bind_to_outer_socket = io_adapter_socket_bind_to_outer, \
+	.new_message = io_adapter_socket_new_message, \
+	.send_message = io_adapter_socket_send_message, \
+	.get_receive_pipe = io_adapter_socket_get_receive_pipe, \
+	.mtu = io_adapter_socket_mtu, \
+	/**/
+	
 extern EVENT_DATA io_socket_implementation_t io_adapter_socket_implementation;
 
 INLINE_FUNCTION io_adapter_socket_t*
@@ -400,6 +433,15 @@ typedef struct PACK_STRUCTURE {
 void initialise_io_leaf_socket (io_leaf_socket_t*,io_t*,io_settings_t const*);
 void io_leaf_socket_free (io_socket_t*);
 bool io_leaf_socket_bind_inner_constructor (io_socket_t *socket,io_address_t address,io_socket_constructor_t make,io_notify_event_t *);
+io_inner_constructor_binding_t* io_leaf_socket_find_inner_constructor (io_socket_t*,io_address_t);
+
+#define SPECIALISE_IO_LEAF_SOCKET_IMPLEMENTATION(S) \
+	SPECIALISE_IO_COUNTED_SOCKET_IMPLEMENTATION (S)\
+	.free = io_leaf_socket_free,\
+	.bind_inner_constructor = io_leaf_socket_bind_inner_constructor,\
+	/**/
+
+extern EVENT_DATA io_socket_implementation_t io_leaf_socket_implementation;
 
 //
 // multiplex socket
@@ -463,6 +505,16 @@ cast_to_io_multiplex_socket (io_socket_t *socket) {
 	}
 }
 
+#define  SPECIALISE_IO_MULTIPLEX_SOCKET_IMPLEMENTATION(S) \
+	SPECIALISE_IO_COUNTED_SOCKET_IMPLEMENTATION (S)\
+	.initialise = initialise_io_multiplex_socket,\
+	.free = io_multiplex_socket_free,\
+	.bind_inner = io_multiplex_socket_bind_inner,\
+	.unbind_inner = io_multiplex_socket_unbind_inner,\
+	.bind_inner_constructor = io_multiplex_socket_bind_inner_constructor,\
+	.get_receive_pipe = io_multiplex_socket_get_receive_pipe, \
+	/**/
+
 //
 // multiplexer socket
 //
@@ -483,9 +535,17 @@ io_socket_t*	initialise_io_multiplexer_socket (io_socket_t*,io_t*,io_settings_t 
 void				io_multiplexer_socket_free (io_socket_t*);
 void				close_io_multiplexer_socket (io_multiplexer_socket_t*);
 bool				io_multiplexer_socket_bind_to_outer (io_socket_t*,io_socket_t*);
-io_encoding_t*	io_multiplexer_socket_new_message (io_socket_t*);
 bool				io_multiplexer_socket_send_message (io_socket_t*,io_encoding_t*);
 size_t			io_multiplexer_socket_mtu (io_socket_t const*);
+
+#define  SPECIALISE_IO_MULTIPLEXER_SOCKET_IMPLEMENTATION(S) \
+	SPECIALISE_IO_MULTIPLEX_SOCKET_IMPLEMENTATION (S)\
+	.initialise = initialise_io_multiplexer_socket,\
+	.free = io_multiplexer_socket_free,\
+	.bind_to_outer_socket = io_multiplexer_socket_bind_to_outer,\
+	.send_message = io_multiplexer_socket_send_message,\
+	.mtu = io_multiplexer_socket_mtu,\
+	/**/
 
 extern EVENT_DATA io_socket_implementation_t io_multiplexer_socket_implementation;
 
@@ -554,26 +614,14 @@ size_t io_socket_emulator_mtu (io_socket_t const*);
 
 extern EVENT_DATA io_socket_implementation_t io_socket_emulator_implementation;
 
-//
-// specialise an emulator implementation with custom new/send 
-// message methods to support different layer types
-//
-#define SPECIALISE_IO_SOCKET_EMULATOR(N,T) \
-	.specialisation_of = &io_socket_emulator_implementation, \
+#define  SPECIALISE_IO_SOCKET_EMULATOR_IMPLEMENTATION(S) \
+	SPECIALISE_IO_MULTIPLEXER_SOCKET_IMPLEMENTATION (S)\
 	.initialise = io_socket_emulator_initialise, \
-	.reference = io_counted_socket_increment_reference, \
 	.free = io_socket_emulator_free, \
 	.open = io_socket_emulator_open, \
 	.close = io_socket_emulator_close, \
 	.is_closed = io_socket_emulator_is_closed, \
-	.bind_inner = io_multiplex_socket_bind_inner, \
-	.bind_inner_constructor = io_multiplex_socket_bind_inner_constructor,\
 	.bind_to_outer_socket = io_socket_emulator_bind_to_outer_socket, \
-	.new_message = N, \
-	.send_message = T, \
-	.get_receive_pipe = io_multiplex_socket_get_receive_pipe,\
-	.iterate_inner_sockets = NULL, \
-	.iterate_outer_sockets = NULL, \
 	.mtu = io_socket_emulator_mtu, \
 	/**/
 
@@ -803,10 +851,6 @@ free_io_socket (io_socket_t *socket) {
 // counted socket
 // 
 
-EVENT_DATA io_socket_implementation_t io_counted_socket_implementation = {
-	SPECIALISE_IO_SOCKET_IMPLEMENTATION (&io_socket_implementation_base)
-};
-
 void
 initialise_io_counted_socket (io_counted_socket_t *this,io_t *io) {
 	this->reference_count = 0;
@@ -834,6 +878,10 @@ void
 io_counted_socket_free (io_socket_t *socket) {
 	free_io_socket (socket);
 }
+
+EVENT_DATA io_socket_implementation_t io_counted_socket_implementation = {
+	SPECIALISE_IO_COUNTED_SOCKET_IMPLEMENTATION (&io_socket_implementation_base)
+};
 
 //
 // leaf socket
@@ -872,6 +920,19 @@ io_leaf_socket_bind_inner_constructor (
 		this->inner_constructors,io_socket_io (this),address,make,notify
 	);
 }
+
+io_inner_constructor_binding_t*
+io_leaf_socket_find_inner_constructor (io_socket_t *socket,io_address_t address) {
+	io_leaf_socket_t *this = (io_leaf_socket_t*) socket;
+	return io_inner_constructor_bindings_find_binding (
+		this->inner_constructors,address
+	);
+}
+
+EVENT_DATA io_socket_implementation_t io_leaf_socket_implementation = {
+	SPECIALISE_IO_LEAF_SOCKET_IMPLEMENTATION (&io_counted_socket_implementation)
+};
+
 
 //
 // adapter sockets have 1:1 inner and outer relations
@@ -920,7 +981,7 @@ io_adapter_socket_open (io_socket_t *socket,io_socket_open_flag_t flag) {
 	}
 }
 
-static void
+void
 io_adapter_socket_close (io_socket_t *socket) {
 	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 	if (this->outer_socket != NULL) {
@@ -928,7 +989,7 @@ io_adapter_socket_close (io_socket_t *socket) {
 	}
 }
 
-static bool
+bool
 io_adapter_socket_is_closed (io_socket_t const *socket) {
 	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 	if (this->outer_socket != NULL) {
@@ -938,7 +999,7 @@ io_adapter_socket_is_closed (io_socket_t const *socket) {
 	}
 }
 
-static bool
+bool
 io_adapter_socket_bind (
 	io_socket_t *socket,io_address_t a,io_event_t *tx,io_event_t *rx
 ) {
@@ -965,7 +1026,7 @@ io_adapter_socket_unbind_inner (io_socket_t *socket,io_address_t address) {
 	}
 }
 
-static bool
+bool
 io_adapter_socket_bind_to_outer (io_socket_t *socket,io_socket_t *outer) {
 	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 
@@ -1021,7 +1082,7 @@ io_adapter_socket_get_receive_pipe (io_socket_t *socket,io_address_t address) {
 	}
 }
 
-static size_t
+size_t
 io_adapter_socket_mtu (io_socket_t const *socket) {
 	io_adapter_socket_t const *this = (io_adapter_socket_t const*) socket;
 	if (this->outer_socket) {
@@ -1032,22 +1093,9 @@ io_adapter_socket_mtu (io_socket_t const *socket) {
 }
 
 EVENT_DATA io_socket_implementation_t io_adapter_socket_implementation = {
-	.specialisation_of = &io_counted_socket_implementation,
-	.initialise = io_adapter_socket_initialise,
-	.reference = io_counted_socket_increment_reference,
-	.free = io_adapter_socket_free,
-	.open = io_adapter_socket_open,
-	.close = io_adapter_socket_close,
-	.is_closed = io_adapter_socket_is_closed,
-	.bind_to_outer_socket = io_adapter_socket_bind_to_outer,
-	.bind_inner = io_adapter_socket_bind,
-	.unbind_inner = io_adapter_socket_unbind_inner,
-	.new_message = io_adapter_socket_new_message,
-	.send_message = io_adapter_socket_send_message,
-	.get_receive_pipe = io_adapter_socket_get_receive_pipe,
-	.iterate_inner_sockets = NULL,
-	.iterate_outer_sockets = NULL,
-	.mtu = io_adapter_socket_mtu,
+	SPECIALISE_IO_ADAPTER_SOCKET_IMPLEMENTATION (
+		&io_counted_socket_implementation
+	)
 };
 
 //
@@ -1403,24 +1451,9 @@ io_multiplex_socket_round_robin_signal_transmit_available (io_multiplex_socket_t
 	} while (this->transmit_cursor != at);
 }
 
+
 EVENT_DATA io_socket_implementation_t io_multiplex_socket_implementation = {
-	.specialisation_of = &io_counted_socket_implementation,
-	.reference = io_counted_socket_increment_reference,
-	.initialise = initialise_io_multiplex_socket,
-	.free = io_multiplex_socket_free,
-	.open = io_virtual_socket_open,
-	.close = io_virtual_socket_close,
-	.is_closed = io_virtual_socket_is_closed,
-	.bind_to_outer_socket = NULL,
-	.bind_inner = io_multiplex_socket_bind_inner,
-	.unbind_inner = io_multiplex_socket_unbind_inner,
-	.bind_inner_constructor = io_multiplex_socket_bind_inner_constructor,
-	.bind_to_outer_socket = io_virtual_socket_bind_to_outer_socket,
-	.new_message = io_virtual_socket_new_message,
-	.send_message = io_virtual_socket_send_message,
-	.iterate_inner_sockets = NULL,
-	.iterate_outer_sockets = NULL,
-	.mtu = io_virtual_socket_mtu,
+	SPECIALISE_IO_MULTIPLEX_SOCKET_IMPLEMENTATION (&io_counted_socket_implementation)
 };
 
 //
@@ -1447,7 +1480,6 @@ initialise_io_multiplexer_socket (io_socket_t *socket,io_t *io,io_settings_t con
 
 void
 io_multiplexer_socket_free (io_socket_t *socket) {
-	
 	io_multiplex_socket_free (socket);
 }
 
@@ -1535,22 +1567,7 @@ io_multiplexer_socket_rx_event (io_event_t *ev) {
 }
 
 EVENT_DATA io_socket_implementation_t io_multiplexer_socket_implementation = {
-	.specialisation_of = &io_multiplex_socket_implementation,
-	.reference = io_counted_socket_increment_reference,
-	.initialise = initialise_io_multiplexer_socket,
-	.free = io_multiplexer_socket_free,
-	.open = io_virtual_socket_open,
-	.close = io_virtual_socket_close,
-	.is_closed = io_virtual_socket_is_closed,
-	.bind_to_outer_socket = NULL,
-	.bind_inner = io_multiplex_socket_bind_inner,
-	.unbind_inner = io_multiplex_socket_unbind_inner,
-	.bind_to_outer_socket = io_virtual_socket_bind_to_outer_socket,
-	.new_message = io_virtual_socket_new_message,
-	.send_message = io_virtual_socket_send_message,
-	.iterate_inner_sockets = NULL,
-	.iterate_outer_sockets = NULL,
-	.mtu = io_virtual_socket_mtu,
+	SPECIALISE_IO_MULTIPLEXER_SOCKET_IMPLEMENTATION (&io_multiplex_socket_implementation)
 };
 
 //
@@ -1579,7 +1596,7 @@ io_socket_emulator_initialise (io_socket_t *socket,io_t *io,io_settings_t const 
 
 void
 io_socket_emulator_free (io_socket_t *socket) {
-	io_multiplex_socket_free (socket);
+	io_multiplexer_socket_free (socket);
 }
 
 bool
@@ -1612,7 +1629,9 @@ io_socket_emulator_mtu (io_socket_t const *socket) {
 }
 
 EVENT_DATA io_socket_implementation_t io_socket_emulator_implementation = {
-	SPECIALISE_IO_SOCKET_IMPLEMENTATION (&io_multiplexer_socket_implementation)
+	SPECIALISE_IO_SOCKET_EMULATOR_IMPLEMENTATION (
+		&io_multiplexer_socket_implementation
+	)
 };
 
 //
@@ -1636,7 +1655,9 @@ io_socket_emulator_new_binary_message (io_socket_t *socket) {
 }
 
 static bool
-io_socket_emulator_send_binary_message (io_socket_t *socket,io_encoding_t *encoding) {
+io_socket_emulator_send_binary_message (
+	io_socket_t *socket,io_encoding_t *encoding
+) {
 	io_layer_t *layer = get_io_binary_layer (encoding);
 	if (layer) {
 		io_layer_load_header (layer,encoding);
@@ -1647,11 +1668,13 @@ io_socket_emulator_send_binary_message (io_socket_t *socket,io_encoding_t *encod
 	}
 }
 
-EVENT_DATA io_socket_implementation_t io_socket_binary_emulator_implementation = {
-	SPECIALISE_IO_SOCKET_EMULATOR (
-		io_socket_emulator_new_binary_message,
-		io_socket_emulator_send_binary_message
+EVENT_DATA io_socket_implementation_t 
+io_socket_binary_emulator_implementation = {
+	SPECIALISE_IO_SOCKET_EMULATOR_IMPLEMENTATION (
+		&io_socket_emulator_implementation
 	)
+	.new_message = io_socket_emulator_new_binary_message,
+	.send_message = io_socket_emulator_send_binary_message,
 };
 
 io_socket_t*
@@ -1697,10 +1720,11 @@ io_socket_emulator_send_link_message (io_socket_t *socket,io_encoding_t *encodin
 }
 
 EVENT_DATA io_socket_implementation_t io_socket_link_emulator_implementation = {
-	SPECIALISE_IO_SOCKET_EMULATOR (
-		io_socket_emulator_new_link_message,
-		io_socket_emulator_send_link_message
+	SPECIALISE_IO_SOCKET_EMULATOR_IMPLEMENTATION (
+		&io_socket_emulator_implementation
 	)
+	.new_message = io_socket_emulator_new_link_message,
+	.send_message = io_socket_emulator_send_link_message,
 };
 
 io_socket_t*
@@ -1830,21 +1854,15 @@ io_shared_media_mtu (io_socket_t const *socket) {
 // need a socket to splice stacks
 //
 EVENT_DATA io_socket_implementation_t io_shared_media_implementation = {
-	.specialisation_of = &io_multiplex_socket_implementation,
+	SPECIALISE_IO_MULTIPLEX_SOCKET_IMPLEMENTATION(&io_multiplex_socket_implementation)
 	.initialise = io_shared_media_initialise,
-	.reference = io_counted_socket_increment_reference,
 	.free = io_shared_media_free,
 	.open = io_shared_media_open,
 	.close = io_shared_media_close,
 	.is_closed = io_shared_media_is_closed,
-	.bind_inner = io_multiplex_socket_bind_inner,
-	.unbind_inner = io_multiplex_socket_unbind_inner,
 	.bind_to_outer_socket = io_shared_media_bind_to_outer_socket,
 	.new_message = io_shared_media_new_message,
 	.send_message = io_shared_media_send_message,
-	.get_receive_pipe = io_multiplex_socket_get_receive_pipe,
-	.iterate_inner_sockets = NULL,
-	.iterate_outer_sockets = NULL,
 	.mtu = io_shared_media_mtu,
 };
 

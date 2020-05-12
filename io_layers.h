@@ -32,7 +32,6 @@ typedef struct io_packet_encoding io_packet_encoding_t;
 
 #define IO_LAYER_IMPLEMENTATION_STRUCT_PROPERTIES \
 	io_layer_implementation_t const *specialisation_of; \
-	io_layer_t* (*make) (io_packet_encoding_t*);\
 	void (*free) (io_layer_t*,io_byte_memory_t*);\
 	io_address_t (*any) (void);\
 	io_layer_t* (*push_receive_layer) (io_layer_t*,io_encoding_t*);\
@@ -144,27 +143,30 @@ io_layer_get_length (io_layer_t *layer,io_encoding_t *encoding) {
 
 void				free_virtual_io_layer (io_layer_t*,io_byte_memory_t*);
 bool 				virtual_io_layer_match_address (io_layer_t*,io_address_t);
+io_address_t	virtual_io_layer_any_address (void);
+void				virtual_io_layer_get_content (io_layer_t*,io_encoding_t*,uint8_t const**,uint8_t const**);
 bool				virtual_io_layer_load_header (io_layer_t*,io_encoding_t*);
-bool				virtual_io_layer_set_source_address (io_layer_t*,io_encoding_t*,io_address_t);
+bool				virtual_io_layer_ignore_set_address (io_layer_t*,io_encoding_t*,io_address_t);
 io_address_t	virtual_io_layer_get_invalid_address (io_layer_t*,io_encoding_t*);
 io_address_t	virtual_io_layer_get_destination_address (io_layer_t*,io_encoding_t*);
-bool				virtual_io_layer_set_inner_address (io_layer_t*,io_encoding_t*,io_address_t);
 io_layer_t*		virtual_io_layer_push_receive_layer (io_layer_t*,io_encoding_t*);
 io_inner_port_binding_t* virtual_io_layer_select_inner_binding (io_layer_t*,io_encoding_t*,io_socket_t*);
 
-#define SPECIALISE_VIRTUAL_IO_LAYER_IMPLEMENTATION(S) \
+#define SPECIALISE_IO_LAYER_IMPLEMENTATION(S) \
 	.specialisation_of = S, \
 	.free = free_virtual_io_layer, \
 	.push_receive_layer = virtual_io_layer_push_receive_layer,\
 	.select_inner_binding = virtual_io_layer_select_inner_binding,\
 	.match_address = virtual_io_layer_match_address, \
+	.any = virtual_io_layer_any_address,\
+	.get_content = virtual_io_layer_get_content, \
 	.load_header = virtual_io_layer_load_header, \
 	.get_destination_address = virtual_io_layer_get_destination_address, \
-	.set_destination_address = NULL,\
+	.set_destination_address = virtual_io_layer_ignore_set_address,\
 	.get_source_address = virtual_io_layer_get_invalid_address, \
-	.set_source_address = virtual_io_layer_set_source_address, \
+	.set_source_address = virtual_io_layer_ignore_set_address, \
 	.get_inner_address = virtual_io_layer_get_invalid_address,\
-	.set_inner_address = NULL,\
+	.set_inner_address = virtual_io_layer_ignore_set_address,\
 	/**/
 
 //
@@ -225,7 +227,7 @@ io_layer_t* get_io_link_layer (io_encoding_t*);
 //
 //-----------------------------------------------------------------------------
 EVENT_DATA io_layer_implementation_t io_layer_implementation = {
-	SPECIALISE_VIRTUAL_IO_LAYER_IMPLEMENTATION(NULL)
+	SPECIALISE_IO_LAYER_IMPLEMENTATION(NULL)
 };
 
 bool
@@ -248,6 +250,23 @@ free_virtual_io_layer (io_layer_t *layer,io_byte_memory_t *bm) {
 bool
 virtual_io_layer_match_address (io_layer_t *layer,io_address_t address) {
 	return false;
+}
+
+io_address_t
+virtual_io_layer_generate_address (io_t *io) {
+	return io_invalid_address();
+}
+
+io_address_t
+virtual_io_layer_any_address (void) {
+	return io_invalid_address();
+}
+
+void
+virtual_io_layer_get_content (
+	io_layer_t *layer,io_encoding_t *encoding,uint8_t const **begin,uint8_t const **end
+) {
+	*begin = *end = NULL;
 }
 
 bool
@@ -276,7 +295,7 @@ virtual_io_layer_get_invalid_address (io_layer_t *layer,io_encoding_t *encoding)
 }
 
 bool
-virtual_io_layer_set_source_address (
+virtual_io_layer_ignore_set_address (
 	io_layer_t *layer,io_encoding_t *message,io_address_t local
 ) {
 	return false;
@@ -609,22 +628,27 @@ io_binary_layer_load_header (io_layer_t *layer,io_encoding_t *encoding) {
 	write_le_uint32 (packet->length,io_layer_get_length (layer,encoding));
 	return true;
 }
+   
+#define SPECIALISE_IO_BINARY_LAYER_IMPLEMENTATION(S) \
+	SPECIALISE_IO_LAYER_IMPLEMENTATION (S)\
+	.any = io_binary_layer_any_address,\
+	.free =  free_io_binary_layer,\
+	.push_receive_layer = io_binary_layer_push_receive_layer,\
+	.select_inner_binding = io_binary_layer_select_inner_binding,\
+	.get_content = io_binary_layer_get_content,\
+	.match_address =  io_binary_layer_match_address,\
+	.load_header = io_binary_layer_load_header,\
+	.get_destination_address = io_binary_layer_get_destination_address,\
+	.set_destination_address = io_binary_layer_set_destination_address,\
+	.get_source_address = io_binary_layer_get_source_address,\
+	.set_source_address = io_binary_layer_set_source_address,\
+	.get_inner_address = io_binary_layer_get_source_address,\
+	.set_inner_address = io_binary_layer_set_source_address,\
+	/**/
+
 
 EVENT_DATA io_layer_implementation_t io_binary_layer_implementation = {
-	.specialisation_of = NULL,
-	.any = io_binary_layer_any_address,
-	.free =  free_io_binary_layer,
-	.push_receive_layer = io_binary_layer_push_receive_layer,
-	.select_inner_binding = io_binary_layer_select_inner_binding,
-	.get_content = io_binary_layer_get_content,
-	.match_address =  io_binary_layer_match_address,
-	.load_header = io_binary_layer_load_header,
-	.get_destination_address = io_binary_layer_get_destination_address,
-	.set_destination_address = io_binary_layer_set_destination_address,
-	.get_source_address = io_binary_layer_get_source_address,
-	.set_source_address = io_binary_layer_set_source_address,
-	.get_inner_address = io_binary_layer_get_source_address,
-	.set_inner_address = io_binary_layer_set_source_address,
+	SPECIALISE_IO_BINARY_LAYER_IMPLEMENTATION (&io_layer_implementation)
 };
 
 io_layer_t*
@@ -849,7 +873,7 @@ io_link_layer_load_header (io_layer_t *layer,io_encoding_t *encoding) {
 }
 
 EVENT_DATA io_layer_implementation_t io_link_layer_implementation = {
-	.specialisation_of = NULL,
+	SPECIALISE_IO_LAYER_IMPLEMENTATION (&io_layer_implementation)\
 	.free = free_io_link_layer,
 	.any = io_link_layer_any_address,
 	.push_receive_layer = io_link_layer_push_receive_layer,

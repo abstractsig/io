@@ -794,7 +794,11 @@ struct io_encoding_implementation {
 		uint32_t all;\
 		struct PACK_STRUCTURE {\
 			uint16_t reference_count;\
-			uint16_t _spare;\
+			struct PACK_STRUCTURE {\
+				uint16_t requires_time:1;\
+				uint16_t has_time:1;\
+				uint16_t :14;\
+			} flag;\
 		} bit;\
 	} tag;\
 	/**/
@@ -1670,8 +1674,6 @@ typedef struct PACK_STRUCTURE io_implementation {
 	// communication
 	//
 	io_socket_t* (*get_socket) (io_t*,int32_t);
-	int32_t (*allocate_socket) (io_t*);
-	void (*deallocate_socket) (io_t*,int32_t);
 	//
 	// tasks
 	//
@@ -1889,19 +1891,19 @@ io_uid (io_t *io) {
 	return io->implementation->uid(io);
 }
 
+INLINE_FUNCTION void
+io_get_uid (io_t *io,io_uid_t *uid) {
+	memcpy(uid->bytes,io_uid(io)->bytes,IO_UID_BYTE_LENGTH);
+}
+
+INLINE_FUNCTION bool
+io_get_shared_key (io_t *io,io_uid_t const *uid,io_authentication_key_t *key) {
+	return io->implementation->get_shared_key (io,uid,key);
+}
+
 INLINE_FUNCTION io_socket_t*
 io_get_socket (io_t *io,int32_t s) {
 	return io->implementation->get_socket (io,s);
-}
-
-INLINE_FUNCTION int32_t
-io_get_allocate_socket (io_t *io) {
-	return io->implementation->allocate_socket (io);
-}
-
-INLINE_FUNCTION void
-io_get_deallocate_socket (io_t *io,int32_t s) {
-	return io->implementation->deallocate_socket (io,s);
 }
 
 INLINE_FUNCTION void
@@ -1984,6 +1986,93 @@ io_sha256_finish (io_t *io,io_sha256_context_t *ctx,uint8_t output[SHA256_SIZE])
 	io->implementation->sha256_finish (ctx,output);
 }
 
+INLINE_FUNCTION void
+set_alarm_delay_time (io_t *io,io_alarm_t *alarm,io_time_t delay) {
+	io_time_t t = io_get_time (io);
+	alarm->when = (io_time_t) {t.ns + delay.ns};
+}
+
+//
+// declarations for base implementation and specialisation macro
+//
+io_byte_memory_t* io_core_get_null_byte_memory (io_t*);
+io_socket_t* io_core_get_null_socket (io_t*,int32_t);
+io_value_memory_t* io_core_get_null_value_memory (io_t*);
+void io_pin_nop (io_t*,io_pin_t);
+void io_pin_interrupt_nop (io_t*,io_pin_t,io_interrupt_handler_t*);
+int32_t read_from_io_pin_nop (io_t*,io_pin_t);
+void write_to_io_pin_nop (io_t*,io_pin_t,int32_t);
+bool io_pin_is_always_invalid (io_t*,io_pin_t);
+void io_cpu_sha256_start (io_sha256_context_t*);
+void io_cpu_sha256_update (io_sha256_context_t*,uint8_t const*,uint32_t);
+void io_cpu_sha256_finish (io_sha256_context_t*,uint8_t[32]);
+void io_no_gc (io_t*,int32_t);
+io_cpu_clock_pointer_t io_no_core_clock (io_t*);
+bool io_never_first_run (io_t*);
+io_uid_t const* io_no_uid (io_t*);
+bool io_never_get_shared_key (io_t*,io_uid_t const*,io_authentication_key_t*);
+uint32_t io_no_random_u32 (io_t*);
+bool io_enqueue_task_base (io_t*,vref_t);
+void io_signal_task_pending (io_t*);
+bool io_do_next_task_base (io_t*);
+void io_no_signal_event_pending (io_t*);
+bool in_not_in_event_thread (io_t*);
+void io_no_wait_for_event_pending (io_t*);
+io_time_t io_get_time_zero (io_t*);
+void io_no_enqueue_alarm (io_t*,io_alarm_t*);
+bool io_no_enter_critical_section (io_t*);
+void io_no_exit_critical_section (io_t*,bool);
+void io_no_register_interrupt_handler (io_t*,int32_t,io_interrupt_action_t,void*);
+bool io_no_unregister_interrupt_handler (io_t*,int32_t,io_interrupt_action_t);
+void io_default_log (io_t*,char const*,va_list);
+void io_default_panic (io_t*,int);
+
+#define SPECIALISE_IO_IMPLEMENTATION() \
+	.value_implementation_map = NULL, \
+	.get_byte_memory = io_core_get_null_byte_memory, \
+	.get_short_term_value_memory = io_core_get_null_value_memory, \
+	.get_long_term_value_memory = io_core_get_null_value_memory, \
+	.do_gc = io_no_gc, \
+	.get_core_clock = io_no_core_clock, \
+	.is_first_run = io_never_first_run, \
+	.uid = io_no_uid, \
+	.get_shared_key = io_never_get_shared_key, \
+	.get_random_u32 = io_no_random_u32, \
+	.get_next_prbs_u32 = io_no_random_u32, \
+	.sha256_start = io_cpu_sha256_start, \
+	.sha256_update = io_cpu_sha256_update, \
+	.sha256_finish = io_cpu_sha256_finish, \
+	.get_socket = io_core_get_null_socket, \
+	.enqueue_task = io_enqueue_task_base, \
+	.signal_task_pending = io_signal_task_pending, \
+	.do_next_task = io_do_next_task_base, \
+	.dequeue_event = dequeue_io_event, \
+	.enqueue_event = enqueue_io_event, \
+	.next_event = do_next_io_event, \
+	.in_event_thread = in_not_in_event_thread, \
+	.signal_event_pending = io_no_signal_event_pending, \
+	.wait_for_event = io_no_wait_for_event_pending, \
+	.wait_for_all_events = io_no_wait_for_event_pending, \
+	.get_time = io_get_time_zero, \
+	.enqueue_alarm = io_no_enqueue_alarm, \
+	.dequeue_alarm = io_no_enqueue_alarm, \
+	.enter_critical_section = io_no_enter_critical_section, \
+	.exit_critical_section = io_no_exit_critical_section, \
+	.register_interrupt_handler = io_no_register_interrupt_handler, \
+	.unregister_interrupt_handler = io_no_unregister_interrupt_handler, \
+	.set_io_pin_output = io_pin_nop, \
+	.set_io_pin_input = io_pin_nop, \
+	.set_io_pin_interrupt = io_pin_interrupt_nop, \
+	.set_io_pin_alternate = io_pin_nop, \
+	.release_io_pin = io_pin_nop, \
+	.read_from_io_pin = read_from_io_pin_nop, \
+	.write_to_io_pin = write_to_io_pin_nop, \
+	.toggle_io_pin = io_pin_nop, \
+	.valid_pin = io_pin_is_always_invalid, \
+	.log = io_default_log, \
+	.panic = io_default_panic, \
+	/**/
+	
 
 #define ENTER_CRITICAL_SECTION(E)	\
 	{	\
@@ -2365,17 +2454,18 @@ io_gererate_authentication_key_pair (
 //
 // io_t base
 //
-static io_socket_t*
+
+io_socket_t*
 io_core_get_null_socket (io_t *io,int32_t h) {
 	return NULL;
 }
 
-static io_byte_memory_t*
+io_byte_memory_t*
 io_core_get_null_byte_memory (io_t *io) {
 	return NULL;
 }
 
-static io_value_memory_t*
+io_value_memory_t*
 io_core_get_null_value_memory (io_t *io) {
 	return NULL;
 }
@@ -2384,72 +2474,120 @@ void
 io_pin_nop (io_t *io,io_pin_t p) {
 }
 
-static void
+void
 io_pin_interrupt_nop (io_t *io,io_pin_t p,io_interrupt_handler_t *h) {
 }
 
-static int32_t
+int32_t
 read_from_io_pin_nop (io_t *io,io_pin_t p) {
 	return 0;
 }
 
-static void
+void
 write_to_io_pin_nop (io_t *io,io_pin_t p,int32_t v) {
 }
 
-static bool 
+bool 
 io_pin_is_always_invalid (io_t *io,io_pin_t p) {
 	return false;
 }
 
-void	io_cpu_sha256_start (io_sha256_context_t*);
-void	io_cpu_sha256_update (io_sha256_context_t*,uint8_t const*,uint32_t);
-void	io_cpu_sha256_finish (io_sha256_context_t*,uint8_t[32]);
+void
+io_no_gc (io_t *io,int32_t count) {
+}
 
-	int32_t (*allocate_socket) (io_t*);
-	void (*deallocate_socket) (io_t*,int32_t);
+io_cpu_clock_pointer_t
+io_no_core_clock (io_t *io) {
+	return NULL_IO_CLOCK;
+}
+
+bool
+io_never_first_run (io_t *io) {
+	return false;
+}
+
+io_uid_t const*
+io_no_uid (io_t *io) {
+	return NULL;
+}
+
+bool
+io_never_get_shared_key (io_t *io,io_uid_t const *uid,io_authentication_key_t *key) {
+	return false;
+}
+
+uint32_t
+io_no_random_u32 (io_t *io) {
+	return 0;
+}
+
+bool
+io_enqueue_task_base (io_t *io,vref_t r_task) {
+	return false;
+}
+
+void
+io_signal_task_pending (io_t *io) {
+}
+
+bool
+io_do_next_task_base (io_t *io) {
+	return false;
+}
+
+bool
+in_not_in_event_thread (io_t *io) {
+	return false;
+}
+
+void
+io_no_signal_event_pending (io_t *io) {
+}
+
+void
+io_no_wait_for_event_pending (io_t *io) {
+}
+
+io_time_t
+io_get_time_zero (io_t *io) {
+	return time_zero();
+}
+
+void
+io_no_enqueue_alarm (io_t *io,io_alarm_t *alarm) {
+}
+
+bool
+io_no_enter_critical_section (io_t *io) {
+	return false;
+}
+
+void
+io_no_exit_critical_section (io_t *io,bool f) {
+}
+
+void
+io_no_register_interrupt_handler (
+	io_t *io,int32_t number,io_interrupt_action_t fn,void *user
+) {
+}
+
+bool
+io_no_unregister_interrupt_handler (io_t *io,int32_t number,io_interrupt_action_t fn) {
+	return false;
+}
+
+void
+io_default_log (io_t *io,char const *fmp,va_list va) {
+}
+
+void
+io_default_panic (io_t *io,int code) {
+	while (1);
+}
 
 static const io_implementation_t	io_base = {
-	.value_implementation_map = NULL,
-	.get_byte_memory = io_core_get_null_byte_memory,
-	.get_short_term_value_memory = io_core_get_null_value_memory,
-	.get_long_term_value_memory = io_core_get_null_value_memory,
-	.do_gc = NULL,
-	.is_first_run = NULL,
-	.get_core_clock = NULL,
-	.get_random_u32 = NULL,
-	.is_first_run = NULL,
-	.sha256_start = io_cpu_sha256_start,
-	.sha256_update = io_cpu_sha256_update,
-	.sha256_finish = io_cpu_sha256_finish,
-	.get_socket = io_core_get_null_socket,
-	.allocate_socket = NULL,
-	.deallocate_socket = NULL,
-	.dequeue_event = dequeue_io_event,
-	.enqueue_event = enqueue_io_event,
-	.next_event = do_next_io_event,
-	.in_event_thread = NULL,
-	.get_time = NULL,
-	.signal_task_pending = NULL,
-	.enqueue_task = NULL,
-	.signal_event_pending = NULL,
-	.wait_for_event = NULL,
-	.wait_for_all_events = NULL,
-	.enter_critical_section = NULL,
-	.exit_critical_section = NULL,
-	.register_interrupt_handler = NULL,
-	.unregister_interrupt_handler = NULL,
-	.set_io_pin_output = io_pin_nop,
-	.set_io_pin_input = io_pin_nop,
-	.set_io_pin_interrupt = io_pin_interrupt_nop,
-	.set_io_pin_alternate = io_pin_nop,
-	.release_io_pin = io_pin_nop,
-	.read_from_io_pin = read_from_io_pin_nop,
-	.write_to_io_pin = write_to_io_pin_nop,
-	.toggle_io_pin = io_pin_nop,
-	.valid_pin = io_pin_is_always_invalid,
-	.log = NULL,
-	.panic = NULL,
+	SPECIALISE_IO_IMPLEMENTATION()
 };
 
 void 
