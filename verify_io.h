@@ -1272,7 +1272,7 @@ TEST_BEGIN(test_map_value_1) {
 		result = 0;
 		io_map_value_iterate (r_map,test_io_map_value_count_cb,&result);
 		VERIFY(result == 0,NULL);
-
+		
 		VERIFY (io_map_value_map (r_map,cr_NIL,cr_NIL),NULL);
 		VERIFY (
 			(

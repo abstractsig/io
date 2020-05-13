@@ -1746,7 +1746,7 @@ typedef enum {
 	io_implementation_t const *implementation;\
 	io_event_t *events; \
 	io_alarm_t *alarms; \
-	io_log_level_t log_level;\
+	uint32_t log_level;\
 	/**/
 
 struct PACK_STRUCTURE io {
