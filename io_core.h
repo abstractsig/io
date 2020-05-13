@@ -1734,10 +1734,19 @@ void add_io_implementation_board_methods (io_implementation_t*);
 void add_io_implementation_device_methods (io_implementation_t*);
 bool add_core_value_implementations_to_hash (string_hash_table_t*);
 
+typedef enum {
+	IO_LOG_LEVEL_NO_LOGGING = 0,
+	IO_ERROR_LOG_LEVEL,
+	IO_WARNING_LOG_LEVEL,
+	IO_INFO_LOG_LEVEL,
+	IO_DETAIL_LOG_LEVEL,
+} io_log_level_t;
+
 #define IO_STRUCT_MEMBERS \
 	io_implementation_t const *implementation;\
 	io_event_t *events; \
 	io_alarm_t *alarms; \
+	io_log_level_t log_level;\
 	/**/
 
 struct PACK_STRUCTURE io {
@@ -1748,14 +1757,17 @@ void	enqueue_io_event (io_t*,io_event_t*);
 void	dequeue_io_event (io_t*,io_event_t*);
 bool	do_next_io_event (io_t*);
 
-int io_printf(io_t*,const char *fmt,...);
-void flush_io_printf (io_t*);
+
+int io_printf (io_t*,const char *fmt,...);
+void io_log (io_t*,io_log_level_t,const char *fmt,...);
+void flush_io_log (io_t*);
 
 INLINE_FUNCTION void
 initialise_io (io_t *io,io_implementation_t const *I) {
 	io->implementation = I;
 	io->events = &s_null_io_event;
 	io->alarms = &s_null_io_alarm;
+	io->log_level = IO_LOG_LEVEL_NO_LOGGING;
 }
 
 //
@@ -1799,8 +1811,9 @@ INLINE_FUNCTION uint32_t
 io_get_next_prbs_u32 (io_t *io) {
 	return io->implementation->get_next_prbs_u32(io);
 }
+
 INLINE_FUNCTION void
-io_log (io_t *io,char const *fmt,va_list va) {
+io_log_message (io_t *io,char const *fmt,va_list va) {
 	io->implementation->log(io,fmt,va);
 }
 
@@ -2033,7 +2046,7 @@ bool io_no_unregister_interrupt_handler (io_t*,int32_t,io_interrupt_action_t);
 void io_default_log (io_t*,char const*,va_list);
 void io_default_panic (io_t*,int);
 
-#define SPECIALISE_IO_IMPLEMENTATION() \
+#define SPECIALISE_IO_IMPLEMENTATION(S) \
 	.value_implementation_map = NULL, \
 	.get_byte_memory = io_core_get_null_byte_memory, \
 	.get_short_term_value_memory = io_core_get_null_value_memory, \
@@ -2593,7 +2606,7 @@ io_default_panic (io_t *io,int code) {
 }
 
 static const io_implementation_t	io_base = {
-	SPECIALISE_IO_IMPLEMENTATION()
+	SPECIALISE_IO_IMPLEMENTATION(NULL)
 };
 
 void 
@@ -2953,7 +2966,17 @@ io_printf (io_t *io,const char *fmt,...) {
 }
 
 void
-flush_io_printf (io_t* io) {
+io_log (io_t *io,io_log_level_t level,const char *fmt,...) {
+	if (io->log_level >= level) {
+		va_list va;
+		va_start(va, fmt);
+		io_log_message (io,fmt,va);
+		va_end(va);
+	}
+}
+
+void
+flush_io_log (io_t* io) {
 	io_socket_t *print = io_get_socket (io,IO_PRINTF_SOCKET);
 	if (print) {
 		io_socket_flush (print);

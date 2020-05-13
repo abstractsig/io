@@ -199,8 +199,19 @@ io_socket_increment_reference (io_socket_t *socket,int32_t incr) {
 	return socket->implementation->reference(socket,incr);
 }
 
-#define io_socket_reference(s)	io_socket_increment_reference(s,1)
-#define io_socket_unreference(s)	io_socket_increment_reference(s,-1)
+INLINE_FUNCTION io_socket_t*
+reference_io_socket (io_socket_t *socket) {
+	if (socket) {
+		return socket->implementation->reference(socket,1);
+	} else {
+		return socket;
+	}
+}
+
+INLINE_FUNCTION io_socket_t*
+unreference_io_socket (io_socket_t *socket) {
+	return socket->implementation->reference(socket,-1);
+}
 
 INLINE_FUNCTION void
 io_socket_free (io_socket_t *socket) {
@@ -644,7 +655,7 @@ io_socket_t* allocate_io_shared_media (io_t*,io_address_t);
 INLINE_FUNCTION void
 free_io_sockets (io_socket_t **cursor,io_socket_t **end) {
 	while (cursor < end) {
-		io_socket_free (*cursor++);
+		unreference_io_socket (*cursor++);
 	}
 }
 
@@ -1887,6 +1898,8 @@ allocate_io_shared_media (io_t *io,io_address_t address) {
 	return socket;
 }
 
+#define REFS
+
 //
 //
 //
@@ -1896,12 +1909,18 @@ build_io_sockets (
 ) {
 	socket_builder_t const *end = construct + length;
 	socket_builder_t const *build;
-	
 	build = construct;
 	while (build < end) {
+	#ifdef REFS
+		array[build->index] = reference_io_socket (io_socket_initialise (
+				build->allocate(io,build->address),io,build->C
+			)
+		);
+	#else
 		array[build->index] = io_socket_initialise (
 			build->allocate(io,build->address),io,build->C
 		);
+	#endif
 		build++;
 	}
 
