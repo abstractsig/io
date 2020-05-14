@@ -1894,7 +1894,7 @@ allocate_io_shared_media (io_t *io,io_address_t address) {
 		io_get_byte_memory (io),sizeof(io_shared_media_t)
 	);
 	socket->implementation = &io_shared_media_implementation;
-	assign_io_address (io_get_byte_memory (io),&socket->address,address);
+	socket->address = duplicate_io_address (io_get_byte_memory (io),address);
 	return socket;
 }
 

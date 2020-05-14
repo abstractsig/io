@@ -14,6 +14,7 @@
  */
 #ifndef io_verify_core_sockets_H_
 #define io_verify_core_sockets_H_
+#include <io_verify.h>
 
 void	run_ut_io_core_sockets (V_runner_t*);
 
@@ -254,8 +255,7 @@ TEST_BEGIN(test_io_adapter_socket_2) {
 		}
 	}
 	
-	free_io_sockets (leaf,leaf + SIZEOF(net));
-	
+	free_io_sockets (leaf,leaf + SIZEOF(net));	
 	io_byte_memory_get_info (bm,&bmend);
 	VERIFY (bmend.used_bytes == bmbegin.used_bytes,NULL);	
 }

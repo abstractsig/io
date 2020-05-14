@@ -14,6 +14,7 @@
  */
 #ifndef io_verify_core_security_H_
 #define io_verify_core_security_H_
+#include <io_verify.h>
 
 void	run_ut_io_core_security (V_runner_t*);
 

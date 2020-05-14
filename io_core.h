@@ -2043,7 +2043,7 @@ bool io_no_enter_critical_section (io_t*);
 void io_no_exit_critical_section (io_t*,bool);
 void io_no_register_interrupt_handler (io_t*,int32_t,io_interrupt_action_t,void*);
 bool io_no_unregister_interrupt_handler (io_t*,int32_t,io_interrupt_action_t);
-void io_default_log (io_t*,char const*,va_list);
+void io_no_log (io_t*,char const*,va_list);
 void io_default_panic (io_t*,int);
 
 #define SPECIALISE_IO_IMPLEMENTATION(S) \
@@ -2088,7 +2088,7 @@ void io_default_panic (io_t*,int);
 	.write_to_io_pin = write_to_io_pin_nop, \
 	.toggle_io_pin = io_pin_nop, \
 	.valid_pin = io_pin_is_always_invalid, \
-	.log = io_default_log, \
+	.log = io_no_log, \
 	.panic = io_default_panic, \
 	/**/
 	
@@ -2597,7 +2597,7 @@ io_no_unregister_interrupt_handler (io_t *io,int32_t number,io_interrupt_action_
 }
 
 void
-io_default_log (io_t *io,char const *fmp,va_list va) {
+io_no_log (io_t *io,char const *fmp,va_list va) {
 }
 
 void

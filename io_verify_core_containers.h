@@ -14,8 +14,9 @@
  */
 #ifndef io_verify_core_containers_H_
 #define io_verify_core_containers_H_
+#include <io_verify.h>
 
-void	io_core_containers_unit_test (V_unit_test_t*);
+void	run_ut_io_core_containers (V_runner_t*);
 
 #ifdef IMPLEMENT_VERIFY_IO_CORE_CONTAINERS
 
@@ -755,6 +756,15 @@ io_core_containers_unit_test (V_unit_test_t *unit) {
 	unit->tests = tests;
 	unit->setup = setup_io_core_containers_unit_test;
 	unit->teardown = teardown_io_core_containers_unit_test;
+}
+
+void
+run_ut_io_core_containers (V_runner_t *runner) {
+	static const unit_test_t test_set[] = {
+		io_core_containers_unit_test,
+		0
+	};
+	V_run_unit_tests(runner,test_set);
 }
 
 #endif /* IMPLEMENT_VERIFY_IO_CORE_CONTAINERS */

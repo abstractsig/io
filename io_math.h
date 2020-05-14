@@ -278,7 +278,6 @@ io_math_compare_float64_with_epsilon (float64_t a,float64_t b,float64_t epsilon)
 	}
 }
 #endif /* IMPLEMENT_IO_CORE */
-// NB: math tests are located in verify_io.h
 #endif /* io_math_H_ */
 /*
 ------------------------------------------------------------------------------
