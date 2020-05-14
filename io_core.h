@@ -10739,9 +10739,6 @@ io_cpu_sha256_finish (io_sha256_context_t *ctx,uint8_t output[32]) {
 }
 
 #endif /* IMPLEMENT_IO_CORE */
-#ifdef IMPLEMENT_VERIFY_IO_CORE
-#include <verify_io.h>
-#endif /* IMPLEMENT_ION_VERIFY */
 #endif /* io_core_H_ */
 /*
 ------------------------------------------------------------------------------
