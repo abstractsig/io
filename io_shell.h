@@ -466,7 +466,7 @@ UNIT_SETUP(setup_io_shell_unit_test) {
 UNIT_TEARDOWN(teardown_io_shell_unit_test) {
 }
 
-void
+static void
 io_shell_unit_test (V_unit_test_t *unit) {
 	static V_test_t const tests[] = {
 		test_shell_decoder_1,
@@ -480,11 +480,16 @@ io_shell_unit_test (V_unit_test_t *unit) {
 	unit->setup = setup_io_shell_unit_test;
 	unit->teardown = teardown_io_shell_unit_test;
 }
-#define IO_SHELL_UNIT_TESTS \
-	io_shell_unit_test,\
-	/**/
-#else
-#define IO_SHELL_UNIT_TESTS
+
+void
+run_ut_io_shell (V_runner_t *runner) {
+	static const unit_test_t test_set[] = {
+		io_shell_unit_test,
+		0
+	};
+	V_run_unit_tests(runner,test_set);
+}
+
 #endif /* IMPLEMENT_VERIFY_IO_SHELL */
 #endif /* io_shell_H_ */
 /*

@@ -120,6 +120,7 @@ EVENT_DATA io_graphics_context_implementation_t test_io_graphics_graphics_contex
 	.get_command_stack = test_io_graphics_graphics_context_get_command_stack,
 	.draw_pixel = test_gfx_draw_pixel,
 	.draw_character = io_graphics_context_draw_character_with_current_font,
+	.draw_ascii_text = io_graphics_context_draw_draw_ascii_text_base,
 	.begin = test_gfx_begin,
 	.run = test_gfx_run,
 	.render = test_gfx_render,
