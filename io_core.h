@@ -1377,7 +1377,7 @@ struct io_cpu_power_domain_pointer {
 };
 
 //
-// inline clock implementation
+// inline io power domain pointer implementation
 //
 INLINE_FUNCTION io_cpu_power_domain_t const*
 io_cpu_power_domain_ro_pointer (io_cpu_power_domain_pointer_t p) {
@@ -1420,6 +1420,19 @@ void io_power_domain_no_operation (io_t *io,io_cpu_power_domain_pointer_t);
 extern EVENT_DATA io_cpu_power_domain_t always_on_io_power_domain;
 
 #define NULL_IO_POWER_DOMAIN						((io_cpu_power_domain_pointer_t){NULL})
+
+//
+// inline io power domain implementation
+//
+INLINE_FUNCTION void
+turn_on_io_power_domain (io_t* io,io_cpu_power_domain_pointer_t pd) {
+    return io_cpu_power_domain_ro_pointer(pd)->implementation->turn_on(io,pd);
+}
+
+INLINE_FUNCTION void
+turn_off_io_power_domain (io_t* io,io_cpu_power_domain_pointer_t pd) {
+    return io_cpu_power_domain_ro_pointer(pd)->implementation->turn_off(io,pd);
+}
 
 //
 // clock
@@ -1751,6 +1764,7 @@ typedef struct PACK_STRUCTURE io_implementation {
 	// external notifications
 	//
 	void (*log) (io_t*,char const*,va_list);
+	void (*flush_log) (io_t*);
 	void (*panic) (io_t*,int);
 	//
 } io_implementation_t;
@@ -1842,6 +1856,11 @@ io_get_next_prbs_u32 (io_t *io) {
 INLINE_FUNCTION void
 io_log_message (io_t *io,char const *fmt,va_list va) {
 	io->implementation->log(io,fmt,va);
+}
+
+INLINE_FUNCTION void
+io_flush_log (io_t *io) {
+	io->implementation->flush_log(io);
 }
 
 INLINE_FUNCTION void
@@ -2071,6 +2090,7 @@ void io_no_exit_critical_section (io_t*,bool);
 void io_no_register_interrupt_handler (io_t*,int32_t,io_interrupt_action_t,void*);
 bool io_no_unregister_interrupt_handler (io_t*,int32_t,io_interrupt_action_t);
 void io_no_log (io_t*,char const*,va_list);
+void io_no_log_flush (io_t*);
 void io_default_panic (io_t*,int);
 
 #define SPECIALISE_IO_IMPLEMENTATION(S) \
@@ -2116,6 +2136,7 @@ void io_default_panic (io_t*,int);
 	.toggle_io_pin = io_pin_nop, \
 	.valid_pin = io_pin_is_always_invalid, \
 	.log = io_no_log, \
+	.flush_log = io_no_log_flush,\
 	.panic = io_default_panic, \
 	/**/
 	
@@ -2625,6 +2646,11 @@ io_no_unregister_interrupt_handler (io_t *io,int32_t number,io_interrupt_action_
 
 void
 io_no_log (io_t *io,char const *fmp,va_list va) {
+}
+
+void
+io_no_log_flush (io_t *io) {
+
 }
 
 void

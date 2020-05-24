@@ -60,6 +60,8 @@ struct PACK_STRUCTURE io_socket_state {
 	IO_SOCKET_STATE_STRUCT_MEMBERS
 };
 
+#define IO_SOCKET_RE_ENTER_STATE NULL
+
 void io_socket_call_open (io_socket_t*,io_socket_open_flag_t);
 void io_socket_call_state (io_socket_t*,io_socket_state_t const* (*fn) (io_socket_t*));
 io_socket_state_t const* io_socket_state_ignore_event (io_socket_t*);
@@ -746,7 +748,9 @@ void
 io_socket_call_state (io_socket_t *socket,io_socket_state_t const* (*fn) (io_socket_t*)) {
 	io_socket_state_t const *current = socket->State;
 	io_socket_state_t const *next = fn (socket);
-	if (next != current) {
+	if (next == NULL) {
+		io_socket_enter_current_state (socket);		
+	} else if (next != current) {
 		socket->State = next;
 		io_socket_enter_current_state (socket);
 	}
