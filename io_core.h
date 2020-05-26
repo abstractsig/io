@@ -411,9 +411,22 @@ typedef struct io_dma_channel io_dma_channel_t;
 typedef struct io_dma_channel_implementation io_dma_channel_implementation_t;
 
 struct  PACK_STRUCTURE io_dma_channel_implementation {
+	io_dma_channel_implementation_t const *specialisation_of;
 	void (*transfer_from_peripheral) (io_dma_channel_t*,void*,uint32_t);
 	void (*transfer_to_peripheral) (io_dma_channel_t*,void const*,uint32_t);
+	void (*transfer_complete) (io_t*,io_dma_channel_t*);
 };
+
+void io_dma_channel_no_transfer_from_peripheral (io_dma_channel_t*,void*,uint32_t);
+void io_dma_channel_no_transfer_to_peripheral (io_dma_channel_t*,void const*,uint32_t);
+void io_dma_channel_transfer_complete_nop (io_t*,io_dma_channel_t*);
+
+#define SPECIALISE_IO_DMA_CHANNEL_IMPLEMENTATION(S) \
+	.specialisation_of = S, \
+	.transfer_from_peripheral = io_dma_channel_no_transfer_from_peripheral,\
+	.transfer_to_peripheral = io_dma_channel_no_transfer_to_peripheral,\
+	.transfer_complete = io_dma_channel_transfer_complete_nop,\
+	/**/
 
 #define IO_DMA_CHANNEL_STRUCT_MEMBERS	\
 	io_dma_channel_implementation_t const *implementation;\
@@ -445,6 +458,11 @@ io_dma_transfer_from_peripheral (io_dma_channel_t *channel,void *dest,uint32_t s
 INLINE_FUNCTION void
 io_dma_transfer_to_peripheral (io_dma_channel_t *channel,void const *src,uint32_t size) {
 	channel->implementation->transfer_to_peripheral(channel,src,size);
+}
+
+INLINE_FUNCTION void
+io_dma_transfer_complete (io_t *io,io_dma_channel_t *channel) {
+	channel->implementation->transfer_complete (io,channel);
 }
 
 /*
@@ -1702,6 +1720,7 @@ typedef struct PACK_STRUCTURE io_implementation {
 	void (*do_gc) (io_t*,int32_t);
 	io_cpu_clock_pointer_t (*get_core_clock) (io_t*);
 	bool (*is_first_run) (io_t*);
+	bool (*clear_first_run) (io_t*);
 
 	//
 	// identity and security
@@ -1951,6 +1970,11 @@ io_is_first_run (io_t *io) {
 	return io->implementation->is_first_run (io);
 }
 
+INLINE_FUNCTION bool
+io_clear_first_run (io_t *io) {
+	return io->implementation->clear_first_run (io);
+}
+
 INLINE_FUNCTION io_uid_t const*
 io_uid (io_t *io) {
 	return io->implementation->uid(io);
@@ -2101,6 +2125,7 @@ void io_default_panic (io_t*,int);
 	.do_gc = io_no_gc, \
 	.get_core_clock = io_no_core_clock, \
 	.is_first_run = io_never_first_run, \
+	.clear_first_run = io_never_first_run,\
 	.uid = io_no_uid, \
 	.get_shared_key = io_never_get_shared_key, \
 	.get_random_u32 = io_no_random_u32, \
@@ -3507,17 +3532,20 @@ io_value_pipe_put_value (io_value_pipe_t *this,vref_t r_value) {
 	}
 }
 
-static void
-io_dma_null_transfer_from_peripheral (io_dma_channel_t *channel,void *dest,uint32_t len) {
+void
+io_dma_channel_no_transfer_from_peripheral (io_dma_channel_t *channel,void *dest,uint32_t len) {
 }
 
-static void
-io_dma_null_transfer_to_peripheral (io_dma_channel_t *channel,void const *src,uint32_t len) {
+void
+io_dma_channel_no_transfer_to_peripheral (io_dma_channel_t *channel,void const *src,uint32_t len) {
+}
+
+void
+io_dma_channel_transfer_complete_nop (io_t *io,io_dma_channel_t *channel) {
 }
 
 EVENT_DATA io_dma_channel_implementation_t dma_channel_implementation = {
-	.transfer_from_peripheral = io_dma_null_transfer_from_peripheral,
-	.transfer_to_peripheral = io_dma_null_transfer_to_peripheral,
+	SPECIALISE_IO_DMA_CHANNEL_IMPLEMENTATION(NULL)
 };
 
 io_dma_channel_t null_dma_channel = {
