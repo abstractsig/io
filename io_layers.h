@@ -204,7 +204,6 @@ extern EVENT_DATA io_encoding_layer_api_t io_packet_layer_api;
 	.get_content = io_packet_encoding_get_content, \
 	/**/
 
-
 INLINE_FUNCTION io_encoding_t*
 mk_io_packet_encoding (io_byte_memory_t *bm) {
 	return io_packet_encoding_implementation.make_encoding(bm);
