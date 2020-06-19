@@ -1382,8 +1382,12 @@ io_multiplex_socket_bind_inner (
 
 	{
 		io_inner_port_t *port = inner->port;
-		io_dequeue_event (io_socket_io (socket),port->tx_available);
-		io_dequeue_event (io_socket_io (socket),port->rx_available);
+		if(port->tx_available != NULL) {
+			io_dequeue_event (io_socket_io (socket),port->tx_available);
+		}
+		if (port->rx_available != NULL) {
+			io_dequeue_event (io_socket_io (socket),port->rx_available);
+		}
 		port->tx_available = tx;
 		port->rx_available = rx;
 		reset_io_encoding_pipe (port->transmit_pipe);
