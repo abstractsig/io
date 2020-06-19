@@ -183,15 +183,27 @@ struct PACK_STRUCTURE io_packet_encoding {
 	IO_PACKET_ENCODING_STRUCT_MEMBERS
 };
 
-io_encoding_t* 	io_packet_encoding_new (io_byte_memory_t*);
-void*					initialise_io_packet_encoding (io_packet_encoding_t*);
-void 					io_packet_encoding_free (io_encoding_t*);
-void* 				get_packet_encoding_layer (io_encoding_t*,io_layer_implementation_t const*);
-void* 				io_packet_encoding_get_inner_layer (io_encoding_t*,io_layer_t*);
-void* 				io_packet_encoding_get_outer_layer (io_encoding_t*,io_layer_t*);
-
+io_encoding_t* io_packet_encoding_new (io_byte_memory_t*);
+void* initialise_io_packet_encoding (io_packet_encoding_t*);
+void io_packet_encoding_free (io_encoding_t*);
+void* get_packet_encoding_layer (io_encoding_t*,io_layer_implementation_t const*);
+void* io_packet_encoding_get_inner_layer (io_encoding_t*,io_layer_t*);
+void* io_packet_encoding_get_outer_layer (io_encoding_t*,io_layer_t*);
+uint32_t io_packet_encoding_increment_decode_offest (io_encoding_t*,uint32_t);
+void io_packet_encoding_get_content (io_encoding_t*,uint8_t const **,uint8_t const **);
+	
 extern EVENT_DATA io_encoding_implementation_t io_packet_encoding_implementation;
 extern EVENT_DATA io_encoding_layer_api_t io_packet_layer_api;
+
+#define SPECIALISE_IO_PACKET_ENCODING_IMPLEMENTATION(S) \
+	SPECIALISE_IO_BINARY_ENCODING_IMPLEMENTATION (S)\
+	.make_encoding = io_packet_encoding_new, \
+	.free = io_packet_encoding_free, \
+	.increment_decode_offest = io_packet_encoding_increment_decode_offest, \
+	.layer = &io_packet_layer_api, \
+	.get_content = io_packet_encoding_get_content, \
+	/**/
+
 
 INLINE_FUNCTION io_encoding_t*
 mk_io_packet_encoding (io_byte_memory_t *bm) {
@@ -442,7 +454,7 @@ io_packet_encoding_default_limit (void) {
 	return (1<<16);
 }
 
-static uint32_t
+uint32_t
 io_packet_encoding_increment_decode_offest (io_encoding_t *encoding,uint32_t incr) {
 	io_packet_encoding_t *packet = (io_packet_encoding_t*) encoding;
 	uint32_t offset = packet->decode_cursor;
@@ -451,26 +463,12 @@ io_packet_encoding_increment_decode_offest (io_encoding_t *encoding,uint32_t inc
 }
 
 EVENT_DATA io_encoding_implementation_t io_packet_encoding_implementation = {
-	.specialisation_of = &io_binary_encoding_implementation,
-	.make_encoding = io_packet_encoding_new,
-	.free = io_packet_encoding_free,
-	.decode_to_io_value = io_binary_encoding_decode_to_io_value,
-	.increment_decode_offest = io_packet_encoding_increment_decode_offest,
-	.get_io = io_binary_encoding_get_io,
-	.grow = io_binary_encoding_grow,
-	.grow_increment = default_io_encoding_grow_increment,
-	.fill = io_binary_encoding_fill_bytes,
-	.append_byte = io_binary_encoding_append_byte,
-	.append_bytes = io_binary_encoding_append_bytes,
-	.pop_last_byte = io_binary_encoding_pop_last_byte,
-	.print = io_binary_encoding_print,
-	.reset = io_binary_encoding_reset,
-	.layer = &io_packet_layer_api,
-	.get_byte_stream = io_binary_encoding_get_byte_stream,
-	.get_content = io_packet_encoding_get_content,
-	.length = io_binary_encoding_length,
+	SPECIALISE_IO_PACKET_ENCODING_IMPLEMENTATION (
+		&io_binary_encoding_implementation
+	)
 	.limit = io_packet_encoding_default_limit,
 };
+
 
 EVENT_DATA io_encoding_layer_api_t io_packet_layer_api = {
 	.get_inner_layer = io_packet_encoding_get_inner_layer,

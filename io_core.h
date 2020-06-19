@@ -6,10 +6,6 @@
  * which higher level languages can be developed.  By higher level we mean
  * languages that are more 'expressive' than C such as Javascript or Python.
  *
- * Features
- *
- * Asynchronous execution model
- *
  * VERSION HISTORY
  * ===============
  * 1.0	 (2020-01)
@@ -89,7 +85,6 @@ typedef struct memory_info {
 
 #define UMM_BEST_FIT
 #undef  UMM_FIRST_FIT
-
 #define UMM_CRITICAL_ENTRY(bm)	{\
 												bool __h = enter_io_critical_section(bm->io);
 #define UMM_CRITICAL_EXIT(bm)			exit_io_critical_section(bm->io,__h);\
@@ -840,7 +835,48 @@ bool	io_encoding_has_implementation (io_encoding_t const*,io_encoding_implementa
 io_encoding_t*	reference_io_encoding (io_encoding_t*);
 void	unreference_io_encoding (io_encoding_t*);
 void* io_encoding_no_layer (io_encoding_t*,io_layer_implementation_t const*);
+
+io_encoding_t* mk_null_encoding (io_byte_memory_t*);
+void free_null_encoding (io_encoding_t*);
+io_t* null_encoding_get_io (io_encoding_t*);
+void* io_encoding_no_byte_stream (io_encoding_t*);
+void io_encoding_no_content (io_encoding_t*,uint8_t const**,uint8_t const**);
+vref_t io_value_encoding_decode_to_io_value (io_encoding_t*,io_value_decoder_t,io_value_memory_t*);
 uint32_t io_encoding_no_decode_increment (io_encoding_t*,uint32_t);
+size_t null_encoding_length (io_encoding_t const*);
+int32_t null_encoding_limit (void);
+size_t io_encoding_no_fill (io_encoding_t*,uint8_t,size_t);
+bool io_encoding_no_grow (io_encoding_t*,uint32_t);
+uint32_t null_encoding_grow_increment (io_encoding_t*);
+void io_encoding_no_reset (io_encoding_t*);
+size_t io_encoding_no_print (io_encoding_t*,char const*,va_list);
+bool io_encoding_no_append_byte (io_encoding_t*,uint8_t);
+bool io_encoding_no_append_bytes (io_encoding_t*,uint8_t const*,size_t);
+bool io_encoding_no_pop_last_byte (io_encoding_t*,uint8_t*);
+
+extern EVENT_DATA io_encoding_layer_api_t no_packet_layer_api;
+
+#define SPECIALISE_IO_ENCODING_IMPLEMENTATION(S) \
+	.specialisation_of = S, \
+	.make_encoding = mk_null_encoding, \
+	.free = free_null_encoding, \
+	.get_io = null_encoding_get_io, \
+	.get_byte_stream = io_encoding_no_byte_stream, \
+	.get_content = io_encoding_no_content, \
+	.decode_to_io_value = io_value_encoding_decode_to_io_value, \
+	.increment_decode_offest = io_encoding_no_decode_increment, \
+	.limit = null_encoding_limit, \
+	.length = null_encoding_length, \
+	.fill = io_encoding_no_fill, \
+	.grow = io_encoding_no_grow, \
+	.grow_increment = null_encoding_grow_increment, \
+	.print = io_encoding_no_print, \
+	.reset = io_encoding_no_reset, \
+	.append_byte = io_encoding_no_append_byte,\
+	.append_bytes = io_encoding_no_append_bytes, \
+	.pop_last_byte = io_encoding_no_pop_last_byte, \
+	.layer = &no_packet_layer_api,\
+	/**/
 
 //
 // inline io_encoding methods
@@ -1013,6 +1049,23 @@ uint32_t	default_io_encoding_grow_increment (io_encoding_t*);
 size_t	io_binary_encoding_length (io_encoding_t const*);
 int32_t	io_binary_encoding_nolimit (void);
 
+#define SPECIALISE_IO_BINARY_ENCODING_IMPLEMENTATION(S) \
+	SPECIALISE_IO_ENCODING_IMPLEMENTATION (S)\
+	.get_io = io_binary_encoding_get_io,\
+	.length = io_binary_encoding_length,\
+	.limit = io_binary_encoding_nolimit,\
+	.grow = io_binary_encoding_grow,\
+	.grow_increment = default_io_encoding_grow_increment,\
+	.fill = io_binary_encoding_fill_bytes, \
+	.append_byte = io_binary_encoding_append_byte, \
+	.append_bytes = io_binary_encoding_append_bytes, \
+	.pop_last_byte = io_binary_encoding_pop_last_byte, \
+	.print = io_binary_encoding_print, \
+	.reset = io_binary_encoding_reset, \
+	.get_byte_stream = io_binary_encoding_get_byte_stream, \
+	.get_content = io_binary_encoding_get_content, \
+	/**/
+	
 extern EVENT_DATA io_encoding_implementation_t io_binary_encoding_implementation;
 
 //
@@ -1047,7 +1100,7 @@ INLINE_FUNCTION bool
 is_io_x70_encoding (io_encoding_t const *encoding) {
 	extern EVENT_DATA io_encoding_implementation_t io_x70_encoding_implementation;
 	return io_encoding_has_implementation (
-		encoding,IO_ENCODING_IMPLEMENATAION (&io_x70_encoding_implementation)
+		encoding,&io_x70_encoding_implementation
 	);
 }
 
@@ -1071,7 +1124,7 @@ bool encoding_is_io_value_int64 (io_encoding_t*);
 
 extern EVENT_DATA io_encoding_implementation_t io_value_int64_encoding_implementation;
 #define def_int64_encoding(VALUE) (io_value_int64_encoding_t) {\
-		.implementation = IO_ENCODING_IMPLEMENATAION(&io_value_int64_encoding_implementation),	\
+		.implementation = &io_value_int64_encoding_implementation,	\
 		.encoded_value = VALUE,		\
 	}
 
@@ -1086,7 +1139,7 @@ bool encoding_is_io_value_float64 (io_encoding_t*);
 
 extern EVENT_DATA io_encoding_implementation_t io_value_float64_encoding_implementation;
 #define def_float64_encoding(VALUE) (io_value_float64_encoding_t) {\
-		.implementation = IO_ENCODING_IMPLEMENATAION(&io_value_float64_encoding_implementation),	\
+		.implementation = &io_value_float64_encoding_implementation,	\
 		.encoded_value = VALUE,		\
 	}
 
@@ -4408,38 +4461,38 @@ unreference_io_encoding (io_encoding_t *encoding) {
 	}
 }
 
-static vref_t
+vref_t
 io_value_encoding_decode_to_io_value (
 	io_encoding_t *encoding,io_value_decoder_t decoder,io_value_memory_t *vm
 ) {
 	return decoder (encoding,vm);
 }
 
-static io_encoding_t*
+io_encoding_t*
 mk_null_encoding (io_byte_memory_t *bm) {
 	return NULL;
 }
 
-static void
+void
 free_null_encoding (io_encoding_t *encoding) {
 }
 
-static size_t
+size_t
 null_encoding_length (io_encoding_t const *encoding) {
 	return 0;
 }
 
-static int32_t
+int32_t
 null_encoding_limit (void) {
 	return 0;
 }
 
-static uint32_t
+uint32_t
 null_encoding_grow_increment (io_encoding_t *encoding) {
 	return 0;
 }
 
-static io_t*
+io_t*
 null_encoding_get_io (io_encoding_t *encoding) {
 	return NULL;
 }
@@ -4449,32 +4502,32 @@ io_encoding_no_layer (io_encoding_t *encoding,io_layer_implementation_t const *L
 	return NULL;
 }
 
-static void*
+void*
 io_encoding_no_byte_stream (io_encoding_t *encoding) {
 	return NULL;
 }
 
-static void
+void
 io_encoding_no_content (io_encoding_t *encoding,uint8_t const** b,uint8_t const** e) {
 	*b = *e = NULL;
 }
 
-static size_t
+size_t
 io_encoding_no_fill (io_encoding_t *encoding,uint8_t b,size_t s) {
 	return 0;
 }
 
-static bool
+bool
 io_encoding_no_grow (io_encoding_t *encoding,uint32_t g) {
 	return false;
 }
 
-static void
+void
 io_encoding_no_reset (io_encoding_t *encoding) {
 }
 
 size_t
-io_encoding_no_print (io_encoding_t *encoding,char const *fmp,va_list va) {
+io_encoding_no_print (io_encoding_t *encoding,char const *fmt,va_list va) {
 	return 0;
 }
 
@@ -4506,25 +4559,7 @@ EVENT_DATA io_encoding_layer_api_t no_packet_layer_api = {
 };
 
 EVENT_DATA io_encoding_implementation_t io_encoding_implementation_base = {
-	.specialisation_of = NULL,
-	.make_encoding = mk_null_encoding,
-	.free = free_null_encoding,
-	.get_io = null_encoding_get_io,
-	.get_byte_stream = io_encoding_no_byte_stream,
-	.get_content = io_encoding_no_content,
-	.decode_to_io_value = io_value_encoding_decode_to_io_value,
-	.increment_decode_offest = io_encoding_no_decode_increment,
-	.limit = null_encoding_limit,
-	.length = null_encoding_length,
-	.fill = io_encoding_no_fill,
-	.print = io_encoding_no_print,
-	.grow = io_encoding_no_grow,
-	.grow_increment = null_encoding_grow_increment,
-	.layer = &no_packet_layer_api,
-	.reset = io_encoding_no_reset,
-	.append_byte = io_encoding_no_append_byte,
-	.append_bytes = io_encoding_no_append_bytes,
-	.pop_last_byte = io_encoding_no_pop_last_byte,
+	SPECIALISE_IO_ENCODING_IMPLEMENTATION(NULL)
 };
 
 bool
@@ -4540,60 +4575,28 @@ io_encoding_has_implementation (
 	return is && (E != NULL);
 }
 
-EVENT_DATA io_encoding_implementation_t io_value_int64_encoding_implementation = {
-	.specialisation_of = &io_encoding_implementation_base,
-	.make_encoding = mk_null_encoding,
-	.free = free_null_encoding,
-	.get_io = null_encoding_get_io,
-	.get_byte_stream = io_encoding_no_byte_stream,
-	.get_content = io_encoding_no_content,
-	.decode_to_io_value = io_value_encoding_decode_to_io_value,
-	.increment_decode_offest = io_encoding_no_decode_increment,
-	.limit = null_encoding_limit,
-	.length = null_encoding_length,
-	.fill = io_encoding_no_fill,
-	.print = io_encoding_no_print,
-	.grow = io_encoding_no_grow,
-	.grow_increment = null_encoding_grow_increment,
-	.layer = &no_packet_layer_api,
-	.reset = io_encoding_no_reset,
-	.append_byte = io_encoding_no_append_byte,
-	.append_bytes = io_encoding_no_append_bytes,
-	.pop_last_byte = io_encoding_no_pop_last_byte,
+EVENT_DATA io_encoding_implementation_t 
+io_value_int64_encoding_implementation = {
+	SPECIALISE_IO_ENCODING_IMPLEMENTATION (&io_encoding_implementation_base)
 };
 
 bool encoding_is_io_value_int64 (io_encoding_t *encoding) {
 	return io_encoding_has_implementation (
-		encoding,IO_ENCODING_IMPLEMENATAION(&io_value_int64_encoding_implementation)
+		encoding,&io_value_int64_encoding_implementation
 	);
 }
 
-EVENT_DATA io_encoding_implementation_t io_value_float64_encoding_implementation = {
-	.specialisation_of = &io_encoding_implementation_base,
-	.make_encoding = mk_null_encoding,
-	.free = free_null_encoding,
-	.get_io = null_encoding_get_io,
-	.get_byte_stream = io_encoding_no_byte_stream,
-	.get_content = io_encoding_no_content,
-	.decode_to_io_value = io_value_encoding_decode_to_io_value,
-	.increment_decode_offest = io_encoding_no_decode_increment,
-	.limit = null_encoding_limit,
-	.length = null_encoding_length,
-	.fill = io_encoding_no_fill,
-	.print = io_encoding_no_print,
-	.grow = io_encoding_no_grow,
-	.grow_increment = null_encoding_grow_increment,
-	.layer = &no_packet_layer_api,
-	.reset = io_encoding_no_reset,
-	.append_byte = io_encoding_no_append_byte,
-	.append_bytes = io_encoding_no_append_bytes,
-	.pop_last_byte = io_encoding_no_pop_last_byte,
+EVENT_DATA io_encoding_implementation_t 
+io_value_float64_encoding_implementation = {
+	SPECIALISE_IO_ENCODING_IMPLEMENTATION (
+		&io_encoding_implementation_base
+	)
 };
 
 bool
 encoding_is_io_value_float64 (io_encoding_t *encoding) {
 	return io_encoding_has_implementation (
-		encoding,IO_ENCODING_IMPLEMENATAION(&io_value_float64_encoding_implementation)
+		encoding,&io_value_float64_encoding_implementation
 	);
 }
 
@@ -4801,7 +4804,7 @@ bool
 is_io_text_encoding (io_encoding_t const *encoding) {
 	extern EVENT_DATA io_encoding_implementation_t io_text_encoding_implementation;
 	return io_encoding_has_implementation (
-		encoding,IO_ENCODING_IMPLEMENATAION (&io_text_encoding_implementation)
+		encoding,&io_text_encoding_implementation
 	);
 }
 
@@ -4882,32 +4885,18 @@ io_binary_encoding_get_byte_stream (io_encoding_t *encoding) {
 	return this->byte_stream;
 }
 
-EVENT_DATA io_encoding_implementation_t io_binary_encoding_implementation = {
-	.specialisation_of = &io_encoding_implementation_base,
-	.decode_to_io_value = io_binary_encoding_decode_to_io_value,
-	.increment_decode_offest = io_encoding_no_decode_increment,
-	.make_encoding = mk_null_encoding,
-	.free = free_null_encoding,
-	.get_io = io_binary_encoding_get_io,
-	.length = io_binary_encoding_length,
-	.limit = io_binary_encoding_nolimit,
-	.grow = io_binary_encoding_grow,
-	.grow_increment = default_io_encoding_grow_increment,
-	.fill = io_binary_encoding_fill_bytes,
-	.append_byte = io_binary_encoding_append_byte,
-	.append_bytes = io_binary_encoding_append_bytes,
-	.pop_last_byte = io_binary_encoding_pop_last_byte,
-	.print = io_binary_encoding_print,
-	.reset = io_binary_encoding_reset,
-	.get_byte_stream = io_binary_encoding_get_byte_stream,
-	.get_content = io_binary_encoding_get_content,
-	.layer = &no_packet_layer_api,
+	
+EVENT_DATA io_encoding_implementation_t 
+io_binary_encoding_implementation = {
+	SPECIALISE_IO_BINARY_ENCODING_IMPLEMENTATION (
+		&io_encoding_implementation_base
+	)
 };
 
 bool
 is_io_binary_encoding (io_encoding_t const *encoding) {
 	return io_encoding_has_implementation (
-		encoding,IO_ENCODING_IMPLEMENATAION (&io_binary_encoding_implementation)
+		encoding,&io_binary_encoding_implementation
 	);
 }
 
@@ -4919,9 +4908,7 @@ io_text_encoding_new (io_byte_memory_t *bm) {
 
 	if (this != NULL) {
 		extern EVENT_DATA io_encoding_implementation_t io_text_encoding_implementation;
-		this->implementation = IO_ENCODING_IMPLEMENATAION (
-			&io_text_encoding_implementation
-		);
+		this->implementation = &io_text_encoding_implementation;
 		this->bm = bm;
 		this = io_binary_encoding_initialise ((io_binary_encoding_t*) this);
 		this->visited = NULL;
@@ -4950,26 +4937,14 @@ io_text_encoding_get_visited (io_text_encoding_t *this) {
 	return this->visited;
 }
 
-EVENT_DATA io_encoding_implementation_t io_text_encoding_implementation = {
-	.specialisation_of = &io_binary_encoding_implementation,
-	.decode_to_io_value = io_binary_encoding_decode_to_io_value,
-	.increment_decode_offest = io_encoding_no_decode_increment,
+EVENT_DATA io_encoding_implementation_t 
+io_text_encoding_implementation = {
+	SPECIALISE_IO_BINARY_ENCODING_IMPLEMENTATION (
+		&io_binary_encoding_implementation
+	)
 	.make_encoding = io_text_encoding_new,
 	.free = io_text_encoding_free,
-	.get_io = io_binary_encoding_get_io,
-	.grow = io_binary_encoding_grow,
-	.grow_increment = default_io_encoding_grow_increment,
-	.layer = &no_packet_layer_api,
-	.fill = io_binary_encoding_fill_bytes,
-	.append_byte = io_binary_encoding_append_byte,
-	.append_bytes = io_binary_encoding_append_bytes,
-	.pop_last_byte = io_binary_encoding_pop_last_byte,
-	.print = io_binary_encoding_print,
-	.reset = io_binary_encoding_reset,
-	.get_byte_stream = io_encoding_no_byte_stream,
-	.get_content = io_binary_encoding_get_content,
-	.length = io_binary_encoding_length,
-	.limit = io_binary_encoding_nolimit,
+	.decode_to_io_value = io_binary_encoding_decode_to_io_value,
 };
 
 static io_encoding_t*
@@ -4980,9 +4955,7 @@ io_x70_encoding_new (io_byte_memory_t *bm) {
 
 	if (this != NULL) {
 		extern EVENT_DATA io_encoding_implementation_t io_x70_encoding_implementation;
-		this->implementation = IO_ENCODING_IMPLEMENATAION (
-			&io_x70_encoding_implementation
-		);
+		this->implementation = &io_x70_encoding_implementation;
 		this->bm = bm;
 		this = io_binary_encoding_initialise(this);
 	}
@@ -5063,26 +5036,11 @@ io_x70_decoder (io_encoding_t *encoding,io_value_memory_t *vm) {
 }
 
 EVENT_DATA io_encoding_implementation_t io_x70_encoding_implementation = {
-	.specialisation_of = IO_ENCODING_IMPLEMENATAION (
+	SPECIALISE_IO_BINARY_ENCODING_IMPLEMENTATION (
 		&io_binary_encoding_implementation
-	),
-	.decode_to_io_value = io_binary_encoding_decode_to_io_value,
+	)
 	.make_encoding = io_x70_encoding_new,
 	.free = io_binary_encoding_free,
-	.get_io = io_binary_encoding_get_io,
-	.grow = io_binary_encoding_grow,
-	.grow_increment = default_io_encoding_grow_increment,
-	.layer = &no_packet_layer_api,
-	.fill = io_binary_encoding_fill_bytes,
-	.append_byte = io_binary_encoding_append_byte,
-	.append_bytes = io_binary_encoding_append_bytes,
-	.pop_last_byte = io_binary_encoding_pop_last_byte,
-	.print = io_binary_encoding_print,
-	.reset = io_binary_encoding_reset,
-	.get_byte_stream = io_encoding_no_byte_stream,
-	.get_content = io_binary_encoding_get_content,
-	.length = io_binary_encoding_length,
-	.limit = io_binary_encoding_nolimit,
 };
 
 void
