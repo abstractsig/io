@@ -1,10 +1,10 @@
 /*
  *
- * Io
+ * io
+ * ==
  *
- * This library implements io_values which provide a common platform upon
- * which higher level languages can be developed.  By higher level we mean
- * languages that are more 'expressive' than C such as Javascript or Python.
+ * io provides an event-driven operating system for micontroller,
+ * microprocessor and application processors.
  *
  * VERSION HISTORY
  * ===============

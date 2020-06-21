@@ -49,7 +49,9 @@ typedef enum {
 	const char *name;\
 	io_socket_state_t const* (*enter) (io_socket_t*); \
 	io_socket_state_t const* (*open) (io_socket_t*,io_socket_open_flag_t); \
+	io_socket_state_t const* (*open_for_inner) (io_socket_t*,io_address_t,io_socket_open_flag_t); \
 	io_socket_state_t const* (*close) (io_socket_t*); \
+	io_socket_state_t const* (*inner_closed) (io_socket_t*,io_address_t); \
 	io_socket_state_t const* (*receive) (io_socket_t*); \
 	io_socket_state_t const* (*transmit) (io_socket_t*); \
 	io_socket_state_t const* (*timer) (io_socket_t*); \
@@ -63,9 +65,16 @@ struct PACK_STRUCTURE io_socket_state {
 #define IO_SOCKET_RE_ENTER_STATE NULL
 
 void io_socket_call_open (io_socket_t*,io_socket_open_flag_t);
+void io_socket_call_open_for_inner (io_socket_t*,io_address_t,io_socket_open_flag_t);
+void io_socket_call_inner_closed (io_socket_t*,io_address_t);
 void io_socket_call_state (io_socket_t*,io_socket_state_t const* (*fn) (io_socket_t*));
 io_socket_state_t const* io_socket_state_ignore_event (io_socket_t*);
 io_socket_state_t const* io_socket_state_ignore_open_event (io_socket_t*,io_socket_open_flag_t);
+io_socket_state_t const* io_socket_state_ignore_open_for_inner_event (io_socket_t*,io_address_t,io_socket_open_flag_t);
+io_socket_state_t const* io_socket_state_ignore_inner_closed_event (io_socket_t*,io_address_t);
+
+bool io_socket_try_open (io_socket_t*,io_socket_open_flag_t);
+#define io_socket_call_close(s)	io_socket_call_state (s,(s)->State->close)
 
 extern EVENT_DATA io_socket_state_t io_socket_state;
 
@@ -74,7 +83,9 @@ extern EVENT_DATA io_socket_state_t io_socket_state;
 	.name = "state", \
 	.enter = io_socket_state_ignore_event, \
 	.open = io_socket_state_ignore_open_event, \
+	.open_for_inner = io_socket_state_ignore_open_for_inner_event,\
 	.close = io_socket_state_ignore_event, \
+	.inner_closed = io_socket_state_ignore_inner_closed_event,\
 	.receive = io_socket_state_ignore_event, \
 	.transmit = io_socket_state_ignore_event, \
 	.timer = io_socket_state_ignore_event, \
@@ -234,6 +245,7 @@ INLINE_FUNCTION bool
 io_socket_is_closed (io_socket_t const *socket) {
 	return socket->implementation->is_closed (socket);
 }
+#define io_socket_is_open(s)	(!io_socket_is_closed(s))
 
 INLINE_FUNCTION io_encoding_t*
 io_socket_new_message (io_socket_t *socket) {
@@ -732,6 +744,24 @@ mk_io_socket_open_event (io_byte_memory_t *bm,io_socket_open_flag_t flag) {
 	return (io_event_t*) this;
 }
 
+bool
+io_socket_try_open (io_socket_t *socket,io_socket_open_flag_t flag) {
+	io_socket_call_open (socket,flag);
+	return true;
+}
+
+void
+io_socket_call_open_for_inner (
+	io_socket_t *socket,io_address_t address,io_socket_open_flag_t flag
+) {
+	io_socket_state_t const *current = socket->State;
+	io_socket_state_t const *next = socket->State->open_for_inner  (socket,address,flag);
+	if (next != current) {
+		socket->State = next;
+		io_socket_enter_current_state (socket);
+	}
+}
+
 void
 io_socket_call_open (
 	io_socket_t *socket,io_socket_open_flag_t flag
@@ -745,7 +775,19 @@ io_socket_call_open (
 }
 
 void
-io_socket_call_state (io_socket_t *socket,io_socket_state_t const* (*fn) (io_socket_t*)) {
+io_socket_call_inner_closed (io_socket_t *socket,io_address_t inner) {
+	io_socket_state_t const *current = socket->State;
+	io_socket_state_t const *next = socket->State->inner_closed (socket,inner);
+	if (next != current) {
+		socket->State = next;
+		io_socket_enter_current_state (socket);
+	}
+}
+
+void
+io_socket_call_state (
+	io_socket_t *socket,io_socket_state_t const* (*fn) (io_socket_t*)
+) {
 	io_socket_state_t const *current = socket->State;
 	io_socket_state_t const *next = fn (socket);
 	if (next == NULL) {
@@ -763,6 +805,18 @@ io_socket_state_ignore_event (io_socket_t *socket) {
 
 io_socket_state_t const*
 io_socket_state_ignore_open_event (io_socket_t *socket,io_socket_open_flag_t flag) {
+	return socket->State;
+}
+
+io_socket_state_t const*
+io_socket_state_ignore_open_for_inner_event (
+	io_socket_t *socket,io_address_t a,io_socket_open_flag_t flag
+) {
+	return socket->State;
+}
+
+io_socket_state_t const*
+io_socket_state_ignore_inner_closed_event (io_socket_t *socket,io_address_t a) {
 	return socket->State;
 }
 
@@ -1021,7 +1075,7 @@ io_adapter_socket_is_closed (io_socket_t const *socket) {
 	if (this->outer_socket != NULL) {
 		return io_socket_is_closed (this->outer_socket);
 	} else {
-		return false;
+		return true;
 	}
 }
 
