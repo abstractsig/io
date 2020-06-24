@@ -35,7 +35,7 @@ typedef struct io_packet_encoding io_packet_encoding_t;
 	void (*free) (io_layer_t*,io_byte_memory_t*);\
 	io_address_t (*any) (void);\
 	io_layer_t* (*push_receive_layer) (io_layer_t*,io_encoding_t*);\
-	io_inner_port_binding_t* (*select_inner_binding) (io_layer_t*,io_encoding_t*,io_socket_t*);\
+	io_inner_binding_t* (*select_inner_binding) (io_layer_t*,io_encoding_t*,io_socket_t*);\
 	bool (*match_address) (io_layer_t*,io_address_t);\
 	void (*get_content) (io_layer_t*,io_encoding_t*,uint8_t const**,uint8_t const**);\
 	bool (*load_header) (io_layer_t*,io_encoding_t*); \
@@ -76,7 +76,7 @@ io_layer_push_receive_layer (io_layer_t *layer,io_encoding_t *encoding) {
 	return layer->implementation->push_receive_layer(layer,encoding);
 }
 
-INLINE_FUNCTION io_inner_port_binding_t*
+INLINE_FUNCTION io_inner_binding_t*
 io_layer_select_inner_binding (io_layer_t *layer,io_encoding_t *encoding,io_socket_t *socket) {
 	return layer->implementation->select_inner_binding(layer,encoding,socket);
 }
@@ -150,7 +150,7 @@ bool				virtual_io_layer_ignore_set_address (io_layer_t*,io_encoding_t*,io_addre
 io_address_t	virtual_io_layer_get_invalid_address (io_layer_t*,io_encoding_t*);
 io_address_t	virtual_io_layer_get_destination_address (io_layer_t*,io_encoding_t*);
 io_layer_t*		virtual_io_layer_push_receive_layer (io_layer_t*,io_encoding_t*);
-io_inner_port_binding_t* virtual_io_layer_select_inner_binding (io_layer_t*,io_encoding_t*,io_socket_t*);
+io_inner_binding_t* virtual_io_layer_select_inner_binding (io_layer_t*,io_encoding_t*,io_socket_t*);
 
 #define SPECIALISE_IO_LAYER_IMPLEMENTATION(S) \
 	.specialisation_of = S, \
@@ -290,7 +290,7 @@ virtual_io_layer_push_receive_layer (io_layer_t *layer,io_encoding_t *encoding) 
 	return NULL;
 }
 
-io_inner_port_binding_t*
+io_inner_binding_t*
 virtual_io_layer_select_inner_binding (io_layer_t *layer,io_encoding_t *encoding,io_socket_t *socket) {
 	return NULL;
 }
@@ -607,13 +607,13 @@ io_binary_layer_push_receive_layer (io_layer_t *layer,io_encoding_t *encoding) {
 	return binary;
 }
 
-static io_inner_port_binding_t*
+static io_inner_binding_t*
 io_binary_layer_select_inner_binding (
 	io_layer_t *layer,io_encoding_t *encoding,io_socket_t* socket
 ) {
 	io_multiplex_socket_t *mux = (io_multiplex_socket_t*) socket;
 	if (mux) {
-		return io_multiplex_socket_find_inner_port_binding (
+		return io_multiplex_socket_find_inner_binding (
 			mux,io_layer_get_source_address (layer,encoding)
 		);
 	} else {
@@ -833,13 +833,13 @@ io_link_layer_set_destination_address (
 	}
 }
 
-static io_inner_port_binding_t*
+static io_inner_binding_t*
 io_link_layer_select_inner_binding (
 	io_layer_t *layer,io_encoding_t *encoding,io_socket_t* socket
 ) {
 	io_address_t addr = io_layer_get_inner_address (layer,encoding);
 	io_multiplex_socket_t *mux = (io_multiplex_socket_t*) socket;
-	io_inner_port_binding_t *inner = io_multiplex_socket_find_inner_port_binding (mux,addr);
+	io_inner_binding_t *inner = io_multiplex_socket_find_inner_binding (mux,addr);
 	return inner;
 }
 

@@ -15,7 +15,7 @@
 //
 #define IO_SOCKET_MINIMUM_MTU 128
 
-typedef struct io_inner_port_binding io_inner_port_binding_t;
+typedef struct io_inner_port_binding io_inner_binding_t;
 typedef struct io_inner_constructor_binding io_inner_constructor_binding_t;
 typedef struct io_multiplex_socket io_multiplex_socket_t;
 typedef struct io_socket_implementation io_socket_implementation_t;
@@ -26,7 +26,7 @@ typedef bool (*io_socket_constructor_t) (io_t*,io_address_t,io_socket_t**,io_soc
 // stuff referenced in layers
 //
 
-io_inner_port_binding_t* io_multiplex_socket_find_inner_port_binding (io_multiplex_socket_t*,io_address_t);
+io_inner_binding_t* io_multiplex_socket_find_inner_binding (io_multiplex_socket_t*,io_address_t);
 
 #include <io_layers.h>
 
@@ -52,9 +52,10 @@ typedef enum {
 	io_socket_state_t const* (*open_for_inner) (io_socket_t*,io_address_t,io_socket_open_flag_t); \
 	io_socket_state_t const* (*close) (io_socket_t*); \
 	io_socket_state_t const* (*inner_closed) (io_socket_t*,io_address_t); \
-	io_socket_state_t const* (*receive) (io_socket_t*); \
-	io_socket_state_t const* (*transmit) (io_socket_t*); \
+	io_socket_state_t const* (*outer_receive_event) (io_socket_t*); \
+	io_socket_state_t const* (*outer_transmit_event) (io_socket_t*); \
 	io_socket_state_t const* (*timer) (io_socket_t*); \
+	io_socket_state_t const* (*inner_send) (io_socket_t*); \
 	io_socket_state_t const* (*timer_error) (io_socket_t*); \
 	/**/
 	
@@ -74,7 +75,9 @@ io_socket_state_t const* io_socket_state_ignore_open_for_inner_event (io_socket_
 io_socket_state_t const* io_socket_state_ignore_inner_closed_event (io_socket_t*,io_address_t);
 
 bool io_socket_try_open (io_socket_t*,io_socket_open_flag_t);
-#define io_socket_call_close(s)	io_socket_call_state (s,(s)->State->close)
+
+#define io_socket_call_close(s)						io_socket_call_state (s,(s)->State->close)
+#define io_socket_call_outer_transmit_event(s)	io_socket_call_state (s,(s)->State->outer_transmit_event)
 
 extern EVENT_DATA io_socket_state_t io_socket_state;
 
@@ -86,8 +89,9 @@ extern EVENT_DATA io_socket_state_t io_socket_state;
 	.open_for_inner = io_socket_state_ignore_open_for_inner_event,\
 	.close = io_socket_state_ignore_event, \
 	.inner_closed = io_socket_state_ignore_inner_closed_event,\
-	.receive = io_socket_state_ignore_event, \
-	.transmit = io_socket_state_ignore_event, \
+	.outer_receive_event = io_socket_state_ignore_event, \
+	.outer_transmit_event = io_socket_state_ignore_event, \
+	.inner_send = io_socket_state_ignore_event, \
 	.timer = io_socket_state_ignore_event, \
 	.timer_error = io_socket_state_ignore_event, \
 	/**/
@@ -499,12 +503,15 @@ struct PACK_STRUCTURE io_inner_port_binding {
 	io_inner_port_t *port;
 };
 
+#define io_inner_binding_port(b)					(b)->port
+#define io_inner_binding_transmit_pipe(b)		io_inner_binding_port(b)->transmit_pipe
+
 #define IO_MULTIPLEX_SOCKET_STRUCT_MEMBERS \
 	IO_COUNTED_SOCKET_STRUCT_MEMBERS \
-	io_inner_port_binding_t *slots; \
+	io_inner_binding_t *slots; \
 	uint32_t number_of_slots; \
 	io_inner_constructor_bindings_t *inner_constructors;\
-	io_inner_port_binding_t *transmit_cursor; \
+	io_inner_binding_t *transmit_cursor; \
 	uint16_t transmit_pipe_length; \
 	uint16_t receive_pipe_length; \
 	/**/
@@ -524,7 +531,7 @@ void				io_multiplex_socket_unbind_inner (io_socket_t*,io_address_t);
 void				io_multiplex_socket_round_robin_signal_transmit_available (io_multiplex_socket_t*);
 io_pipe_t* 		io_multiplex_socket_get_receive_pipe (io_socket_t*,io_address_t);
 io_inner_constructor_binding_t* io_multiplex_socket_find_inner_constructor_binding (io_multiplex_socket_t*,io_address_t);
-io_inner_port_binding_t* io_multiplex_socket_get_next_transmit_binding (io_multiplex_socket_t*);
+io_inner_binding_t* io_multiplex_socket_get_next_transmit_binding (io_multiplex_socket_t*);
 
 extern EVENT_DATA io_socket_implementation_t io_multiplex_socket_implementation;
 
@@ -1331,8 +1338,8 @@ io_multiplex_socket_free (io_socket_t *socket) {
 	io_byte_memory_t *bm = io_get_byte_memory (io_socket_io (this));
 
 	{
-		io_inner_port_binding_t *cursor = this->slots;
-		io_inner_port_binding_t *end = cursor + this->number_of_slots;	
+		io_inner_binding_t *cursor = this->slots;
+		io_inner_binding_t *end = cursor + this->number_of_slots;
 		while (cursor < end) {
 			free_io_address (bm,cursor->address);
 			if (cursor->port != NULL) {
@@ -1351,13 +1358,13 @@ io_multiplex_socket_free (io_socket_t *socket) {
 	io_counted_socket_free (socket);
 }
 
-io_inner_port_binding_t*
-io_multiplex_socket_find_inner_port_binding (
+io_inner_binding_t*
+io_multiplex_socket_find_inner_binding (
 	io_multiplex_socket_t *this,io_address_t sa
 ) {
-	io_inner_port_binding_t *remote = NULL;
-	io_inner_port_binding_t *cursor = this->slots;
-	io_inner_port_binding_t *end = cursor + this->number_of_slots;
+	io_inner_binding_t *remote = NULL;
+	io_inner_binding_t *cursor = this->slots;
+	io_inner_binding_t *end = cursor + this->number_of_slots;
 	
 	while (cursor < end) {
 		if (compare_io_addresses (cursor->address,sa) == 0) {
@@ -1374,17 +1381,17 @@ io_pipe_t*
 io_multiplex_socket_get_receive_pipe (io_socket_t *socket,io_address_t address) {
 	io_multiplex_socket_t *this = (io_multiplex_socket_t*) socket;
 	io_pipe_t *rx = NULL;
-	io_inner_port_binding_t *inner = io_multiplex_socket_find_inner_port_binding (this,address);
+	io_inner_binding_t *inner = io_multiplex_socket_find_inner_binding (this,address);
 	if (inner != NULL) {
 		rx = (io_pipe_t*) inner->port->receive_pipe;
 	}
 	return rx;
 }
 
-io_inner_port_binding_t*
+io_inner_binding_t*
 io_multiplex_socket_get_free_binding (io_multiplex_socket_t *this) {
-	io_inner_port_binding_t *cursor = this->slots;
-	io_inner_port_binding_t *end = cursor + this->number_of_slots;
+	io_inner_binding_t *cursor = this->slots;
+	io_inner_binding_t *end = cursor + this->number_of_slots;
 	
 	while (cursor < end) {
 		if (io_address_is_invalid (cursor->address)) {
@@ -1401,7 +1408,7 @@ io_multiplex_socket_bind_inner (
 	io_socket_t *socket,io_address_t address,io_event_t *tx,io_event_t *rx
 ) {
 	io_multiplex_socket_t *this = (io_multiplex_socket_t*) socket;
-	io_inner_port_binding_t *inner = io_multiplex_socket_find_inner_port_binding (this,address);
+	io_inner_binding_t *inner = io_multiplex_socket_find_inner_binding (this,address);
 	
 	if (inner == NULL) {
 		inner = io_multiplex_socket_get_free_binding (this);
@@ -1415,13 +1422,13 @@ io_multiplex_socket_bind_inner (
 			this->receive_pipe_length
 		);
 		if (p != NULL) {
-			io_inner_port_binding_t *more = io_byte_memory_reallocate (
-				bm,this->slots,sizeof(io_inner_port_binding_t) * (this->number_of_slots + 1)
+			io_inner_binding_t *more = io_byte_memory_reallocate (
+				bm,this->slots,sizeof(io_inner_binding_t) * (this->number_of_slots + 1)
 			);
 			if (more != NULL) {
 				this->transmit_cursor = (more + (this->transmit_cursor - this->slots));
 				this->slots = more;
-				this->slots[this->number_of_slots] = (io_inner_port_binding_t) {
+				this->slots[this->number_of_slots] = (io_inner_binding_t) {
 					duplicate_io_address (bm,address),p
 				};
 				inner = this->slots + this->number_of_slots;
@@ -1473,7 +1480,7 @@ io_multiplex_socket_bind_inner_constructor (
 void
 io_multiplex_socket_unbind_inner (io_socket_t *socket,io_address_t address) {
 	io_multiplex_socket_t *this = (io_multiplex_socket_t*) socket;
-	io_inner_port_binding_t *inner = io_multiplex_socket_find_inner_port_binding (this,address);
+	io_inner_binding_t *inner = io_multiplex_socket_find_inner_binding (this,address);
 	if (inner != NULL) {
 		io_inner_port_t *port = inner->port;
 		io_dequeue_event (io_socket_io (socket),port->tx_available);
@@ -1494,19 +1501,18 @@ io_multiplex_socket_increment_transmit_cursor (io_multiplex_socket_t *this) {
 	}
 }
 
-io_inner_port_binding_t*
+io_inner_binding_t*
 io_multiplex_socket_get_next_transmit_binding (io_multiplex_socket_t *this) {	
 	if (io_multiplex_socket_has_inner_bindings (this)) {
-		io_inner_port_binding_t *at = this->transmit_cursor;
+		io_inner_binding_t *at = this->transmit_cursor;
 		do {
+			io_multiplex_socket_increment_transmit_cursor (this);
 			if (
 				io_encoding_pipe_is_readable (
 					this->transmit_cursor->port->transmit_pipe
 				)
 			) {
 				return this->transmit_cursor;
-			} else {
-				io_multiplex_socket_increment_transmit_cursor (this);
 			}
 
 		} while (this->transmit_cursor != at);
@@ -1517,7 +1523,7 @@ io_multiplex_socket_get_next_transmit_binding (io_multiplex_socket_t *this) {
 
 void
 io_multiplex_socket_round_robin_signal_transmit_available (io_multiplex_socket_t *this) {
-	io_inner_port_binding_t *at = this->transmit_cursor;
+	io_inner_binding_t *at = this->transmit_cursor;
 	
 	do {
 		io_multiplex_socket_increment_transmit_cursor (this);
@@ -1633,7 +1639,7 @@ io_multiplexer_socket_rx_event (io_event_t *ev) {
 			if (io_encoding_pipe_peek (rx,&next)) {
 				io_layer_t *base = io_encoding_get_outermost_layer (next);
 				if (base) {
-					io_inner_port_binding_t *inner = io_layer_select_inner_binding (
+					io_inner_binding_t *inner = io_layer_select_inner_binding (
 						base,next,(io_socket_t*) this
 					);
 					if (inner) {
@@ -1894,8 +1900,8 @@ io_shared_media_send_message (io_socket_t *socket,io_encoding_t *encoding) {
 	if (layer != NULL) {
 		io_multiplex_socket_t *this = (io_multiplex_socket_t*) socket;
 		io_address_t src = io_layer_get_source_address (layer,encoding);
-		io_inner_port_binding_t *cursor = this->slots;
-		io_inner_port_binding_t *end = cursor + this->number_of_slots;
+		io_inner_binding_t *cursor = this->slots;
+		io_inner_binding_t *end = cursor + this->number_of_slots;
 		io_encoding_t *receive_message = NULL;
 		
 		if (cursor != end) {
