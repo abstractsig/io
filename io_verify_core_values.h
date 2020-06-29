@@ -149,19 +149,19 @@ TEST_BEGIN(test_io_constant_values_1) {
 
 	VERIFY(vref_get_containing_memory (cr_NIL) == NULL,NULL);
 
-	VERIFY(vref_is_valid(cr_UNIV),NULL);
-	VERIFY (io_value_is_equal (cr_UNIV,cr_UNIV),NULL);
+	VERIFY(vref_is_valid(cr_VALUE),NULL);
+	VERIFY (io_value_is_equal (cr_VALUE,cr_VALUE),NULL);
 
 	VERIFY(vref_is_valid(cr_NIL),NULL);
 	VERIFY (io_typesafe_ro_cast(cr_NIL,cr_NIL) != NULL,NULL);
 	VERIFY (io_value_is_equal (cr_NIL,cr_NIL),NULL);
 
-	VERIFY (io_value_is_more (cr_UNIV,cr_NIL),NULL);
-	VERIFY (io_value_is_less (cr_NIL,cr_UNIV),NULL);
+	VERIFY (io_value_is_more (cr_VALUE,cr_NIL),NULL);
+	VERIFY (io_value_is_less (cr_NIL,cr_VALUE),NULL);
 
 	VERIFY(vref_is_valid(cr_BINARY),NULL);
 	VERIFY (io_typesafe_ro_cast(cr_BINARY,cr_BINARY) != NULL,NULL);
-	VERIFY (io_typesafe_ro_cast(cr_BINARY,cr_UNIV) != NULL,NULL);
+	VERIFY (io_typesafe_ro_cast(cr_BINARY,cr_VALUE) != NULL,NULL);
 	VERIFY (io_typesafe_ro_cast(cr_BINARY,cr_NIL) == NULL,NULL);
 
 	VERIFY(vref_is_valid(cr_CONSTANT_BINARY),NULL);
@@ -179,19 +179,19 @@ TEST_BEGIN(test_io_constant_values_1) {
 	extern EVENT_DATA io_value_implementation_t nil_value_implementation;
 	extern EVENT_DATA io_value_implementation_t i64_number_value_implementation;
 	extern EVENT_DATA io_value_implementation_t f64_number_value_implementation;
-	extern EVENT_DATA io_value_implementation_t binary_value_implementation;
+	extern EVENT_DATA io_value_implementation_t io_binary_value_implementation;
 	extern EVENT_DATA io_value_implementation_t io_text_value_implementation;
 	extern EVENT_DATA io_value_implementation_t io_cons_value_implementation;
 	extern EVENT_DATA io_value_implementation_t io_list_value_implementation;
 	extern EVENT_DATA io_value_implementation_t io_map_slot_value_implementation;
 	extern EVENT_DATA io_value_implementation_t io_map_value_implementation;
 	io_value_implementation_t const* expect[] = {
-		&univ_value_implementation,
+		&io_value_implementation,
 		&nil_value_implementation,
 		&io_vector_value_implementation,
 		&i64_number_value_implementation,
 		&f64_number_value_implementation,
-		&binary_value_implementation,
+		&io_binary_value_implementation,
 		&io_text_value_implementation,
 		&io_cons_value_implementation,
 		&io_list_value_implementation,
@@ -214,13 +214,13 @@ TEST_BEGIN(test_io_constant_values_2) {
 
 	encoding = mk_io_text_encoding (bm);
 
-	VERIFY (io_encoding_printf (encoding,"%v",cr_NIL) == 2,NULL);
+	VERIFY (io_encoding_printf (encoding,"%v",cr_NIL) == 3,NULL);
 	io_encoding_get_content (encoding,&b,&e);
-	VERIFY ((e - b) == 2,NULL);
-	VERIFY (memcmp ("()",b,2) == 0,NULL);
+	VERIFY ((e - b) == 3,NULL);
+	VERIFY (memcmp ("nil",b,3) == 0,NULL);
 
 	io_encoding_reset (encoding);
-	VERIFY (io_encoding_printf (encoding,"%v",cr_UNIV) == 1,NULL);
+	VERIFY (io_encoding_printf (encoding,"%v",cr_VALUE) == 1,NULL);
 	io_encoding_get_content (encoding,&b,&e);
 	VERIFY ((e - b) == 1,NULL);
 	VERIFY (memcmp (".",b,1) == 0,NULL);
@@ -777,9 +777,9 @@ TEST_BEGIN(test_cons_value_1) {
 		
 		VERIFY (io_typesafe_ro_cast (r_value,cr_CONS) != NULL,NULL);
 
-		r_part = cr_UNIV;
+		r_part = cr_VALUE;
 		VERIFY (io_cons_value_get_car (r_value,&r_part) && vref_is_nil(r_part),NULL);
-		r_part = cr_UNIV;
+		r_part = cr_VALUE;
 		VERIFY (io_cons_value_get_cdr (r_value,&r_part) && vref_is_nil(r_part),NULL);
 
 	}
@@ -791,9 +791,9 @@ TEST_BEGIN(test_cons_value_1) {
 		VERIFY (io_typesafe_ro_cast (r_value,cr_CONS) != NULL,NULL);
 		
 		VERIFY (io_value_is_equal (r_value,r_value),NULL);
-		r_part = cr_UNIV;
+		r_part = cr_VALUE;
 		VERIFY (io_cons_value_get_car (r_value,&r_part) && vref_is_equal_to(r_part,r_car),NULL);
-		r_part = cr_UNIV;
+		r_part = cr_VALUE;
 		VERIFY (io_cons_value_get_cdr (r_value,&r_part) && vref_is_nil(r_part),NULL);
 	}
 

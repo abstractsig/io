@@ -1226,8 +1226,22 @@ vref_t	default_io_value_receive (io_t*,vref_t,uint32_t,vref_t const*);
 io_value_t* io_value_initialise_nop (vref_t,vref_t);
 io_value_mode_t const* io_value_get_null_modes (io_value_t const*);
 vref_t io_value_compare_no_comparison(io_value_t const*,vref_t);
-vref_t	io_value_send (io_t *io,vref_t r_value,uint32_t argc,...);
-vref_t	io_decode_x70_to_invalid_value (io_value_memory_t*,uint8_t const**,const uint8_t*);
+vref_t io_value_send (io_t *io,vref_t r_value,uint32_t argc,...);
+vref_t io_decode_x70_to_invalid_value (io_value_memory_t*,uint8_t const**,const uint8_t*);
+vref_t decode_x70_to_io_value (io_value_memory_t*,uint8_t const**,const uint8_t*);
+bool io_value_encode_base (vref_t,io_encoding_t*);
+vref_t io_value_compare_with_value (io_value_t const*,vref_t);
+
+#define SPECIALISE_IO_VALUE_IMPLEMENTATION(S) \
+	.specialisation_of = S, \
+	.initialise = io_value_initialise_nop,\
+	.free = io_value_free_nop, \
+	.decode = {decode_x70_to_io_value}, \
+	.encode = io_value_encode_base, \
+	.receive = default_io_value_receive, \
+	.compare = io_value_compare_with_value, \
+	.get_modes = io_value_get_null_modes, \
+	/**/
 
 //
 // inline io_value methods
@@ -2247,11 +2261,11 @@ typedef struct PACK_STRUCTURE io_nil_value {
 	IO_VALUE_STRUCT_MEMBERS
 } io_nil_value_t;
 
-typedef struct PACK_STRUCTURE io_univ_value {
-	IO_VALUE_STRUCT_MEMBERS
-} io_univ_value_t;
+//typedef struct PACK_STRUCTURE io_univ_value {
+//	IO_VALUE_STRUCT_MEMBERS
+//} io_univ_value_t;
 
-extern EVENT_DATA io_value_implementation_t univ_value_implementation;
+extern EVENT_DATA io_value_implementation_t io_value_implementation;
 
 //
 // numbers
@@ -2774,8 +2788,8 @@ add_io_implementation_core_methods (io_implementation_t *io_i) {
 
 #endif /* IMPLEMENT_IO_CORE */
 
+decl_particular_value(cr_VALUE,				io_value_t,cr_value_v)
 decl_particular_value(cr_NIL,					io_nil_value_t,cr_nil_v)
-decl_particular_value(cr_UNIV,				io_univ_value_t,cr_univ_v)
 decl_particular_value(cr_BINARY,				io_binary_value_t,cr_binary_v)
 decl_particular_value(cr_CONSTANT_BINARY,	io_binary_value_t,cr_const_binary_v)
 decl_particular_value(cr_IO_EXCEPTION,		io_binary_value_t,cr_io_exception_v)
@@ -5113,8 +5127,8 @@ io_decode_x70_to_invalid_value (
 	return INVALID_VREF;
 }
 
-static vref_t
-io_value_compare_with_univ (io_value_t const *this,vref_t r_other) {
+vref_t
+io_value_compare_with_value (io_value_t const *this,vref_t r_other) {
 	io_value_t const *other = vref_cast_to_ro_pointer (r_other);
 	if (other->implementation == this->implementation) {
 		return cr_COMPARE_EQUAL;
@@ -5127,8 +5141,8 @@ io_value_compare_with_univ (io_value_t const *this,vref_t r_other) {
 // universal value
 //
 
-static bool
-io_univ_value_encode (vref_t r_value,io_encoding_t *encoding) {
+bool
+io_value_encode_base (vref_t r_value,io_encoding_t *encoding) {
 	bool result = false;
 
 	if (is_io_text_encoding (encoding)) {
@@ -5143,27 +5157,20 @@ io_univ_value_encode (vref_t r_value,io_encoding_t *encoding) {
 	return result;
 }
 
-static vref_t
-io_univ_decode_x70_value (
+vref_t
+decode_x70_to_io_value (
 	io_value_memory_t *vm,uint8_t const**b,const uint8_t *e
 ) {	
-	return cr_UNIV;
+	return cr_VALUE;
 }
 
-EVENT_DATA io_value_implementation_t univ_value_implementation = {
-	.specialisation_of = NULL,
+EVENT_DATA io_value_implementation_t io_value_implementation = {
+	SPECIALISE_IO_VALUE_IMPLEMENTATION(NULL)
 	.name = "value",
-	.initialise = io_value_initialise_nop,
-	.free = io_value_free_nop,
-	.decode = {io_univ_decode_x70_value},
-	.encode = io_univ_value_encode,
-	.receive = default_io_value_receive,
-	.compare = io_value_compare_with_univ,
-	.get_modes = io_value_get_null_modes,
 };
 
-EVENT_DATA io_univ_value_t cr_univ_v = {
-	decl_io_value (&univ_value_implementation,sizeof(io_univ_value_t))
+EVENT_DATA io_value_t cr_value_v = {
+	decl_io_value (&io_value_implementation,sizeof(io_value_t))
 };
 
 static vref_t
@@ -5180,7 +5187,7 @@ io_nil_value_encode (vref_t r_value,io_encoding_t *encoding) {
 	bool result = false;
 
 	if (is_io_text_encoding (encoding)) {
-		io_encoding_append_string (encoding,"()",2);
+		io_encoding_append_string (encoding,"nil",3);
 		result = true;
 	} else if (is_io_x70_encoding (encoding)) {
 		io_value_t const *this = vref_cast_to_ro_pointer (r_value);
@@ -5199,15 +5206,11 @@ io_nil_decode_x70_value (
 }
 
 EVENT_DATA io_value_implementation_t nil_value_implementation = {
-	.specialisation_of = &univ_value_implementation,
+	SPECIALISE_IO_VALUE_IMPLEMENTATION(&io_value_implementation)
 	.name = "nil",
-	.initialise = io_value_initialise_nop,
-	.free = io_value_free_nop,
 	.decode = {io_nil_decode_x70_value},
 	.encode = io_nil_value_encode,
-	.receive = default_io_value_receive,
 	.compare = io_value_compare_with_nil,
-	.get_modes = io_value_get_null_modes,
 };
 
 EVENT_DATA io_nil_value_t cr_nil_v = {
@@ -5218,16 +5221,17 @@ EVENT_DATA io_nil_value_t cr_nil_v = {
 // C number values
 //
 
-EVENT_DATA io_value_implementation_t io_number_value_implementation = {
-	.specialisation_of = &univ_value_implementation,
+#define SPECIALISE_IO_NUMBER_VALUE_IMPLEMENTATION(S) \
+	SPECIALISE_IO_VALUE_IMPLEMENTATION(S) \
+	.decode = {io_decode_x70_to_invalid_value}, \
+	/**/
+
+EVENT_DATA io_value_implementation_t 
+io_number_value_implementation = {
+	SPECIALISE_IO_NUMBER_VALUE_IMPLEMENTATION (
+		&io_value_implementation
+	)
 	.name = "number",
-	.initialise = io_value_initialise_nop,
-	.free = io_value_free_nop,
-	.decode = {io_decode_x70_to_invalid_value},
-	.encode = default_io_value_encode,
-	.receive = default_io_value_receive,
-	.compare = io_value_compare_no_comparison,
-	.get_modes = io_value_get_null_modes,
 };
 
 EVENT_DATA io_number_value_t cr_number_v = {
@@ -5313,16 +5317,16 @@ compare_with_i64_number (io_value_t const *v,vref_t r_other) {
 	}
 }
 
-EVENT_DATA io_value_implementation_t i64_number_value_implementation = {
-	.specialisation_of = &io_number_value_implementation,
+EVENT_DATA io_value_implementation_t 
+i64_number_value_implementation = {
+	SPECIALISE_IO_NUMBER_VALUE_IMPLEMENTATION (
+		&io_number_value_implementation
+	)
 	.name = "i64",
 	.initialise = io_int64_value_initialise,
-	.free = io_value_free_nop,
 	.encode = io_int64_value_encode,
 	.decode = {io_int64_decode_x70_value},
-	.receive = default_io_value_receive,
 	.compare = compare_with_i64_number,
-	.get_modes = io_value_get_null_modes,
 };
 
 EVENT_DATA io_int64_value_t cr_i64_number_v = {
@@ -5442,13 +5446,13 @@ compare_with_f64_number (io_value_t const *v,vref_t r_other) {
 }
 
 EVENT_DATA io_value_implementation_t f64_number_value_implementation = {
-	.specialisation_of = &io_number_value_implementation,
+	SPECIALISE_IO_NUMBER_VALUE_IMPLEMENTATION (
+		&io_number_value_implementation
+	)
 	.name = "f64",
 	.initialise = io_float64_value_initialise,
-	.free = io_value_free_nop,
 	.decode = {io_float64_decode_x70_value},
 	.encode = io_float64_value_encode,
-	.receive = default_io_value_receive,
 	.compare = compare_with_f64_number,
 	.get_modes = io_value_get_null_modes,
 };
@@ -5687,20 +5691,24 @@ compare_binary_with_other (io_value_t const *v,vref_t r_other) {
 	}
 }
 
-EVENT_DATA io_value_implementation_t binary_value_implementation = {
-	.specialisation_of = &univ_value_implementation,
+#define SPECIALISE_IO_BINARY_VALUE_IMPLEMENTATION(S) \
+	SPECIALISE_IO_VALUE_IMPLEMENTATION(S) \
+	.initialise = io_binary_value_initialise_nop, \
+	.encode = io_binary_value_encode, \
+	.decode = {io_binary_decode_x70_value}, \
+	.compare = compare_binary_with_other, \
+	/**/
+
+EVENT_DATA io_value_implementation_t 
+io_binary_value_implementation = {
+	SPECIALISE_IO_BINARY_VALUE_IMPLEMENTATION (
+		&io_value_implementation
+	)
 	.name = "binary",
-	.initialise = io_binary_value_initialise_nop,
-	.free = io_value_free_nop,
-	.decode = {io_binary_decode_x70_value},
-	.encode = default_io_value_encode,
-	.receive = default_io_value_receive,
-	.compare = compare_binary_with_other,
-	.get_modes = io_value_get_null_modes,
 };
 
 EVENT_DATA io_binary_value_t cr_binary_v = {
-	decl_io_value (&binary_value_implementation,sizeof(io_binary_value_t))
+	decl_io_value (&io_binary_value_implementation,sizeof(io_binary_value_t))
 	.bytes.ro = NULL,
 	.bit.binary_size = 0,
 	.bit.const_bytes = 1,
@@ -5737,30 +5745,29 @@ io_binary_value_initialise_with_dynamic_bytes (vref_t r_value,vref_t r_base) {
 	return (io_value_t*) this;
 }
 
-EVENT_DATA io_value_implementation_t binary_value_implementation_with_const_bytes = {
-	.specialisation_of = &binary_value_implementation,
+EVENT_DATA io_value_implementation_t io_binary_value_implementation_with_const_bytes = {
+	SPECIALISE_IO_BINARY_VALUE_IMPLEMENTATION (
+		&io_binary_value_implementation
+	)
 	.name = "const-binary",
 	.initialise = io_binary_value_initialise_with_const_bytes,
-	.free = io_value_free_nop,
-	.decode = {io_decode_x70_to_invalid_value},
-	.encode = io_binary_value_encode,
-	.receive = default_io_value_receive,
-	.compare = io_value_compare_no_comparison,
-	.get_modes = io_value_get_null_modes,
 };
 
 EVENT_DATA io_binary_value_t cr_const_binary_v = {
-	decl_io_value (&binary_value_implementation_with_const_bytes,sizeof(io_binary_value_t))
+	decl_io_value (&io_binary_value_implementation_with_const_bytes,sizeof(io_binary_value_t))
 	.bytes.ro = NULL,
 	.bit.binary_size = 0,
 	.bit.const_bytes = 1,
 };
 
 vref_t
-mk_io_binary_value_with_const_bytes (io_value_memory_t *vm,uint8_t const *bytes,int32_t size) {
+mk_io_binary_value_with_const_bytes (
+	io_value_memory_t *vm,uint8_t const *bytes,int32_t size
+) {
 	io_binary_value_t base = {
 		decl_io_value (
-			&binary_value_implementation_with_const_bytes,sizeof(io_binary_value_t)
+			&io_binary_value_implementation_with_const_bytes,
+			sizeof(io_binary_value_t)
 		)
 		.bit = {
 			.binary_size = size,
@@ -5771,22 +5778,19 @@ mk_io_binary_value_with_const_bytes (io_value_memory_t *vm,uint8_t const *bytes,
 	};
 	return io_value_memory_new_value (
 		vm,
-		&binary_value_implementation_with_const_bytes,
+		&io_binary_value_implementation_with_const_bytes,
 		sizeof (io_binary_value_t),
 		def_vref (&reference_to_c_stack_value,&base)
 	);
 }
 
-EVENT_DATA io_value_implementation_t binary_value_implementation_with_dynamic_bytes = {
-	.specialisation_of = &binary_value_implementation_with_const_bytes,
+EVENT_DATA io_value_implementation_t 
+io_binary_value_implementation_with_dynamic_bytes = {
+	SPECIALISE_IO_BINARY_VALUE_IMPLEMENTATION (
+		&io_binary_value_implementation_with_const_bytes
+	)
 	.name = "dynamic-binary",
 	.initialise = io_binary_value_initialise_with_dynamic_bytes,
-	.free = io_value_free_nop,
-	.decode = {io_decode_x70_to_invalid_value},
-	.encode = io_binary_value_encode,
-	.receive = default_io_value_receive,
-	.compare = io_value_compare_no_comparison,
-	.get_modes = io_value_get_null_modes,
 };
 
 static vref_t
@@ -5809,7 +5813,9 @@ mk_io_binary_value_for (
 
 vref_t
 mk_io_binary_value (io_value_memory_t *vm,uint8_t const *bytes,int32_t size) {
-	return mk_io_binary_value_for (vm,&binary_value_implementation_with_dynamic_bytes,bytes,size);
+	return mk_io_binary_value_for (
+		vm,&io_binary_value_implementation_with_dynamic_bytes,bytes,size
+	);
 }
 
 static bool
@@ -5856,15 +5862,14 @@ io_text_to_text_value_decoder (io_encoding_t *encoding,io_value_memory_t *vm) {
 }
 
 EVENT_DATA io_value_implementation_t io_text_value_implementation = {
-	.specialisation_of = &binary_value_implementation_with_dynamic_bytes,
+	SPECIALISE_IO_BINARY_VALUE_IMPLEMENTATION (
+		&io_binary_value_implementation_with_dynamic_bytes
+	)
 	.name = "text",
 	.initialise = io_binary_value_initialise_with_dynamic_bytes,
-	.free = io_value_free_nop,
 	.decode = {io_text_decode_x70_value},
 	.encode = io_text_value_encode,
-	.receive = default_io_value_receive,
 	.compare = compare_binary_with_other,
-	.get_modes = io_value_get_null_modes,
 };
 EVENT_DATA io_binary_value_t cr_text_v = {
 	decl_io_value (&io_text_value_implementation,sizeof(io_binary_value_t))
@@ -5879,15 +5884,12 @@ mk_io_text_value (io_value_memory_t *vm,uint8_t const *bytes,int32_t size) {
 }
 
 EVENT_DATA io_value_implementation_t io_symbol_value_implementation_with_const_bytes = {
-	.specialisation_of = &binary_value_implementation_with_const_bytes,
+	SPECIALISE_IO_BINARY_VALUE_IMPLEMENTATION (
+		&io_binary_value_implementation_with_const_bytes
+	)
 	.name = "const-symbol",
 	.initialise = io_binary_value_initialise_with_const_bytes,
-	.free = io_value_free_nop,
 	.decode = {io_decode_x70_to_invalid_value},
-	.encode = io_binary_value_encode,
-	.receive = default_io_value_receive,
-	.compare = io_value_compare_no_comparison,
-	.get_modes = io_value_get_null_modes,
 };
 
 EVENT_DATA io_binary_value_t cr_symbol_v = {
@@ -5898,15 +5900,13 @@ EVENT_DATA io_binary_value_t cr_symbol_v = {
 };
 
 EVENT_DATA io_value_implementation_t io_exception_value_implementation_with_const_bytes = {
-	.specialisation_of = &binary_value_implementation_with_const_bytes,
+	SPECIALISE_IO_BINARY_VALUE_IMPLEMENTATION (
+		&io_binary_value_implementation_with_const_bytes
+	)
 	.name = "const-exception",
 	.initialise = io_binary_value_initialise_with_const_bytes,
-	.free = io_value_free_nop,
 	.decode = {io_decode_x70_to_invalid_value},
 	.encode = io_binary_value_encode,
-	.receive = default_io_value_receive,
-	.compare = io_value_compare_no_comparison,
-	.get_modes = io_value_get_null_modes,
 };
 
 EVENT_DATA io_binary_value_t cr_io_exception_v = {
@@ -5943,15 +5943,12 @@ mk_io_symbol_value_with_const_bytes (io_value_memory_t *vm,uint8_t const *bytes,
 }
 
 EVENT_DATA io_value_implementation_t io_symbol_value_implementation_with_volatile_bytes = {
-	.specialisation_of = &io_symbol_value_implementation_with_const_bytes,
+	SPECIALISE_IO_BINARY_VALUE_IMPLEMENTATION (
+		&io_symbol_value_implementation_with_const_bytes
+	)
 	.name = "dynamic-symbol",
 	.initialise = io_binary_value_initialise_with_const_bytes,
-	.free = io_value_free_nop,
 	.decode = {io_decode_x70_to_invalid_value},
-	.encode = io_binary_value_encode,
-	.receive = default_io_value_receive,
-	.compare = io_value_compare_no_comparison,
-	.get_modes = io_value_get_null_modes,
 };
 
 io_value_t*
@@ -5996,16 +5993,17 @@ io_modal_value_receive (io_t *io,vref_t r_this,uint32_t argc,vref_t const *args)
 	return cr_NIL;  // cr_CONTINUE_NO_MATCH;
 }
 
-EVENT_DATA io_value_implementation_t io_collection_value_implementation = {
-	.specialisation_of = &univ_value_implementation,
+#define SPECIALISE_IO_COLLECTION_VALUE_IMPLEMENTATION(S) \
+	SPECIALISE_IO_VALUE_IMPLEMENTATION(S) \
+	/**/
+
+
+EVENT_DATA io_value_implementation_t 
+io_collection_value_implementation = {
+	SPECIALISE_IO_COLLECTION_VALUE_IMPLEMENTATION (
+		&io_value_implementation
+	)
 	.name = "collection",
-	.initialise = io_value_initialise_nop,
-	.free = io_value_free_nop,
-	.decode = {io_decode_x70_to_invalid_value},
-	.encode = default_io_value_encode,
-	.receive = default_io_value_receive,
-	.compare = io_value_compare_no_comparison,
-	.get_modes = io_value_get_null_modes,
 };
 
 EVENT_DATA io_value_t cr_collection_v = {
@@ -6144,15 +6142,15 @@ io_cons_value_decode_x70_value (
 }
 
 EVENT_DATA io_value_implementation_t io_cons_value_implementation = {
-	.specialisation_of = &io_collection_value_implementation,
+	SPECIALISE_IO_COLLECTION_VALUE_IMPLEMENTATION (
+		&io_collection_value_implementation
+	)
 	.name = "cons",
 	.initialise = io_cons_value_initialise,
 	.free = io_cons_value_free,
 	.decode = {io_cons_value_decode_x70_value},
 	.encode = io_cons_value_encode,
-	.receive = default_io_value_receive,
 	.compare = compare_cons_value_to,
-	.get_modes = io_value_get_null_modes,
 };
 
 #define decl_vref(P) {\
@@ -6253,15 +6251,14 @@ io_list_value_encode (vref_t r_value,io_encoding_t *encoding) {
 }
 
 EVENT_DATA io_value_implementation_t io_list_value_implementation = {
-	.specialisation_of = &io_collection_value_implementation,
+	SPECIALISE_IO_COLLECTION_VALUE_IMPLEMENTATION (
+		&io_collection_value_implementation
+	)
 	.name = "list",
 	.initialise = io_list_value_initialise,
 	.free = io_list_value_free,
 	.decode = {io_decode_x70_to_invalid_value},
 	.encode = io_list_value_encode,
-	.receive = default_io_value_receive,
-	.compare = io_value_compare_no_comparison,
-	.get_modes = io_value_get_null_modes,
 };
 
 EVENT_DATA io_list_value_t cr_list_v = {
@@ -6430,15 +6427,14 @@ io_map_slot_value_decode_x70_value (
 }
 
 EVENT_DATA io_value_implementation_t io_map_slot_value_implementation = {
-	.specialisation_of = &io_collection_value_implementation,
+	SPECIALISE_IO_COLLECTION_VALUE_IMPLEMENTATION (
+		&io_collection_value_implementation
+	)
 	.name = "slot",
 	.initialise = io_map_slot_value_initialise,
 	.free = io_map_slot_value_free,
 	.decode = {io_map_slot_value_decode_x70_value},
 	.encode = io_map_slot_value_encode,
-	.receive = default_io_value_receive,
-	.compare = io_value_compare_no_comparison,
-	.get_modes = io_value_get_null_modes,
 };
 
 EVENT_DATA io_map_slot_value_t cr_map_slot_v = {
@@ -6546,16 +6542,14 @@ io_map_value_free (io_value_t *value) {
 	unreference_value (this->r_tree);
 }
 
-EVENT_DATA io_value_implementation_t io_map_value_implementation = {
-	.specialisation_of = &io_collection_value_implementation,
+EVENT_DATA io_value_implementation_t 
+io_map_value_implementation = {
+	SPECIALISE_IO_COLLECTION_VALUE_IMPLEMENTATION (
+		&io_collection_value_implementation
+	)
 	.name = "map",
 	.initialise = io_map_value_initialise,
 	.free = io_map_value_free,
-	.decode = {io_decode_x70_to_invalid_value},
-	.encode = default_io_value_encode,
-	.receive = default_io_value_receive,
-	.compare = io_value_compare_no_comparison,
-	.get_modes = io_value_get_null_modes,
 };
 
 EVENT_DATA io_map_value_t cr_map_v = {
@@ -6795,10 +6789,9 @@ static EVENT_DATA io_value_mode_t null_modes[] = {
 
 EVENT_DATA io_modal_value_implementation_t io_modal_value_implementation = {
 	decl_modal_value_implementation_type (
-		io_modal_value_initialise,null_modes,&univ_value_implementation
+		io_modal_value_initialise,null_modes,&io_value_implementation
 	)
 };
-
 
 /*
  *
@@ -6825,17 +6818,11 @@ typedef struct PACK_STRUCTURE ion_continuation_value {
 	} constants;
 } ion_continuation_value_t;
 
-
 EVENT_DATA io_value_implementation_t io_continuation_value_implementation = {
-	.specialisation_of = &univ_value_implementation,
+	SPECIALISE_IO_VALUE_IMPLEMENTATION (
+		&io_value_implementation
+	)
 	.name = "continuation",
-	.initialise = io_value_initialise_nop,
-	.free = io_value_free_nop,
-	.decode = {io_decode_x70_to_invalid_value},
-	.encode = default_io_value_encode,
-	.receive = default_io_value_receive,
-	.compare = io_value_compare_no_comparison,
-	.get_modes = io_value_get_null_modes,
 };
 
 //
@@ -6931,15 +6918,12 @@ io_value_send (io_t *io,vref_t r_value,uint32_t argc,...) {
 }
 
 EVENT_DATA io_value_implementation_t io_vector_value_implementation = {
-	.specialisation_of = &univ_value_implementation,
+	SPECIALISE_IO_VALUE_IMPLEMENTATION (
+		&io_value_implementation
+	)
 	.name = "vector",
 	.initialise = io_vector_value_initialise,
 	.free = io_vector_value_free,
-	.decode = {io_decode_x70_to_invalid_value},
-	.encode = default_io_value_encode,
-	.receive = default_io_value_receive,
-	.compare = io_value_compare_no_comparison,
-	.get_modes = io_value_get_null_modes,
 };
 
 EVENT_DATA io_vector_value_t cr_vector_v = {
@@ -6948,20 +6932,13 @@ EVENT_DATA io_vector_value_t cr_vector_v = {
 };
 
 #define SPECIALISE_RESULT_IMPLEMENTATION(S,N) \
-	.specialisation_of = S, \
+	SPECIALISE_IO_VALUE_IMPLEMENTATION(S) \
 	.name = N,	\
-	.initialise = io_value_initialise_nop, \
-	.free = io_value_free_nop, \
-	.decode = {io_decode_x70_to_invalid_value}, \
-	.encode = default_io_value_encode, \
-	.receive = default_io_value_receive, \
-	.compare = io_value_compare_no_comparison,\
-	.get_modes = io_value_get_null_modes,\
 	/**/
 
 EVENT_DATA io_value_implementation_t io_result_value_implementation = {
 	SPECIALISE_RESULT_IMPLEMENTATION (
-		&univ_value_implementation,"result-of-receive"
+		&io_value_implementation,"result-of-receive"
 	)
 };
 EVENT_DATA io_vector_value_t cr_result_v = {
@@ -6980,20 +6957,13 @@ EVENT_DATA io_vector_value_t cr_result_continue_v = {
 };
 
 #define SPECIALISE_COMPARE_IMPLEMENTATION(S,N) \
-	.specialisation_of = S, \
+	SPECIALISE_IO_VALUE_IMPLEMENTATION(S) \
 	.name = N,	\
-	.initialise = io_value_initialise_nop, \
-	.free = io_value_free_nop, \
-	.decode = {io_decode_x70_to_invalid_value},\
-	.encode = default_io_value_encode, \
-	.receive = default_io_value_receive, \
-	.compare = io_value_compare_no_comparison,\
-	.get_modes = io_value_get_null_modes,\
 	/**/
 
 EVENT_DATA io_value_implementation_t io_compare_value_implementation = {
 	SPECIALISE_COMPARE_IMPLEMENTATION (
-		&univ_value_implementation,"ordering"
+		&io_value_implementation,"ordering"
 	)
 };
 
@@ -7045,12 +7015,12 @@ bool
 add_core_value_implementations_to_hash (string_hash_table_t *hash) {
 	static io_value_implementation_t const * const imp[] = {
 		IO_VALUE_IMPLEMENTATION(&nil_value_implementation),
-		IO_VALUE_IMPLEMENTATION(&univ_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&io_value_implementation),
 		IO_VALUE_IMPLEMENTATION(&io_number_value_implementation),
 		IO_VALUE_IMPLEMENTATION(&i64_number_value_implementation),
 		IO_VALUE_IMPLEMENTATION(&f64_number_value_implementation),
-		IO_VALUE_IMPLEMENTATION(&binary_value_implementation),
-		IO_VALUE_IMPLEMENTATION(&binary_value_implementation_with_const_bytes),
+		IO_VALUE_IMPLEMENTATION(&io_binary_value_implementation),
+		IO_VALUE_IMPLEMENTATION(&io_binary_value_implementation_with_const_bytes),
 		IO_VALUE_IMPLEMENTATION(&io_text_value_implementation),
 		IO_VALUE_IMPLEMENTATION(&io_symbol_value_implementation_with_const_bytes),
 		IO_VALUE_IMPLEMENTATION(&io_vector_value_implementation),
