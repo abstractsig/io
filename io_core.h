@@ -777,7 +777,7 @@ typedef struct io_encoding_layer_api {
 	void* (*get_inner_layer) (io_encoding_t*,io_layer_t*);
 	void* (*get_outer_layer) (io_encoding_t*,io_layer_t*);
 	void* (*get_layer) (io_encoding_t*,io_layer_implementation_t const*);
-	io_layer_t* (*push_layer_2) (io_encoding_t*,io_make_layer_t);
+	io_layer_t* (*push_layer) (io_encoding_t*,io_make_layer_t);
 } io_encoding_layer_api_t;
 
 #define IO_ENCODING_IMPLEMENTATION_STRUCT_MEMBERS \
@@ -942,9 +942,9 @@ io_encoding_get_outermost_layer (io_encoding_t *encoding) {
 }
 
 INLINE_FUNCTION io_layer_t*
-io_encoding_push_layer_2 (io_encoding_t *encoding,io_make_layer_t make) {
+io_encoding_push_layer (io_encoding_t *encoding,io_make_layer_t make) {
 	if (encoding != NULL) {
-		return encoding->implementation->layer->push_layer_2 (encoding,make);
+		return encoding->implementation->layer->push_layer (encoding,make);
 	} else {
 		return NULL;
 	}
@@ -4555,7 +4555,7 @@ EVENT_DATA io_encoding_layer_api_t no_packet_layer_api = {
 	.get_inner_layer = NULL,
 	.get_outer_layer = NULL,
 	.get_layer = io_encoding_no_layer,
-	.push_layer_2 = NULL,
+	.push_layer = NULL,
 };
 
 EVENT_DATA io_encoding_implementation_t io_encoding_implementation_base = {

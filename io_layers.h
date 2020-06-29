@@ -361,7 +361,7 @@ io_packet_encoding_free (io_encoding_t *encoding) {
 }
 
 io_layer_t*
-io_packet_encoding_push_layer_2 (io_encoding_t *encoding,io_make_layer_t make) {
+io_packet_encoding_push_layer (io_encoding_t *encoding,io_make_layer_t make) {
 	io_packet_encoding_t *packet = (io_packet_encoding_t*) encoding;
 	uint32_t number_of_layers = packet->end_of_layers - packet->layers;
 	io_layer_t **bigger = io_byte_memory_reallocate (
@@ -468,12 +468,11 @@ EVENT_DATA io_encoding_implementation_t io_packet_encoding_implementation = {
 	.limit = io_packet_encoding_default_limit,
 };
 
-
 EVENT_DATA io_encoding_layer_api_t io_packet_layer_api = {
 	.get_inner_layer = io_packet_encoding_get_inner_layer,
 	.get_outer_layer = io_packet_encoding_get_outer_layer,
 	.get_layer = get_packet_encoding_layer,
-	.push_layer_2 = io_packet_encoding_push_layer_2,
+	.push_layer = io_packet_encoding_push_layer,
 };
 
 //
@@ -652,12 +651,12 @@ EVENT_DATA io_layer_implementation_t io_binary_layer_implementation = {
 
 io_layer_t*
 push_io_binary_transmit_layer (io_encoding_t *encoding) {
-	return io_encoding_push_layer_2 (encoding,mk_io_binary_transmit_layer);
+	return io_encoding_push_layer (encoding,mk_io_binary_transmit_layer);
 }
 
 io_layer_t*
 push_io_binary_receive_layer (io_encoding_t *encoding) {
-	return io_encoding_push_layer_2 (encoding,mk_io_binary_receive_layer);
+	return io_encoding_push_layer (encoding,mk_io_binary_receive_layer);
 }
 
 io_layer_t*
@@ -890,12 +889,12 @@ EVENT_DATA io_layer_implementation_t io_link_layer_implementation = {
 
 io_layer_t*
 push_io_link_transmit_layer (io_encoding_t *encoding) {
-	return io_encoding_push_layer_2 (encoding,mk_io_link_transmit_layer);
+	return io_encoding_push_layer (encoding,mk_io_link_transmit_layer);
 }
 
 io_layer_t*
 push_io_link_receive_layer (io_encoding_t *encoding) {
-	return io_encoding_push_layer_2 (encoding,mk_io_link_receive_layer);
+	return io_encoding_push_layer (encoding,mk_io_link_receive_layer);
 }
 
 io_layer_t*

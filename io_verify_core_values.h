@@ -19,6 +19,25 @@
 void	run_ut_io_core_values (V_runner_t*);
 
 # ifdef IMPLEMENT_VERIFY_IO_CORE_VALUES
+
+#define io_log_flush io_flush_log
+
+TEST_BEGIN(test_io_sprintf_1) {
+	char buf[16];
+	uint64_t big = (1LL << 32);
+	char const *expect = "4294967296";
+
+	stbsp_snprintf (buf,sizeof(buf),"%llu",big);
+
+	VERIFY(strcmp(buf,expect) == 0,NULL);
+
+//	io_log(TEST_IO,IO_INFO_LOG_LEVEL,"%s\n",buf);
+//	io_log_flush(TEST_IO);
+
+}
+TEST_END
+
+
 TEST_BEGIN(test_io_text_encoding_1) {
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
 	memory_info_t begin,end;
@@ -1005,6 +1024,7 @@ UNIT_TEARDOWN(teardown_io_core_values_unit_test) {
 static void
 io_core_values_unit_test (V_unit_test_t *unit) {
 	static V_test_t const tests[] = {
+		test_io_sprintf_1,
 		test_io_text_encoding_1,
 		test_io_text_encoding_2,
 		test_io_x70_encoding_1,

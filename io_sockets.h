@@ -15,7 +15,7 @@
 //
 #define IO_SOCKET_MINIMUM_MTU 128
 
-typedef struct io_inner_port_binding io_inner_binding_t;
+typedef struct io_inner_binding io_inner_binding_t;
 typedef struct io_inner_constructor_binding io_inner_constructor_binding_t;
 typedef struct io_multiplex_socket io_multiplex_socket_t;
 typedef struct io_socket_implementation io_socket_implementation_t;
@@ -78,6 +78,7 @@ bool io_socket_try_open (io_socket_t*,io_socket_open_flag_t);
 
 #define io_socket_call_close(s)						io_socket_call_state (s,(s)->State->close)
 #define io_socket_call_outer_transmit_event(s)	io_socket_call_state (s,(s)->State->outer_transmit_event)
+#define io_socket_call_outer_receive_event(s)	io_socket_call_state (s,(s)->State->outer_receive_event)
 
 extern EVENT_DATA io_socket_state_t io_socket_state;
 
@@ -395,6 +396,44 @@ cast_to_io_counted_socket (io_socket_t *socket) {
 }
 
 //
+// process: a single-inner, single-outer socket
+//
+#define IO_PROCESS_SOCKET_STRUCT_MEMBERS \
+	IO_COUNTED_SOCKET_STRUCT_MEMBERS \
+	io_event_t *transmit_available; \
+	io_event_t *receive_data_available; \
+	io_socket_t *outer_socket; \
+	io_event_t outer_transmit_event; \
+	io_event_t outer_receive_event; \
+	/**/
+
+typedef struct PACK_STRUCTURE io_process_socket {
+	IO_PROCESS_SOCKET_STRUCT_MEMBERS
+} io_process_socket_t;
+
+io_socket_t* io_process_socket_initialise (io_socket_t*,io_t*,io_settings_t const*);
+bool io_process_socket_add_inner_binding (io_socket_t*,io_address_t,io_event_t*,io_event_t*);
+bool io_process_socket_bind_to_outer (io_socket_t*,io_socket_t*);
+bool io_process_socket_is_closed (io_socket_t const*);
+void io_process_socket_close (io_socket_t*);
+io_encoding_t* io_process_socket_new_message (io_socket_t*);
+bool io_process_socket_send_message (io_socket_t*,io_encoding_t*);
+
+#define  SPECIALISE_IO_PROCESS_SOCKET_IMPLEMENTATION(S) \
+	SPECIALISE_IO_COUNTED_SOCKET_IMPLEMENTATION (S)\
+	.initialise = io_process_socket_initialise, \
+	.open = io_socket_try_open,\
+	.close = io_process_socket_close,\
+	.is_closed = io_process_socket_is_closed, \
+	.bind_inner = io_process_socket_add_inner_binding, \
+	.bind_to_outer_socket = io_process_socket_bind_to_outer, \
+	.new_message = io_process_socket_new_message,\
+	.send_message = io_process_socket_send_message,\
+	/**/
+
+extern EVENT_DATA io_socket_implementation_t io_process_socket_implementation;
+
+//
 // adapter for connecting non-socket layers
 //
 #define IO_ADAPTER_SOCKET_STRUCT_MEMBERS \
@@ -498,13 +537,16 @@ struct io_inner_port {
 
 void free_io_inner_port (io_byte_memory_t*,io_inner_port_t*);
 
-struct PACK_STRUCTURE io_inner_port_binding {
+struct PACK_STRUCTURE io_inner_binding {
 	io_address_t address;
 	io_inner_port_t *port;
 };
 
+#define io_inner_binding_address(b)				(b)->address
 #define io_inner_binding_port(b)					(b)->port
 #define io_inner_binding_transmit_pipe(b)		io_inner_binding_port(b)->transmit_pipe
+#define io_inner_binding_receive_pipe(b)		io_inner_binding_port(b)->receive_pipe
+#define io_inner_binding_receive_event(b)		io_inner_binding_port(b)->rx_available
 
 #define IO_MULTIPLEX_SOCKET_STRUCT_MEMBERS \
 	IO_COUNTED_SOCKET_STRUCT_MEMBERS \
@@ -1020,7 +1062,190 @@ EVENT_DATA io_socket_implementation_t io_leaf_socket_implementation = {
 	SPECIALISE_IO_LEAF_SOCKET_IMPLEMENTATION (&io_counted_socket_implementation)
 };
 
+/*
+ *-----------------------------------------------------------------------------
+ *-----------------------------------------------------------------------------
+ *
+ * process socket states
+ *
+ *               io_process_socket_state_unbound
+ *                 |
+ *                 v
+ *               io_process_socket_state_closed
+ *                 |
+ *                 v
+ *               io_process_socket_state_open_wait
+ *                 |
+ *          <open> |
+ *                 v                           <close>
+ *               io_process_socket_state_open --->
+ *
+ *-----------------------------------------------------------------------------
+ *-----------------------------------------------------------------------------
+ */
+static EVENT_DATA io_socket_state_t io_process_socket_state_closed;
+static EVENT_DATA io_socket_state_t io_process_socket_state_open;
 
+io_encoding_t*
+io_process_socket_new_message (io_socket_t *socket) {
+	io_process_socket_t *this = (io_process_socket_t*) socket;
+	if (this->outer_socket != NULL) {
+
+		// i need a ntag layer...
+
+		return io_socket_new_message (this->outer_socket);
+	} else {
+		return NULL;
+	}
+}
+
+bool
+io_process_socket_send_message (io_socket_t *socket,io_encoding_t *encoding) {
+	io_process_socket_t *this = (io_process_socket_t*) socket;
+	bool ok = false;
+	if (this->outer_socket != NULL) {
+		ok = io_socket_send_message (this->outer_socket,encoding);
+	}
+	unreference_io_encoding (encoding);
+	return ok;
+}
+
+io_socket_state_t const*
+io_process_socket_state_closed_open_generic (
+	io_socket_t *socket,io_socket_open_flag_t flag,io_socket_state_t const *next
+) {
+	io_process_socket_t *this = (io_process_socket_t*) socket;
+
+	//
+	// We can open only if there is no inner binding, otherwise
+	// we should use open_for_inner().
+	//
+
+	if (this->outer_socket != NULL) {
+		io_socket_call_open_for_inner (
+			this->outer_socket,io_socket_address (socket),flag
+		);
+		return next;
+	}
+
+	return this->State;
+}
+
+io_socket_state_t const*
+io_process_socket_state_closed_open (io_socket_t *socket,io_socket_open_flag_t flag) {
+	return io_process_socket_state_closed_open_generic (
+		socket,flag,&io_process_socket_state_open
+	);
+}
+
+static EVENT_DATA io_socket_state_t io_process_socket_state_closed = {
+	SPECIALISE_IO_SOCKET_STATE (&io_socket_state)
+	.name = "p-closed",
+	.open = io_process_socket_state_closed_open,
+};
+
+io_socket_state_t const*
+io_process_socket_state_open_close_generic (
+	io_socket_t *socket,io_socket_state_t const *next
+) {
+	io_process_socket_t *this = (io_process_socket_t*) socket;
+	io_socket_call_inner_closed (this->outer_socket,io_socket_address (socket));
+	return next;
+}
+
+io_socket_state_t const*
+io_process_socket_state_open_close (io_socket_t *socket) {
+	return io_process_socket_state_open_close_generic (
+		socket,&io_process_socket_state_closed
+	);
+}
+
+static EVENT_DATA io_socket_state_t io_process_socket_state_open = {
+	SPECIALISE_IO_SOCKET_STATE (&io_socket_state)
+	.name = "p-open",
+	.close = io_process_socket_state_open_close,
+};
+
+
+static void
+io_process_socket_outer_tx_event (io_event_t *ev) {
+	io_socket_t *socket = ev->user_value;
+	io_socket_call_outer_transmit_event (socket);
+}
+
+static void
+io_process_socket_outer_rx_event (io_event_t *ev) {
+	io_socket_t *socket = ev->user_value;
+	io_socket_call_outer_receive_event (socket);
+}
+
+io_socket_t*
+io_process_socket_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) {
+	io_process_socket_t *this = (io_process_socket_t*) socket;
+
+	initialise_io_counted_socket ((io_counted_socket_t*) socket,io);
+
+	this->State = &io_process_socket_state_closed;
+	this->transmit_available = NULL;
+	this->receive_data_available = NULL;
+
+	initialise_io_event (
+		&this->outer_transmit_event,io_process_socket_outer_tx_event,this
+	);
+
+	initialise_io_event (
+		&this->outer_receive_event,io_process_socket_outer_rx_event,this
+	);
+
+	return socket;
+}
+
+//
+// this access data structures that are shared with event thread
+//
+bool
+io_process_socket_add_inner_binding (
+	io_socket_t *socket,io_address_t a,io_event_t *tx,io_event_t *rx
+) {
+	io_process_socket_t *this = (io_process_socket_t*) socket;
+
+	this->transmit_available = tx;
+	this->receive_data_available = rx;
+
+	return io_socket_bind_to_outer_socket (socket,this->outer_socket);
+}
+
+bool
+io_process_socket_bind_to_outer (io_socket_t *socket,io_socket_t *outer) {
+	io_process_socket_t *this = (io_process_socket_t*) socket;
+
+	this->outer_socket = outer;
+
+	io_socket_bind_inner (
+		outer,
+		io_socket_address (socket),
+		&this->outer_transmit_event,
+		&this->outer_receive_event
+	);
+
+	return true;
+}
+
+void
+io_process_socket_close (io_socket_t *socket) {
+	io_socket_call_close (socket);
+}
+
+bool
+io_process_socket_is_closed (io_socket_t const *socket) {
+	return socket->State == &io_process_socket_state_closed;
+}
+
+EVENT_DATA io_socket_implementation_t io_process_socket_implementation = {
+	SPECIALISE_IO_PROCESS_SOCKET_IMPLEMENTATION (
+		&io_counted_socket_implementation
+	)
+};
 //
 // adapter sockets have 1:1 inner and outer relations
 //
@@ -1625,7 +1850,7 @@ io_multiplexer_socket_mtu (io_socket_t const *socket) {
 }
 
 void	
-io_multiplexer_socket_rx_event (io_event_t *ev) {
+io_multiplexer_socket_outer_receive_event (io_event_t *ev) {
 	io_multiplexer_socket_t *this = ev->user_value;
 	
 	if (this->outer_socket) {
@@ -1678,7 +1903,7 @@ io_socket_emulator_initialise (io_socket_t *socket,io_t *io,io_settings_t const 
 	);
 	
 	initialise_io_event (
-		&this->rx,io_multiplexer_socket_rx_event,this
+		&this->rx,io_multiplexer_socket_outer_receive_event,this
 	);
 
 	return socket;
