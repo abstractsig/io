@@ -96,20 +96,33 @@ typedef struct PACK_STRUCTURE umm_ptr_t {
 } umm_ptr;
 
 typedef struct PACK_STRUCTURE {
-	union {
+	union PACK_STRUCTURE {
 		umm_ptr used;
 	} header;
-	union {
+	union PACK_STRUCTURE {
 		umm_ptr free;
-		unsigned char data[4];
+		uint8_t data[4];
 	} body;
 } umm_block_t;
+
+typedef enum {
+	IO_MEMORY_FREE_OK = 0,
+	IO_MEMORY_FREE_ERROR_ALREADY_FREE,
+	IO_MEMORY_FREE_ERROR_NOT_IN_MEMORY,
+} io_memory_status_t;
 
 typedef struct {
 	io_t *io;
 	umm_block_t *heap;
-	unsigned int number_of_blocks;
+	uint32_t number_of_blocks;
+	uint32_t block_size_n;
 } io_byte_memory_t;
+
+#define io_byte_memory_io(this)						(this)->io
+#define io_byte_memory_number_of_blocks(this)	(this)->number_of_blocks
+#define io_byte_memory_last_block(this)			(io_byte_memory_number_of_blocks(this) - 1)
+#define io_byte_memory_block_size_bits(this)		((this)->block_size_n)
+#define io_byte_memory_block_size(this)			(1 << io_byte_memory_block_size_bits(this))
 
 typedef struct io_value io_value_t;
 typedef struct io_value_memory io_value_memory_t;
@@ -123,7 +136,7 @@ void	free_io_byte_memory (io_byte_memory_t*);
 void*	umm_malloc(io_byte_memory_t*,size_t);
 void*	umm_calloc(io_byte_memory_t*,size_t,size_t);
 void*	umm_realloc(io_byte_memory_t*,void *ptr, size_t size );
-void	umm_free(io_byte_memory_t*,void *ptr );
+io_memory_status_t umm_free(io_byte_memory_t*,void *ptr );
 void	io_byte_memory_get_info (io_byte_memory_t*,memory_info_t *info);
 
 #define io_byte_memory_get_io(bm)	(bm)->io
@@ -140,16 +153,17 @@ io_byte_memory_allocate_and_zero (io_byte_memory_t *bm,uint32_t size) {
 }
 
 //
-// block sizes as pow_2 (only 8 for now)
+// block sizes
 //
-#define UMM_BLOCK_SIZE_8		3UL
-#define UMM_BLOCK_SIZE_16		4UL
-#define UMM_BLOCK_SIZE_32		5UL
-#define UMM_BLOCK_SIZE_64		6UL
-#define UMM_BLOCK_SIZE_128		7UL
-#define UMM_BLOCK_SIZE_256		8UL	// up to 8Mbyte
-#define UMM_BLOCK_SIZE_1024	10UL	// up to 32Mbyte
-#define UMM_BLOCK_SIZE_4096	12UL	// up to 132Mbyte
+
+#define UMM_BLOCK_SIZE_1N		3UL	// 8, must be >= sizeof(umm_block_t)
+#define UMM_BLOCK_SIZE_2N		4UL	// 16
+#define UMM_BLOCK_SIZE_3N		5UL	// 32
+#define UMM_BLOCK_SIZE_4N		6UL	// 64
+#define UMM_BLOCK_SIZE_5N		7UL	// 128
+#define UMM_BLOCK_SIZE_6N		8UL	// 256, up to 8Mbyte
+#define UMM_BLOCK_SIZE_7N		10UL	// 1024, up to 32Mbyte
+#define UMM_BLOCK_SIZE_8N		12UL	// 4096, up to 132Mbyte
 
 //
 // uid
@@ -1678,6 +1692,8 @@ bool	io_cpu_clock_iterate_outputs_nop (io_cpu_clock_pointer_t,bool (*) (io_cpu_c
 //
 // address
 //
+#include <io_address.h>
+
 typedef struct io_address {
 	struct PACK_STRUCTURE {
 		uint32_t size:31;
@@ -4194,7 +4210,7 @@ mk_umm_io_value_memory (io_t *io,uint32_t size,uint32_t id) {
 		this->implementation = &umm_value_memory_implementation;
 		this->io = io;
 		this->id_ = id;
-		this->bm = mk_io_byte_memory (io,size,UMM_BLOCK_SIZE_8);
+		this->bm = mk_io_byte_memory (io,size,UMM_BLOCK_SIZE_1N);
 		if (this->bm != NULL) {
 			initialise_io_byte_memory_cursor(this->bm,&this->gc_cursor);
 			this->gc_stack_size = GC_STACK_LENGTH;
@@ -7274,13 +7290,15 @@ io_source_decoder_end_of_statement (io_source_decoder_t *this) {
 #define UMM_BLOCKNO_MASK  (0x7FFF)
 
 #define UMM_NUMBLOCKS(m) (m)->number_of_blocks
-#define UMM_BLOCK(m,b)  (m)->heap[b]
+#define UMM_BLOCK_SIZE(m) (1 << (m)->block_size_n)
+//#define UMM_BLOCK(m,b)  (m)->heap[b]
+#define UMM_BLOCK(this,b)	((umm_block_t*)(((void*) (this)->heap) + ((b) << io_byte_memory_block_size_bits(this))))
 
-#define UMM_NBLOCK(m,b) (UMM_BLOCK(m,b).header.used.next)
-#define UMM_PBLOCK(m,b) (UMM_BLOCK(m,b).header.used.prev)
-#define UMM_NFREE(m,b)  (UMM_BLOCK(m,b).body.free.next)
-#define UMM_PFREE(m,b)  (UMM_BLOCK(m,b).body.free.prev)
-#define UMM_DATA(m,b)   (UMM_BLOCK(m,b).body.data)
+#define UMM_NBLOCK(m,b) (UMM_BLOCK(m,b)->header.used.next)
+#define UMM_PBLOCK(m,b) (UMM_BLOCK(m,b)->header.used.prev)
+#define UMM_NFREE(m,b)  (UMM_BLOCK(m,b)->body.free.next)
+#define UMM_PFREE(m,b)  (UMM_BLOCK(m,b)->body.free.prev)
+#define UMM_DATA(m,b)   (UMM_BLOCK(m,b)->body.data)
 
 io_byte_memory_t*
 mk_io_byte_memory (io_t *io,uint32_t size,uint32_t block_size) {
@@ -7312,10 +7330,13 @@ free_io_byte_memory (io_byte_memory_t *this) {
 }
 
 io_byte_memory_t*
-initialise_io_byte_memory (io_t *io,io_byte_memory_t *mem,uint32_t block_size) {
+initialise_io_byte_memory (
+	io_t *io,io_byte_memory_t *mem,uint32_t block_size_bits
+) {
   	// init heap pointer and size, and memset it to 0
-	io_memset (mem->heap,0x00,mem->number_of_blocks * sizeof(umm_block_t));
+	io_memset (mem->heap,0x00,mem->number_of_blocks << io_byte_memory_block_size_bits(mem));
 	mem->io = io;
+	mem->block_size_n = block_size_bits;
   /* setup initial blank heap structure */
   {
     /* index of the 0th `umm_block_t` */
@@ -7372,7 +7393,7 @@ void
 io_byte_memory_get_info (io_byte_memory_t *mem,memory_info_t *info) {
 	unsigned short int blockNo = UMM_NBLOCK(mem,0) & UMM_BLOCKNO_MASK;
 
-	info->total_bytes = UMM_NUMBLOCKS(mem) * sizeof(umm_block_t);
+	info->total_bytes = UMM_NUMBLOCKS(mem) * io_byte_memory_block_size(mem);
 	info->free_bytes = 0;
 	info->used_bytes = 0;
 
@@ -7389,8 +7410,8 @@ io_byte_memory_get_info (io_byte_memory_t *mem,memory_info_t *info) {
 		blockNo = UMM_NBLOCK(mem,blockNo) & UMM_BLOCKNO_MASK;
 	}
 
-	info->free_bytes *= sizeof(umm_block_t);
-	info->used_bytes *= sizeof(umm_block_t);
+	info->free_bytes *= io_byte_memory_block_size(mem);
+	info->used_bytes *= io_byte_memory_block_size(mem);
 }
 
 void
@@ -7441,28 +7462,14 @@ iterate_io_byte_memory_allocations (
 	}
 }
 
-static unsigned short int umm_blocks( size_t size ) {
-
-  /*
-   * The calculation of the block size is not too difficult, but there are
-   * a few little things that we need to be mindful of.
-   *
-   * When a block removed from the free list, the space used by the free
-   * pointers is available for data. That's what the first calculation
-   * of size is doing.
-   */
-
-  if( size <= (sizeof(((umm_block_t *)0)->body)) )
-    return( 1 );
-
-  /*
-   * If it's for more than that, then we need to figure out the number of
-   * additional whole blocks the size of an umm_block_t are required.
-   */
-
-  size -= ( 1 + (sizeof(((umm_block_t *)0)->body)) );
-
-  return( 2 + size/(sizeof(umm_block_t)) );
+static unsigned short int 
+umm_blocks (io_byte_memory_t *mem,size_t size) {
+	return (
+		1 + (
+				(size + (sizeof(((umm_block_t *)0)->body)) - 1)
+			>>	io_byte_memory_block_size_bits(mem)
+		)
+	);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -7547,68 +7554,82 @@ static unsigned short int umm_assimilate_down(io_byte_memory_t *mem,unsigned sho
  * UMM_CRITICAL_ENTRY() and UMM_CRITICAL_EXIT().
  */
 
-static void umm_free_core(io_byte_memory_t *mem,void *ptr) {
+static io_memory_status_t
+umm_free_core(io_byte_memory_t *mem,void *ptr) {
+	io_memory_status_t result = IO_MEMORY_FREE_OK;
+	unsigned short int c;
 
-  unsigned short int c;
+	/*
+	* NOTE:  See the new umm_info() function that you can use to see if a ptr is
+	*        on the free list!
+	*/
 
-  /*
-   * NOTE:  See the new umm_info() function that you can use to see if a ptr is
-   *        on the free list!
-   */
+	/* Figure out which block we're in. Note the use of truncated division... */
 
-  /* Figure out which block we're in. Note the use of truncated division... */
+	c = (((char *)ptr)-(char *)(&(mem->heap[0]))) >> io_byte_memory_block_size_bits(mem);
 
-  c = (((char *)ptr)-(char *)(&(mem->heap[0])))/sizeof(umm_block_t);
+	if (
+			ptr < (void *) (&(mem->heap[1]))
+		||	ptr >= (void *) (UMM_BLOCK(mem,io_byte_memory_number_of_blocks(mem)))
+	) {
+		result = IO_MEMORY_FREE_ERROR_NOT_IN_MEMORY;
+	} else if (UMM_NBLOCK(mem,c) & UMM_FREELIST_MASK ) {
+		result = IO_MEMORY_FREE_ERROR_ALREADY_FREE;
+	} else {
 
-  UMM_DBGLOG_DEBUG( "Freeing block %6i\n", c );
+		/* Now let's assimilate this block with the next one if possible. */
 
-  /* Now let's assimilate this block with the next one if possible. */
+		umm_assimilate_up(mem,c);
 
-  umm_assimilate_up(mem,c);
+		/* Then assimilate with the previous block if possible */
 
-  /* Then assimilate with the previous block if possible */
+		if( UMM_NBLOCK(mem,UMM_PBLOCK(mem,c)) & UMM_FREELIST_MASK ) {
 
-  if( UMM_NBLOCK(mem,UMM_PBLOCK(mem,c)) & UMM_FREELIST_MASK ) {
+			UMM_DBGLOG_DEBUG( "Assimilate down to next block, which is FREE\n" );
 
-    UMM_DBGLOG_DEBUG( "Assimilate down to next block, which is FREE\n" );
+			c = umm_assimilate_down(mem,c, UMM_FREELIST_MASK);
+		} else {
+			/*
+			* The previous block is not a free block, so add this one to the head
+			* of the free list
+			*/
 
-    c = umm_assimilate_down(mem,c, UMM_FREELIST_MASK);
-  } else {
-    /*
-     * The previous block is not a free block, so add this one to the head
-     * of the free list
-     */
+			UMM_DBGLOG_DEBUG( "Just add to head of free list\n" );
 
-    UMM_DBGLOG_DEBUG( "Just add to head of free list\n" );
+			UMM_PFREE(mem,UMM_NFREE(mem,0)) = c;
+			UMM_NFREE(mem,c)            = UMM_NFREE(mem,0);
+			UMM_PFREE(mem,c)            = 0;
+			UMM_NFREE(mem,0)            = c;
 
-    UMM_PFREE(mem,UMM_NFREE(mem,0)) = c;
-    UMM_NFREE(mem,c)            = UMM_NFREE(mem,0);
-    UMM_PFREE(mem,c)            = 0;
-    UMM_NFREE(mem,0)            = c;
-
-    UMM_NBLOCK(mem,c)          |= UMM_FREELIST_MASK;
-  }
+			UMM_NBLOCK(mem,c)          |= UMM_FREELIST_MASK;
+		}
+	}
+  
+	return result;
 }
 
 /* ------------------------------------------------------------------------ */
 
-void umm_free(io_byte_memory_t *mem,void *ptr) {
-
+io_memory_status_t
+umm_free(io_byte_memory_t *mem,void *ptr) {
+	io_memory_status_t s;
 
   /* If we're being asked to free a NULL pointer, well that's just silly! */
 
   if( (void *)0 == ptr ) {
     UMM_DBGLOG_DEBUG( "free a null pointer -> do nothing\n" );
-    return;
+    return IO_MEMORY_FREE_OK;
   }
 
   /* Free the memory withing a protected critical section */
 
   UMM_CRITICAL_ENTRY(mem);
 
-  umm_free_core(mem,ptr);
+  s = umm_free_core(mem,ptr);
 
   UMM_CRITICAL_EXIT(mem);
+  
+  return s;
 }
 
 /* ------------------------------------------------------------------------
@@ -7625,7 +7646,7 @@ static void *umm_malloc_core(io_byte_memory_t *mem,size_t size) {
 
   unsigned short int cf;
 
-  blocks = umm_blocks( size );
+  blocks = umm_blocks(mem,size);
 
   /*
    * Now we can scan through the free list until we find a space that's big
@@ -7798,11 +7819,11 @@ void *umm_realloc(io_byte_memory_t *mem,void *ptr, size_t size) {
    * copying. So first, let's figure out how many blocks we'll need.
    */
 
-  blocks = umm_blocks( size );
+  blocks = umm_blocks(mem,size);
 
   /* Figure out which block we're in. Note the use of truncated division... */
 
-  c = (((char *)ptr)-(char *)(&(mem->heap[0])))/sizeof(umm_block_t);
+  c = (((char *)ptr)-(char *)(&(mem->heap[0]))) >> io_byte_memory_block_size_bits(mem);
 
   /* Figure out how big this block is ... the free bit is not set :-) */
 
@@ -7810,7 +7831,10 @@ void *umm_realloc(io_byte_memory_t *mem,void *ptr, size_t size) {
 
   /* Figure out how many bytes are in this block */
 
-  curSize   = (blockSize*sizeof(umm_block_t))-(sizeof(((umm_block_t *)0)->header));
+  curSize = (
+			(blockSize << io_byte_memory_block_size_bits(mem))
+		-	(sizeof(((umm_block_t *)0)->header))
+	);
 
   /* Protect the critical section... */
   UMM_CRITICAL_ENTRY(mem);
@@ -7922,7 +7946,34 @@ void *umm_calloc(io_byte_memory_t *mem,size_t num, size_t item_size ) {
 	return ret;
 }
 
+bool
+io_byte_memory_test_block_is_free (io_byte_memory_t *this,uint16_t block) {
+	return (UMM_NBLOCK(this,block) & UMM_FREELIST_MASK) == UMM_FREELIST_MASK;
+}
 
+uint16_t
+io_byte_memory_test_get_block_prev (io_byte_memory_t *this,uint16_t block) {
+	return UMM_PBLOCK(this,block);
+}
+
+uint16_t
+io_byte_memory_test_get_block_next (io_byte_memory_t *this,uint16_t block) {
+	return UMM_NBLOCK(this,block) & UMM_BLOCKNO_MASK;
+}
+
+uint16_t
+io_byte_memory_test_get_block_prev_free (io_byte_memory_t *this,uint16_t block) {
+	return UMM_PFREE(this,block);
+}
+
+uint16_t
+io_byte_memory_test_get_block_next_free (io_byte_memory_t *this,uint16_t block) {
+	return UMM_NFREE(this,block);
+}
+
+//
+//
+//
 void
 pq_sort_exchange (void* a[],int i,int j) {
 	void* s = a[i];

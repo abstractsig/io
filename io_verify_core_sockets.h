@@ -19,6 +19,72 @@
 void	run_ut_io_core_sockets (V_runner_t*);
 
 # ifdef IMPLEMENT_VERIFY_IO_CORE_SOCKETS
+//-----------------------------------------------------------------------------
+//
+// implementation
+//
+//-----------------------------------------------------------------------------
+
+TEST_BEGIN(test_io_address_u8) {
+	io_address2_t d,a = def_io_u8_address2(2);
+	VERIFY (io_address2_get_u8_value(a) == 2,NULL);
+	VERIFY (io_address2_size(a) == 1,NULL);
+	
+	d = duplicate_io_address2(a);
+	VERIFY (io_address2_get_u8_value(d) == 2,NULL);
+	VERIFY (io_address2_size(d) == 1,NULL);
+	
+	VERIFY (io_address2_compare(a,d) == 0,NULL);
+
+	{
+		io_address2_t c = def_io_u8_address2(3);
+		VERIFY (io_address2_compare(a,c) == -1,NULL);
+		VERIFY (io_address2_compare(c,a) == 1,NULL);
+	}
+}
+TEST_END
+
+TEST_BEGIN(test_io_address_u16) {
+	io_address2_t d,a = def_io_u16_address2(2);
+	VERIFY (io_address2_get_u8_value(a) == 0,NULL);
+	VERIFY (io_address2_size(a) == 2,NULL);
+	
+	d = duplicate_io_address2(a);
+	VERIFY (io_address2_get_u16_value(d) == 2,NULL);
+	VERIFY (io_address2_size(d) == 2,NULL);
+	
+	VERIFY (io_address2_compare(a,d) == 0,NULL);
+	
+	{
+		io_address2_t c = def_io_u16_address2(3);
+		VERIFY (io_address2_compare(a,c) < 0,NULL);
+		VERIFY (io_address2_compare(c,a) > 0,NULL);
+	}
+
+}
+TEST_END
+
+TEST_BEGIN(test_io_address_u32) {
+	io_address2_t d,a = def_io_u32_address2(2);
+	VERIFY (io_address2_get_u8_value(a) == 0,NULL);
+	VERIFY (io_address2_get_u16_value(a) == 0,NULL);
+	VERIFY (io_address2_get_u32_value(a) == 2,NULL);
+	VERIFY (io_address2_size(a) == 4,NULL);
+	
+	d = duplicate_io_address2(a);
+	VERIFY (io_address2_get_u32_value(d) == 2,NULL);
+	VERIFY (io_address2_size(d) == 4,NULL);
+	
+	VERIFY (io_address2_compare(a,d) == 0,NULL);
+	
+	{
+		io_address2_t c = def_io_u32_address2(3);
+		VERIFY (io_address2_compare(a,c) < 0,NULL);
+		VERIFY (io_address2_compare(c,a) > 0,NULL);
+	}
+
+}
+TEST_END
 
 TEST_BEGIN(test_io_address_1) {
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
@@ -337,6 +403,9 @@ UNIT_TEARDOWN(teardown_io_core_sockets_unit_test) {
 static void
 io_core_sockets_unit_test (V_unit_test_t *unit) {
 	static V_test_t const tests[] = {
+		test_io_address_u8,
+		test_io_address_u16,
+		test_io_address_u32,
 		test_io_address_1,
 		test_io_address_2,
 		test_io_address_3,
