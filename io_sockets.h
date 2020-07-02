@@ -102,7 +102,7 @@ typedef struct PACK_STRUCTURE io_socket_open_event {
 	uint32_t flag;
 } io_socket_open_event_t;
 
-io_event_t* mk_io_socket_open_event (io_byte_memory_t*,io_socket_open_flag_t);
+bool call_io_socket_state_open (io_socket_t*,io_socket_open_flag_t);
 
 INLINE_FUNCTION void
 free_io_socket_open_event (io_byte_memory_t *bm,io_socket_open_event_t *this) {
@@ -783,14 +783,30 @@ is_physical_io_socket (io_socket_t const *socket) {
 //
 // state
 //
-io_event_t*
-mk_io_socket_open_event (io_byte_memory_t *bm,io_socket_open_flag_t flag) {
-	io_socket_open_event_t *this = io_byte_memory_allocate (bm,sizeof(io_socket_open_event_t));
+static void
+io_socket_async_open (io_event_t *ev) {
+	io_socket_open_event_t *this = (io_socket_open_event_t*) ev;
+	io_socket_t *socket = ev->user_value;
+	
+	io_socket_call_open (socket,this->flag);
+	io_byte_memory_free (
+		io_socket_byte_memory(socket),ev
+	);
+}
+
+bool
+call_io_socket_state_open (io_socket_t *socket,io_socket_open_flag_t flag) {
+	io_socket_open_event_t *this = io_byte_memory_allocate (
+		io_socket_byte_memory(socket),sizeof(io_socket_open_event_t)
+	);
+	
 	if (this) {
-		initialise_io_event ((io_event_t*) this,NULL,NULL);
+		initialise_io_event ((io_event_t*) this,io_socket_async_open,socket);
 		this->flag = flag;
+		io_enqueue_event (io_socket_io (socket),(io_event_t*) this);
 	}
-	return (io_event_t*) this;
+	
+	return this != NULL;
 }
 
 bool
@@ -963,10 +979,52 @@ EVENT_DATA io_socket_implementation_t io_physical_socket_implementation = {
 
 //
 // socket base
-// 
+//
+/*
+ *-----------------------------------------------------------------------------
+ *-----------------------------------------------------------------------------
+ *
+ *
+ *               io_socket_default_state_closed
+ *                 |    ^
+ *          <open> |    | <close>
+ *                 v    |                         
+ *               io_socket_default_state_open
+ *
+ *-----------------------------------------------------------------------------
+ *-----------------------------------------------------------------------------
+ */
+static EVENT_DATA io_socket_state_t io_socket_default_state_closed;
+static EVENT_DATA io_socket_state_t io_socket_default_state_open;
+
+io_socket_state_t const*
+io_socket_default_state_closed_open (io_socket_t *socket,io_socket_open_flag_t flag) {
+	io_socket_open (socket,flag);
+	return &io_socket_default_state_open;
+}
+
+static EVENT_DATA io_socket_state_t io_socket_default_state_closed = {
+	SPECIALISE_IO_SOCKET_STATE (&io_socket_state)
+	.name = "closed",
+	.open = io_socket_default_state_closed_open,
+};
+
+io_socket_state_t const*
+io_socket_default_state_open_close (io_socket_t *socket) {
+	io_socket_close (socket);
+	return &io_socket_default_state_closed;
+}
+
+static EVENT_DATA io_socket_state_t io_socket_default_state_open = {
+	SPECIALISE_IO_SOCKET_STATE (&io_socket_state)
+	.name = "open",
+	.close = io_socket_default_state_open_close,
+};
+
 void
 initialise_io_socket (io_socket_t *this,io_t *io) {
 	this->io = io;
+	this->State = &io_socket_default_state_closed;
 }
 
 void
@@ -2226,7 +2284,8 @@ build_io_sockets (
 	build = construct;
 	while (build < end) {
 		if (build->with_open) {
-			io_socket_open (array[build->index],IO_SOCKET_OPEN_CONNECT);
+			// io_socket_open (array[build->index],IO_SOCKET_OPEN_CONNECT);
+			call_io_socket_state_open (array[build->index],IO_SOCKET_OPEN_CONNECT);
 		}
 		build++;
 	}
