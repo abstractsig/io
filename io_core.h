@@ -418,20 +418,83 @@ bool	io_encoding_pipe_peek (io_encoding_pipe_t*,io_encoding_t**);
 //
 typedef struct io_dma_channel io_dma_channel_t;
 typedef struct io_dma_channel_implementation io_dma_channel_implementation_t;
+typedef struct io_dma_controller io_dma_controller_t;
+typedef struct io_dma_controller_implementation io_dma_controller_implementation_t;
+
+
+
+struct io_dma_controller_implementation {
+	io_dma_controller_implementation_t const *specialisation_of;
+	
+	bool (*start_controller) (io_dma_controller_t*);
+	bool (*stop_controller) (io_dma_controller_t*);
+	
+	bool (*start_transfer) (io_dma_controller_t*,io_dma_channel_t*);
+	bool (*stop_transfer) (io_dma_controller_t*,io_dma_channel_t*);
+	
+};
+
+#define IO_DMA_CONTROLLER_STRUCT_MEMBERS\
+	io_dma_controller_implementation_t const *implementation;\
+	io_t *io;\
+	/**/
+
+struct io_dma_controller {
+	IO_DMA_CONTROLLER_STRUCT_MEMBERS
+};
+
+INLINE_FUNCTION bool
+io_dma_controller_start_controller (io_dma_controller_t *dmac) {
+	return dmac->implementation->start_controller(dmac);
+}
+
+INLINE_FUNCTION bool
+io_dma_controller_stop_controller (io_dma_controller_t *dmac) {
+	return dmac->implementation->stop_controller(dmac);
+}
+
+INLINE_FUNCTION bool
+io_dma_controller_start_transfer (
+	io_dma_controller_t *dmac,io_dma_channel_t *c
+) {
+	return dmac->implementation->start_transfer(dmac,c);
+}
+
+INLINE_FUNCTION bool
+io_dma_controller_stop_transfer (
+	io_dma_controller_t *dmac,io_dma_channel_t *c
+) {
+	return dmac->implementation->stop_transfer(dmac,c);
+}
+
+bool io_dma_controller_nop (io_dma_controller_t*);
+bool io_dma_controller_transfer_nop (io_dma_controller_t*,io_dma_channel_t*);
+
+#define SPECIALISE_IO_DMA_CONTROLLER_IMPLEMENTATION(S) \
+	.specialisation_of = (S), \
+	.start_controller = io_dma_controller_nop,\
+	.stop_controller = io_dma_controller_nop,\
+	.start_transfer = io_dma_controller_transfer_nop,\
+	.stop_transfer = io_dma_controller_transfer_nop,\
+	/**/
+
 
 struct  PACK_STRUCTURE io_dma_channel_implementation {
 	io_dma_channel_implementation_t const *specialisation_of;
+	void (*initialise) (io_dma_channel_t*);
 	void (*transfer_from_peripheral) (io_dma_channel_t*,void*,uint32_t);
 	void (*transfer_to_peripheral) (io_dma_channel_t*,void const*,uint32_t);
 	void (*transfer_complete) (io_t*,io_dma_channel_t*);
 };
 
+void io_dma_channel_initialise_nop (io_dma_channel_t*);
 void io_dma_channel_no_transfer_from_peripheral (io_dma_channel_t*,void*,uint32_t);
 void io_dma_channel_no_transfer_to_peripheral (io_dma_channel_t*,void const*,uint32_t);
 void io_dma_channel_transfer_complete_nop (io_t*,io_dma_channel_t*);
 
 #define SPECIALISE_IO_DMA_CHANNEL_IMPLEMENTATION(S) \
 	.specialisation_of = S, \
+	.initialise = io_dma_channel_initialise_nop,\
 	.transfer_from_peripheral = io_dma_channel_no_transfer_from_peripheral,\
 	.transfer_to_peripheral = io_dma_channel_no_transfer_to_peripheral,\
 	.transfer_complete = io_dma_channel_transfer_complete_nop,\
@@ -3615,12 +3678,34 @@ io_value_pipe_put_value (io_value_pipe_t *this,vref_t r_value) {
 	}
 }
 
-void
-io_dma_channel_no_transfer_from_peripheral (io_dma_channel_t *channel,void *dest,uint32_t len) {
+//
+// dma
+//
+
+bool
+io_dma_controller_nop (io_dma_controller_t *dmac) {
+	return false;
+}
+
+bool
+io_dma_controller_transfer_nop (io_dma_controller_t *dmac,io_dma_channel_t *c) {
+	return true;
 }
 
 void
-io_dma_channel_no_transfer_to_peripheral (io_dma_channel_t *channel,void const *src,uint32_t len) {
+io_dma_channel_initialise_nop (io_dma_channel_t *channel) {
+}
+
+void
+io_dma_channel_no_transfer_from_peripheral (
+	io_dma_channel_t *channel,void *dest,uint32_t len
+) {
+}
+
+void
+io_dma_channel_no_transfer_to_peripheral (
+	io_dma_channel_t *channel,void const *src,uint32_t len
+) {
 }
 
 void
