@@ -1868,6 +1868,7 @@ typedef struct PACK_STRUCTURE io_implementation {
 	io_cpu_clock_pointer_t (*get_core_clock) (io_t*);
 	bool (*is_first_run) (io_t*);
 	bool (*clear_first_run) (io_t*);
+	void (*get_stack_usage_info) (io_t*,memory_info_t*);
 
 	//
 	// identity and security
@@ -2122,6 +2123,11 @@ io_clear_first_run (io_t *io) {
 	return io->implementation->clear_first_run (io);
 }
 
+INLINE_FUNCTION void
+io_get_stack_usage_info (io_t *io,memory_info_t *info) {
+	io->implementation->get_stack_usage_info (io,info);
+}
+
 INLINE_FUNCTION io_uid_t const*
 io_uid (io_t *io) {
 	return io->implementation->uid(io);
@@ -2234,6 +2240,7 @@ set_alarm_delay_time (io_t *io,io_alarm_t *alarm,io_time_t delay) {
 io_byte_memory_t* io_core_get_null_byte_memory (io_t*);
 io_socket_t* io_core_get_null_socket (io_t*,int32_t);
 io_value_memory_t* io_core_get_null_value_memory (io_t*);
+void io_no_stack_usage_info (io_t*,memory_info_t*);
 void io_pin_nop (io_t*,io_pin_t);
 void io_pin_interrupt_nop (io_t*,io_pin_t,io_interrupt_handler_t*);
 int32_t read_from_io_pin_nop (io_t*,io_pin_t);
@@ -2269,6 +2276,7 @@ void io_default_panic (io_t*,int);
 	.get_byte_memory = io_core_get_null_byte_memory, \
 	.get_short_term_value_memory = io_core_get_null_value_memory, \
 	.get_long_term_value_memory = io_core_get_null_value_memory, \
+	.get_stack_usage_info = io_no_stack_usage_info,\
 	.do_gc = io_no_gc, \
 	.get_core_clock = io_no_core_clock, \
 	.is_first_run = io_never_first_run, \
@@ -2707,6 +2715,13 @@ io_core_get_null_byte_memory (io_t *io) {
 io_value_memory_t*
 io_core_get_null_value_memory (io_t *io) {
 	return NULL;
+}
+
+void
+io_no_stack_usage_info (io_t *io,memory_info_t *info) {
+	info->free_bytes = 0;
+	info->total_bytes = 0;
+	info->used_bytes = 0;
 }
 
 void
