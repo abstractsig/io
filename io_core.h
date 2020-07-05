@@ -381,6 +381,7 @@ bool		io_byte_pipe_put_byte (io_byte_pipe_t*,uint8_t);
 uint32_t	io_byte_pipe_put_bytes (io_byte_pipe_t*,uint8_t const*,uint32_t);
 
 bool	is_io_byte_pipe (io_pipe_t const*);
+bool	is_io_encoding_pipe (io_pipe_t const*);
 
 #define io_byte_pipe_count_free_slots(p) io_pipe_count_free_slots ((io_pipe_t const*) (p))
 #define io_byte_pipe_is_readable(p) io_pipe_is_readable ((io_pipe_t const*) (p))
@@ -3427,6 +3428,13 @@ is_io_byte_pipe (io_pipe_t const *pipe) {
 static EVENT_DATA io_encoding_pipe_implementation_t io_encoding_pipe_implementation = {
 	.specialisation_of = &io_pipe_implementation_base,
 };
+
+bool
+is_io_encoding_pipe (io_pipe_t const *pipe) {
+	return io_pipe_has_implememntation (
+		pipe,(io_pipe_implementation_t const*) &io_encoding_pipe_implementation
+	);
+}
 
 io_encoding_pipe_t*
 cast_to_io_encoding_pipe (io_pipe_t *pipe) {
