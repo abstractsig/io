@@ -44,6 +44,8 @@ uint32_t		gcd_uint32_reduce (uint32_t*,uint32_t);
 
 uint16_t		read_le_uint16 (uint8_t const*);
 uint32_t		read_le_uint32 (uint8_t const*);
+int64_t		read_le_int48 (uint8_t const*);
+uint64_t		read_le_uint48 (uint8_t const*);
 int64_t		read_le_int64 (uint8_t const*);
 float64_t	read_le_float64 (uint8_t const*);
 float64_t	read_be_float64 (uint8_t const*);
@@ -74,6 +76,18 @@ read_le_uint32 (uint8_t const* ptr) {
 		+	((uint32_t)ptr8[1] << 8)
 		+	((uint32_t)ptr8[2] << 16) 
 		+	((uint32_t)ptr8[3] << 24)
+	);
+}
+
+int64_t
+read_le_int48 (uint8_t const *ptr8) {
+	return (int64_t) (
+			(uint64_t)ptr8[0]
+		+	((uint64_t)ptr8[1] << 8ULL)
+		+	((uint64_t)ptr8[2] << 16ULL)
+		+	((uint64_t)ptr8[3] << 24ULL)
+		+	((uint64_t)ptr8[4] << 32ULL)
+		+	((uint64_t)ptr8[5] << 40ULL)
 	);
 }
 
