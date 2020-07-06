@@ -91,6 +91,18 @@ read_le_int48 (uint8_t const *ptr8) {
 	);
 }
 
+uint64_t
+read_le_uint48 (uint8_t const *ptr8) {
+	return (uint64_t) (
+			(uint64_t)ptr8[0]
+		+	((uint64_t)ptr8[1] << 8ULL)
+		+	((uint64_t)ptr8[2] << 16ULL)
+		+	((uint64_t)ptr8[3] << 24ULL)
+		+	((uint64_t)ptr8[4] << 32ULL)
+		+	((uint64_t)ptr8[5] << 40ULL)
+	);
+}
+
 int64_t
 read_le_int64 (uint8_t const *ptr8) {
 	return (int64_t) (
