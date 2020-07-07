@@ -325,7 +325,6 @@ io_packet_encoding_new (io_byte_memory_t *bm) {
 		this->implementation = &io_packet_encoding_implementation;
 		this->bm = bm;
 		this = initialise_io_packet_encoding ((io_packet_encoding_t*) this);
-		io_log(bm->io,IO_DETAIL_LOG_LEVEL,"new pe  0x%08x\n",(int) this);
 	}
 
 	return (io_encoding_t*) this;
@@ -350,7 +349,6 @@ free_io_packet_encoding_memory (io_packet_encoding_t *this) {
 	}
 	io_byte_memory_free (this->bm,this->layers);
 	io_binary_encoding_free_memory ((io_binary_encoding_t*) this);
-		io_log(this->bm->io,IO_DETAIL_LOG_LEVEL,"free pe 0x%08x\n",(int) this);
 }
 
 void

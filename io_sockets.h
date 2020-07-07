@@ -507,6 +507,7 @@ typedef struct PACK_STRUCTURE {
 
 void initialise_io_leaf_socket (io_leaf_socket_t*,io_t*,io_settings_t const*);
 void io_leaf_socket_free (io_socket_t*);
+bool io_leaf_socket_bind_to_outer (io_socket_t*,io_socket_t*);
 bool io_leaf_socket_bind_inner_constructor (io_socket_t *socket,io_address_t address,io_socket_constructor_t make,io_notify_event_t *);
 io_inner_constructor_binding_t* io_leaf_socket_find_inner_constructor (io_socket_t*,io_address_t);
 
@@ -514,6 +515,7 @@ io_inner_constructor_binding_t* io_leaf_socket_find_inner_constructor (io_socket
 	SPECIALISE_IO_COUNTED_SOCKET_IMPLEMENTATION (S)\
 	.free = io_leaf_socket_free,\
 	.bind_inner_constructor = io_leaf_socket_bind_inner_constructor,\
+	.bind_to_outer_socket = io_leaf_socket_bind_to_outer,
 	/**/
 
 extern EVENT_DATA io_socket_implementation_t io_leaf_socket_implementation;
@@ -1106,6 +1108,22 @@ io_leaf_socket_bind_inner_constructor (
 	return io_inner_constructor_bindings_bind (
 		this->inner_constructors,io_socket_io (this),address,make,notify
 	);
+}
+
+bool
+io_leaf_socket_bind_to_outer (io_socket_t *socket,io_socket_t *outer) {
+	io_leaf_socket_t *this = (io_leaf_socket_t*) socket;
+
+	this->outer_socket = outer;
+
+	io_socket_bind_inner (
+		outer,
+		io_socket_address (socket),
+		&this->transmit_event,
+		&this->receive_event
+	);
+
+	return true;
 }
 
 io_inner_constructor_binding_t*
