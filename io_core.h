@@ -488,6 +488,8 @@ struct  PACK_STRUCTURE io_dma_channel_implementation {
 	void (*transfer_complete) (io_t*,io_dma_channel_t*);
 };
 
+extern io_dma_channel_t null_dma_channel;
+
 void io_dma_channel_initialise_nop (io_dma_channel_t*);
 void io_dma_channel_no_transfer_from_peripheral (io_dma_channel_t*,void*,uint32_t);
 void io_dma_channel_no_transfer_to_peripheral (io_dma_channel_t*,void const*,uint32_t);
@@ -1157,6 +1159,8 @@ typedef struct PACK_STRUCTURE {
 	IO_BINARY_ENCODING_STRUCT_MEMBERS
 	vref_hash_table_t *visited;
 } io_text_encoding_t;
+
+extern EVENT_DATA io_encoding_implementation_t io_text_encoding_implementation;
 
 bool	is_io_text_encoding (io_encoding_t const*);
 bool	io_text_encoding_iterate_characters (io_encoding_t*,io_character_iterator_t,void*);
@@ -1964,7 +1968,7 @@ struct PACK_STRUCTURE io {
 void	enqueue_io_event (io_t*,io_event_t*);
 void	dequeue_io_event (io_t*,io_event_t*);
 bool	do_next_io_event (io_t*);
-
+void io_log_startup_message (io_t*,io_log_level_t);
 
 int io_printf (io_t*,const char *fmt,...);
 void io_log (io_t*,io_log_level_t,const char *fmt,...);
@@ -3221,6 +3225,30 @@ flush_io_log (io_t* io) {
 	if (print) {
 		io_socket_flush (print);
 	}
+}
+
+void
+io_log_startup_message (io_t *io,io_log_level_t lvl) {
+	memory_info_t info;
+	io_byte_memory_get_info (io_get_byte_memory(io),&info);
+	io_log (
+		io,lvl,"%-*s%-*scomplete\n",
+		DBP_FIELD1,DEVICE_NAME,
+		DBP_FIELD2,"startup"
+	);
+	io_log (
+		io,lvl,"%-*s%-*sram:   %u bytes of %u used\n",
+		DBP_FIELD1,"",
+		DBP_FIELD2,"""",
+		info.used_bytes,info.total_bytes
+	);
+	io_get_stack_usage_info (io,&info);
+	io_log (
+		io,lvl,"%-*s%-*sc-stack:%u bytes used of %u total\n",
+		DBP_FIELD1,"",
+		DBP_FIELD2,"",
+		info.used_bytes,info.total_bytes
+	);
 }
 
 //

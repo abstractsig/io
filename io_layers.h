@@ -61,6 +61,7 @@ struct PACK_STRUCTURE io_layer {
 };
 
 bool	io_layer_has_implementation (io_layer_t const*,io_layer_implementation_t const*);
+extern EVENT_DATA io_layer_implementation_t io_layer_implementation;
 
 //
 // inline layer methods
