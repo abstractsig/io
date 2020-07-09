@@ -1757,6 +1757,12 @@ typedef struct PACK_STRUCTURE io_cpu_clock_function {
 bool	io_cpu_clock_function_iterate_outputs (io_cpu_clock_pointer_t,bool (*) (io_cpu_clock_pointer_t,void*),void*);
 bool	io_cpu_clock_iterate_outputs_nop (io_cpu_clock_pointer_t,bool (*) (io_cpu_clock_pointer_t,void*),void*);
 
+#define SPECIALISE_IO_CPU_CLOCK_FUNCTION_IMPLEMENTATION(S) \
+	SPECIALISE_DEPENDANT_IO_CPU_CLOCK_IMPLEMENTATION(S) \
+	/**/
+
+extern EVENT_DATA io_cpu_clock_implementation_t io_cpu_clock_function_implementation;
+
 //
 // address
 //
@@ -3237,7 +3243,7 @@ io_log_startup_message (io_t *io,io_log_level_t lvl) {
 		DBP_FIELD2,"startup"
 	);
 	io_log (
-		io,lvl,"%-*s%-*sram:   %u bytes of %u used\n",
+		io,lvl,"%-*s%-*sram:    %u bytes of %u used\n",
 		DBP_FIELD1,"",
 		DBP_FIELD2,"""",
 		info.used_bytes,info.total_bytes
@@ -3434,9 +3440,20 @@ io_dependant_cpu_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
 	return io_cpu_clock_start (io,this->input);
 }
 
-EVENT_DATA io_cpu_clock_implementation_t io_dependent_clock_implementation = {
-	SPECIALISE_DEPENDANT_IO_CPU_CLOCK_IMPLEMENTATION(&io_cpu_clock_implementation)
+EVENT_DATA io_cpu_clock_implementation_t
+io_dependent_clock_implementation = {
+	SPECIALISE_DEPENDANT_IO_CPU_CLOCK_IMPLEMENTATION (
+		&io_cpu_clock_implementation
+	)
 };
+
+EVENT_DATA io_cpu_clock_implementation_t
+io_cpu_clock_function_implementation = {
+		SPECIALISE_IO_CPU_CLOCK_FUNCTION_IMPLEMENTATION (
+		&io_dependent_clock_implementation
+	)
+};
+
 
 //
 // pipes
