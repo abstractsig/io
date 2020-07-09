@@ -8912,13 +8912,16 @@ static stbsp__int32 stbsp__real_to_parts(stbsp__int64 *bits, stbsp__int32 *expo,
 
 static char stbsp__period = '.';
 static char stbsp__comma = ',';
-static struct
+static const union
 {
-   short temp; // force next field to be 2-byte aligned
-   char pair[201];
+	// force next field to be 2-byte aligned
+	// modified to avoid type-punned warning
+//   short temp; 
+   char pair[202];
+	stbsp__uint16 _p[101];
 } stbsp__digitpair =
 {
-  0,
+//  0,
    "00010203040506070809101112131415161718192021222324"
    "25262728293031323334353637383940414243444546474849"
    "50515253545556575859606162636465666768697071727374"
@@ -9776,7 +9779,8 @@ STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback,
             if ((fl & STBSP__TRIPLET_COMMA) == 0) {
                do {
                   s -= 2;
-                  *(stbsp__uint16 *)s = *(stbsp__uint16 *)&stbsp__digitpair.pair[(n % 100) * 2];
+ //                 *(stbsp__uint16 *)s = *(stbsp__uint16 *)&stbsp__digitpair.pair[(n % 100) * 2];
+                  *(stbsp__uint16 *)s = stbsp__digitpair._p[(n % 100)];
                   n /= 100;
                } while (n);
             }
@@ -10494,7 +10498,8 @@ static stbsp__int32 stbsp__real_to_str(char const **start, stbsp__uint32 *len, c
       }
       while (n) {
          out -= 2;
-         *(stbsp__uint16 *)out = *(stbsp__uint16 *)&stbsp__digitpair.pair[(n % 100) * 2];
+//         *(stbsp__uint16 *)out = *(stbsp__uint16 *)&stbsp__digitpair.pair[(n % 100) * 2];
+         *(stbsp__uint16 *)out = stbsp__digitpair._p[(n % 100)];
          n /= 100;
          e += 2;
       }
