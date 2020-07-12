@@ -1720,9 +1720,16 @@ typedef struct PACK_STRUCTURE io_cpu_clock_source {
 	IO_CPU_CLOCK_SOURCE_STRUCT_MEMBERS
 } io_cpu_clock_source_t;
 
+#define SPECIALISE_IO_CPU_CLOCK_SOURCE_IMPLEMENTATION(S) \
+	SPECIALISE_IO_CPU_CLOCK_IMPLEMENTATION(S) \
+	/**/
+
+extern EVENT_DATA io_cpu_clock_implementation_t io_cpu_clock_source_implementation;
+
+
 #define IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS \
 	IO_CPU_CLOCK_STRUCT_MEMBERS		\
-	io_cpu_clock_pointer_t input;				\
+	io_cpu_clock_pointer_t input;	\
 	/**/
 
 typedef struct PACK_STRUCTURE io_cpu_dependant_clock {
@@ -3414,6 +3421,13 @@ io_cpu_clock_function_iterate_outputs (
 
 EVENT_DATA io_cpu_clock_implementation_t io_cpu_clock_implementation = {
 	SPECIALISE_IO_CPU_CLOCK_IMPLEMENTATION(NULL)
+};
+
+EVENT_DATA io_cpu_clock_implementation_t
+io_cpu_clock_source_implementation = {
+	SPECIALISE_IO_CPU_CLOCK_SOURCE_IMPLEMENTATION (
+		&io_cpu_clock_implementation
+	)
 };
 
 float64_t

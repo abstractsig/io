@@ -436,6 +436,10 @@ extern EVENT_DATA io_socket_implementation_t io_process_socket_implementation;
 //
 // adapter for connecting non-socket layers
 //
+//		v
+//    |
+//    o
+//
 #define IO_ADAPTER_SOCKET_STRUCT_MEMBERS \
 	IO_COUNTED_SOCKET_STRUCT_MEMBERS \
 	io_event_t *transmit_available; \
@@ -899,7 +903,8 @@ io_socket_t*
 io_virtual_socket_initialise (
 	io_socket_t *socket,io_t *io,io_settings_t const *C
 ) {
-	return NULL;
+	initialise_io_socket (socket,io);
+	return socket;
 }
 
 io_socket_t*
