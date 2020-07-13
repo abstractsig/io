@@ -1847,6 +1847,9 @@ assign_io_address (io_byte_memory_t *bm,io_address_t *location,io_address_t new_
 //
 typedef uint32_t io_pin_t;
 
+#define IO_PIN_INACTIVE				0
+#define IO_PIN_ACTIVE				1
+
 //
 // interrupts
 //

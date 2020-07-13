@@ -553,6 +553,7 @@ struct PACK_STRUCTURE io_inner_binding {
 #define io_inner_binding_transmit_pipe(b)		io_inner_binding_port(b)->transmit_pipe
 #define io_inner_binding_receive_pipe(b)		io_inner_binding_port(b)->receive_pipe
 #define io_inner_binding_receive_event(b)		io_inner_binding_port(b)->rx_available
+#define io_inner_binding_transmit_event(b)	io_inner_binding_port(b)->tx_available
 
 #define IO_MULTIPLEX_SOCKET_STRUCT_MEMBERS \
 	IO_COUNTED_SOCKET_STRUCT_MEMBERS \
@@ -1187,7 +1188,6 @@ io_process_socket_send_message (io_socket_t *socket,io_encoding_t *encoding) {
 	if (this->outer_socket != NULL) {
 		ok = io_socket_send_message (this->outer_socket,encoding);
 	}
-	unreference_io_encoding (encoding);
 	return ok;
 }
 
@@ -1368,7 +1368,11 @@ bool
 io_adapter_socket_open (io_socket_t *socket,io_socket_open_flag_t flag) {
 	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 	if (this->outer_socket != NULL) {
-		return io_socket_open (this->outer_socket,flag);
+		io_socket_call_open_for_inner (
+			this->outer_socket,io_socket_address (socket),flag
+		);
+		return true;
+//		return io_socket_open (this->outer_socket,flag);
 	} else {
 		return false;
 	}
@@ -1827,8 +1831,13 @@ io_multiplex_socket_get_next_transmit_binding (io_multiplex_socket_t *this) {
 	return NULL;
 }
 
+//
+// signal all inner sockets but rotate first
+//
 void
-io_multiplex_socket_round_robin_signal_transmit_available (io_multiplex_socket_t *this) {
+io_multiplex_socket_round_robin_signal_transmit_available (
+	io_multiplex_socket_t *this
+) {
 	io_inner_binding_t *at = this->transmit_cursor;
 	
 	do {
@@ -1836,12 +1845,7 @@ io_multiplex_socket_round_robin_signal_transmit_available (io_multiplex_socket_t
 		
 		io_event_t *ev = this->transmit_cursor->port->tx_available;
 		if (ev) {
-			//
-			// really want to know if this binding wants the tx; if not
-			// we can offer to next binding
-			//
 			io_enqueue_event (io_socket_io (this),ev);
-			break;
 		}
 		
 	} while (this->transmit_cursor != at);
