@@ -225,7 +225,7 @@ ion_shell_source_decoder_state_begin (io_source_decoder_t *this,io_character_t c
 #ifdef IMPLEMENT_VERIFY_IO_SHELL
 #include <io_verify.h>
 typedef struct PACK_STRUCTURE test_io_shell {
-	IO_MODAL_VALUE_STRUCT_PROPERTIES
+	IO_MODAL_VALUE_STRUCT_MEMBERS
 	vref_t r_result[3];
 } test_io_shell_value_t;
 

@@ -202,15 +202,15 @@ extern EVENT_DATA io_value_mode_t null_io_modal_value_modes[];
 
 #define decl_io_modal_value(T,S) \
 	.implementation = IO_VALUE_IMPLEMENTATION(T), \
-	.reference_count_ = 0, \
-	.size_ = S, \
+	.tag_.reference_count_ = 0, \
+	.tag_.size_ = S, \
 	.current_mode = (T)->modes, \
 	/**/
 
 #define decl_io_modal_value_m(T,S,M) \
 	.implementation = IO_VALUE_IMPLEMENTATION(T), \
-	.reference_count_ = 0, \
-	.size_ = S, \
+	.tag_.reference_count_ = 0, \
+	.tag_.size_ = S, \
 	.current_mode = M, \
 	/**/
 	
