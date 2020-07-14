@@ -654,7 +654,7 @@ TEST_BEGIN(test_io_memories_2) {
 	memory_info_t bm_begin,bm_end;
 
 	io_byte_memory_get_info (bm,&bm_begin);
-	
+		
 	io_value_memory_t *vm = mk_umm_io_value_memory (
 		TEST_IO,1024,INVALID_MEMORY_ID
 	);

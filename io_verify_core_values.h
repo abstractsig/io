@@ -18,25 +18,26 @@
 
 void	run_ut_io_core_values (V_runner_t*);
 
-# ifdef IMPLEMENT_VERIFY_IO_CORE_VALUES
+#ifdef IMPLEMENT_VERIFY_IO_CORE_VALUES
+//-----------------------------------------------------------------------------
+//
+// Implementation
+//
+//-----------------------------------------------------------------------------
 
 #define io_log_flush io_flush_log
 
 TEST_BEGIN(test_io_sprintf_1) {
 	char buf[16];
 	uint64_t big = (1LL << 32);
-	char const *expect = "4294967296";
+	char const* expect[] = {
+		"4294967296"
+	};
 
 	stbsp_snprintf (buf,sizeof(buf),"%llu",big);
-
-	VERIFY(strcmp(buf,expect) == 0,NULL);
-
-//	io_log(TEST_IO,IO_INFO_LOG_LEVEL,"%s\n",buf);
-//	io_log_flush(TEST_IO);
-
+	VERIFY(strcmp(buf,expect[0]) == 0,NULL);
 }
 TEST_END
-
 
 TEST_BEGIN(test_io_text_encoding_1) {
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
@@ -200,7 +201,9 @@ TEST_BEGIN(test_io_constant_values_1) {
 	};
 	bool ok = true;
 	for (int i = 0; i < SIZEOF(expect) && ok; i++) {
-		ok = expect[i] == io_get_value_implementation (TEST_IO,expect[i]->name,strlen(expect[i]->name));
+		ok = expect[i] == io_get_value_implementation (
+			TEST_IO,expect[i]->name,strlen(expect[i]->name)
+		);
 	}
 	VERIFY(ok,"value implementations match");
 
