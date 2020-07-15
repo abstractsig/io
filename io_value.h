@@ -32,7 +32,7 @@ enum {
 	NUMBER_OF_IO_VALUE_ENCODING_FORMATS
 } io_value_encoding_format_t;
 
-#define IO_VALUE_IMPLEMENTATION_STRUCT_PROPERTIES \
+#define IO_VALUE_IMPLEMENTATION_STRUCT_MEMBERS \
 	io_value_implementation_t const *specialisation_of; \
 	const char *name;\
 	io_value_t* (*initialise) (vref_t,vref_t); \
@@ -40,12 +40,13 @@ enum {
 	bool (*encode) (vref_t,io_encoding_t*); \
 	vref_t (*decode[NUMBER_OF_IO_VALUE_ENCODING_FORMATS]) (io_value_memory_t *vm,uint8_t const**,const uint8_t*);\
 	vref_t (*receive) (io_t*,vref_t,uint32_t,vref_t const*); \
+	vref_t (*change) (io_t*,vref_t,vref_t,uint32_t,va_list);\
 	vref_t (*compare) (io_value_t const*,vref_t); \
 	io_value_mode_t const* (*get_modes) (io_value_t const*);\
 	/**/
 
 struct PACK_STRUCTURE io_value_implementation {
-	IO_VALUE_IMPLEMENTATION_STRUCT_PROPERTIES
+	IO_VALUE_IMPLEMENTATION_STRUCT_MEMBERS
 };
 
 #define IO_VALUE_IMPLEMENTATION(I) ((io_value_implementation_t const*) (I))
@@ -80,7 +81,7 @@ vref_t default_io_value_receive (io_t*,vref_t,uint32_t,vref_t const*);
 io_value_t* io_value_initialise_nop (vref_t,vref_t);
 io_value_mode_t const* io_value_get_null_modes (io_value_t const*);
 vref_t io_value_compare_no_comparison(io_value_t const*,vref_t);
-vref_t io_value_send (io_t *io,vref_t r_value,uint32_t argc,...);
+vref_t io_value_send (io_t*,vref_t,uint32_t,...);
 vref_t io_decode_x70_to_invalid_value (io_value_memory_t*,uint8_t const**,const uint8_t*);
 vref_t decode_x70_to_io_value (io_value_memory_t*,uint8_t const**,const uint8_t*);
 bool io_value_encode_base (vref_t,io_encoding_t*);
@@ -93,6 +94,7 @@ vref_t io_value_compare_with_value (io_value_t const*,vref_t);
 	.decode = {decode_x70_to_io_value}, \
 	.encode = io_value_encode_base, \
 	.receive = default_io_value_receive, \
+	.change = NULL, \
 	.compare = io_value_compare_with_value, \
 	.get_modes = io_value_get_null_modes, \
 	/**/
@@ -153,7 +155,7 @@ get_io_value_implementation (vref_t r_value) {
 // modal value
 //
 #define IO_MODAL_VALUE_IMPLEMENTATION_STRUCT_MEMBERS \
-	IO_VALUE_IMPLEMENTATION_STRUCT_PROPERTIES \
+	IO_VALUE_IMPLEMENTATION_STRUCT_MEMBERS \
 	io_value_mode_t const *modes; \
 	/**/
 

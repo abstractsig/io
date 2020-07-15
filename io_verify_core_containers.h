@@ -697,6 +697,51 @@ TEST_BEGIN(test_io_memories_2) {
 }
 TEST_END
 
+TEST_BEGIN(test_io_event_1) {
+	io_event_t ev;
+	
+	initialise_io_event (&ev,NULL,NULL);
+	VERIFY (typesafe_io_cast_event (&ev,&io_event_implementation) != NULL,NULL);
+	
+	initialise_io_opened_event (&ev,NULL,NULL);
+	VERIFY (typesafe_io_cast_event (&ev,&io_data_available_event_implementation) == NULL,NULL);
+	VERIFY (typesafe_io_cast_event (&ev,&io_opened_event_implementation) != NULL,NULL);
+	VERIFY (typesafe_io_cast_event (&ev,&io_event_implementation) != NULL,NULL);
+
+	initialise_io_transmit_available_event (&ev,NULL,NULL);
+	VERIFY (typesafe_io_cast_event (&ev,&io_transmit_available_event_implementation) != NULL,NULL);
+
+	initialise_io_data_available_event (&ev,NULL,NULL);
+	VERIFY (typesafe_io_cast_event (&ev,&io_data_available_event_implementation) != NULL,NULL);
+
+}
+TEST_END
+
+TEST_BEGIN(test_io_event_list_1) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	io_event_t ev;
+	io_event_list_t *list;
+
+	list = mk_io_event_list (bm);
+	if (VERIFY (list != NULL,NULL)) {
+		initialise_io_event (&ev,NULL,NULL);
+		VERIFY (io_event_list_length (list) == 0,NULL);
+		
+		VERIFY (io_event_list_first_match (list,&io_event_implementation) == NULL,NULL);
+		VERIFY (io_event_list_append (list,&ev),NULL);
+		VERIFY (io_event_list_length (list) == 1,NULL);
+		VERIFY (io_event_list_first_match (list,&io_event_implementation) == &ev,NULL);
+		io_event_list_remove (list,&ev);
+		VERIFY (io_event_list_first_match (list,&io_event_implementation) == NULL,NULL);
+
+		VERIFY (io_event_list_append (list,&ev),NULL);
+		VERIFY (io_event_list_length (list) == 1,NULL);
+
+		io_event_list_free (list);
+	}
+}
+TEST_END
+
 TEST_BEGIN(test_io_byte_pipe_1) {
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
 	memory_info_t bm_begin,bm_end;
@@ -1315,10 +1360,25 @@ TEST_BEGIN(test_io_constrained_hash_table_4) {
 TEST_END
 
 UNIT_SETUP(setup_io_core_containers_unit_test) {
+	io_byte_memory_get_info (
+		io_get_byte_memory (TEST_IO),TEST_MEMORY_INFO
+	);
+	io_value_memory_get_info (
+		io_get_short_term_value_memory (TEST_IO),TEST_MEMORY_INFO + 1
+	);
 	return VERIFY_UNIT_CONTINUE;
 }
 
 UNIT_TEARDOWN(teardown_io_core_containers_unit_test) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bm_end,vm_end;
+
+	io_do_gc (TEST_IO,-1);
+	io_value_memory_get_info (io_get_short_term_value_memory (TEST_IO),&vm_end);
+	VERIFY (vm_end.used_bytes == TEST_MEMORY_INFO[1].used_bytes,NULL);
+
+	io_byte_memory_get_info (bm,&bm_end);
+	VERIFY (bm_end.used_bytes == TEST_MEMORY_INFO[0].used_bytes,NULL);
 }
 
 static void
@@ -1326,6 +1386,8 @@ io_core_containers_unit_test (V_unit_test_t *unit) {
 	static V_test_t const tests[] = {
 		test_io_memories_1,
 		test_io_memories_2,
+		test_io_event_1,
+		test_io_event_list_1,
 		test_io_byte_pipe_1,
 		test_io_encoding_pipe_1,
 		test_io_value_pipe_1,

@@ -224,45 +224,11 @@ io_authentication_key_test_equal (io_authentication_key_t const *a,io_authentica
 }
 
 #include <io_curve25519.h>
+#include <io_event.h>
 
-/*
- *
- * Events
- *
- */
-typedef struct io_event io_event_t;
-typedef void (*io_event_handler_t) (io_event_t*);
-
-#define IO_EVENT_STRUCT_MEMBERS \
-	void (*event_handler) (io_event_t*);\
-	void *user_value;\
-	io_event_t *next_event;\
-	/**/
-
-struct PACK_STRUCTURE io_event {
-	IO_EVENT_STRUCT_MEMBERS
-};
-
-#define def_io_event(FN,UV) {\
-		.event_handler = FN, \
-		.user_value = UV, \
-		.next_event = NULL, \
-	}
-
-#define io_event_is_valid(ev) 	((ev)->event_handler != NULL)
-#define io_event_is_active(ev) 	((ev)->next_event != NULL)
-
-extern io_event_t s_null_io_event;
-
-INLINE_FUNCTION io_event_t*
-initialise_io_event (
-	io_event_t *ev,io_event_handler_t fn,void* user_value
-) {
-	ev->event_handler = fn;
-	ev->user_value = user_value;
-	ev->next_event = NULL;
-	return ev;
-}
+void	enqueue_io_event (io_t*,io_event_t*);
+void	dequeue_io_event (io_t*,io_event_t*);
+bool	do_next_io_event (io_t*);
 
 //
 // time
@@ -1198,7 +1164,6 @@ vref_t io_x70_decoder (io_encoding_t*,io_value_memory_t*);
 void io_x70_encoding_append_uint_value (io_encoding_t*,uint32_t);
 
 #define X70_UINT_VALUE_BYTE	'U'
-
 
 //
 // int64 encoding
@@ -2686,14 +2651,6 @@ STBSP__PUBLICDEF void STB_SPRINTF_DECORATE(set_separators)(char comma, char peri
 //
 //-----------------------------------------------------------------------------
 
-static void
-null_event_handler (io_event_t *ev) {
-}
-
-io_event_t s_null_io_event = def_io_event (
-	null_event_handler,NULL
-);
-
 void
 enqueue_io_event (io_t *io,io_event_t *ev) {
 	ENTER_CRITICAL_SECTION(io);
@@ -2764,6 +2721,58 @@ do_next_io_event (io_t *io) {
 	return r;
 }
 
+bool
+io_event_list_append (io_event_list_t *this,io_event_t *ev) {
+	if (io_event_list_contains (this,ev)) {
+		return true;
+	} else {
+		io_event_t **new_list = io_byte_memory_reallocate (
+			this->bm,this->list,(this->length + 1) * sizeof (io_event_t*)
+		);
+		if (new_list != NULL) {
+			new_list[this->length] = ev;
+			
+			io_t *io = io_byte_memory_io (this->bm);
+			ENTER_CRITICAL_SECTION(io);
+			this->list = new_list;
+			this->length += 1;
+			EXIT_CRITICAL_SECTION(io);
+
+			return true;
+		} else {
+			return false;
+		}
+	}
+}
+
+void
+io_event_list_remove (io_event_list_t *this,io_event_t *ev) {
+	if (io_event_list_contains (this,ev)) {
+		io_event_t **new_list = io_byte_memory_allocate (
+			this->bm,(this->length - 1) * sizeof (io_event_t*)
+		);
+		io_event_t **src = this->list;
+		io_event_t **dest = new_list;
+		io_event_t **end = src + this->length;
+		while (src < end) {
+			if (*src != ev) {
+				*dest++ = *src;
+			}
+			src++;
+		}
+		io_byte_memory_free (this->bm,this->list);
+		
+		io_t *io = io_byte_memory_io (this->bm);
+		ENTER_CRITICAL_SECTION(io);
+		this->list = new_list;
+		this->length -= 1;
+		EXIT_CRITICAL_SECTION(io);
+	}
+}
+
+//
+// alarms
+//
 io_alarm_t s_null_io_alarm = {
 	.at = &s_null_io_event,
 	.error = &s_null_io_event,
@@ -2817,7 +2826,7 @@ io_log_startup_message (io_t *io,io_log_level_t lvl) {
 		DBP_FIELD2,"startup"
 	);
 	io_log (
-		io,lvl,"%-*s%-*sram:    %u bytes of %u used\n",
+		io,lvl,"%-*s%-*sio bm:  %u bytes of %u used\n",
 		DBP_FIELD1,"",
 		DBP_FIELD2,"""",
 		info.used_bytes,info.total_bytes
