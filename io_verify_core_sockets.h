@@ -18,7 +18,7 @@
 
 void	run_ut_io_core_sockets (V_runner_t*);
 
-# ifdef IMPLEMENT_VERIFY_IO_CORE_SOCKETS
+#ifdef IMPLEMENT_VERIFY_IO_CORE_SOCKETS
 //-----------------------------------------------------------------------------
 //
 // implementation
@@ -371,6 +371,46 @@ TEST_BEGIN(test_io_multiplex_socket_1) {
 }
 TEST_END
 
+TEST_BEGIN(test_io_multiplex_socket_2) {
+	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
+	memory_info_t bmbegin,bmend;
+	io_settings_t settings = {
+		.transmit_pipe_length = 4,
+		.receive_pipe_length = 4,
+	};
+	const socket_builder_t net[] = {
+		{0,allocate_io_multiplex_socket,io_invalid_address(),&settings,false,NULL},
+	};
+	io_address_t a = def_io_u8_address(2);
+
+	io_socket_t* mux[1];
+	io_event_t ev;
+	io_event_t* list[] = {
+		&ev,NULL
+	};
+	io_byte_memory_get_info (bm,&bmbegin);
+
+	initialise_io_data_available_event (
+		&ev,test_io_multiplex_socket_1_notify,NULL
+	);
+
+	build_io_sockets(TEST_IO,mux,net,1);
+
+	VERIFY (io_socket_set_inner_binding (mux[0],a,list),NULL);
+
+	VERIFY (
+		io_multiplex_socket_find_inner_binding (
+			(io_multiplex_socket_t*) mux[0],a
+		) != NULL,
+		NULL
+	);
+
+	io_socket_free(mux[0]);
+	io_byte_memory_get_info (bm,&bmend);
+	VERIFY (bmend.used_bytes == bmbegin.used_bytes,NULL);
+}
+TEST_END
+
 TEST_BEGIN(test_io_multiplexer_socket_1) {
 	io_byte_memory_t *bm = io_get_byte_memory (TEST_IO);
 	memory_info_t bmbegin,bmend;
@@ -412,6 +452,7 @@ io_core_sockets_unit_test (V_unit_test_t *unit) {
 		test_io_adapter_socket_1,
 		test_io_adapter_socket_2,
 		test_io_multiplex_socket_1,
+		test_io_multiplex_socket_2,
 		test_io_multiplexer_socket_1,
 		0
 	};
@@ -434,45 +475,18 @@ run_ut_io_core_sockets (V_runner_t *runner) {
 #endif /* IMPLEMENT_VERIFY_IO_CORE_SOCKETS */
 #endif
 /*
-------------------------------------------------------------------------------
-This software is available under 2 licenses -- choose whichever you prefer.
-------------------------------------------------------------------------------
-ALTERNATIVE A - MIT License
-Copyright (c) 2020 Gregor Bruce
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-------------------------------------------------------------------------------
-ALTERNATIVE B - Public Domain (www.unlicense.org)
-This is free and unencumbered software released into the public domain.
-Anyone is free to copy, modify, publish, use, compile, sell, or distribute this
-software, either in source code form or as a compiled binary, for any purpose,
-commercial or non-commercial, and by any means.
-In jurisdictions that recognize copyright laws, the author or authors of this
-software dedicate any and all copyright interest in the software to the public
-domain. We make this dedication for the benefit of the public at large and to
-the detriment of our heirs and successors. We intend this dedication to be an
-overt act of relinquishment in perpetuity of all present and future rights to
-this software under copyright law.
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
-ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-------------------------------------------------------------------------------
+Copyright 2020 Gregor Bruce
+
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT,
+OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
+DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS
+ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 
 

@@ -57,6 +57,7 @@ typedef struct io_encoding io_encoding_t;
 typedef struct io_pipe io_pipe_t;
 typedef struct io_socket io_socket_t;
 typedef struct io io_t;
+typedef struct io_event io_event_t;
 
 //
 // identity
@@ -224,11 +225,6 @@ io_authentication_key_test_equal (io_authentication_key_t const *a,io_authentica
 }
 
 #include <io_curve25519.h>
-#include <io_event.h>
-
-void	enqueue_io_event (io_t*,io_event_t*);
-void	dequeue_io_event (io_t*,io_event_t*);
-bool	do_next_io_event (io_t*);
 
 //
 // time
@@ -302,8 +298,8 @@ struct PACK_STRUCTURE io_pipe_implementation {
 #define IO_PIPE_STRUCT_MEMBERS \
 	io_pipe_implementation_t const *implementation;\
 	int16_t size_of_ring;\
-	int16_t write_index;\
-	int16_t read_index;\
+	volatile int16_t write_index;\
+	volatile int16_t read_index;\
 	int16_t overrun;\
 	/**/
 
@@ -381,131 +377,6 @@ bool	io_encoding_pipe_peek (io_encoding_pipe_t*,io_encoding_t**);
 #define io_encoding_pipe_is_readable(p) io_pipe_is_readable ((io_pipe_t const*) (p))
 #define io_encoding_pipe_is_writeable(p) io_pipe_is_writeable ((io_pipe_t const*) (p))
 
-//
-// dma
-//
-typedef struct io_dma_channel io_dma_channel_t;
-typedef struct io_dma_channel_implementation io_dma_channel_implementation_t;
-typedef struct io_dma_controller io_dma_controller_t;
-typedef struct io_dma_controller_implementation io_dma_controller_implementation_t;
-
-
-
-struct io_dma_controller_implementation {
-	io_dma_controller_implementation_t const *specialisation_of;
-	
-	bool (*start_controller) (io_dma_controller_t*);
-	bool (*stop_controller) (io_dma_controller_t*);
-	
-	bool (*start_transfer) (io_dma_controller_t*,io_dma_channel_t*);
-	bool (*stop_transfer) (io_dma_controller_t*,io_dma_channel_t*);
-	
-};
-
-#define IO_DMA_CONTROLLER_STRUCT_MEMBERS\
-	io_dma_controller_implementation_t const *implementation;\
-	io_t *io;\
-	/**/
-
-struct io_dma_controller {
-	IO_DMA_CONTROLLER_STRUCT_MEMBERS
-};
-
-INLINE_FUNCTION bool
-io_dma_controller_start_controller (io_dma_controller_t *dmac) {
-	return dmac->implementation->start_controller(dmac);
-}
-
-INLINE_FUNCTION bool
-io_dma_controller_stop_controller (io_dma_controller_t *dmac) {
-	return dmac->implementation->stop_controller(dmac);
-}
-
-INLINE_FUNCTION bool
-io_dma_controller_start_transfer (
-	io_dma_controller_t *dmac,io_dma_channel_t *c
-) {
-	return dmac->implementation->start_transfer(dmac,c);
-}
-
-INLINE_FUNCTION bool
-io_dma_controller_stop_transfer (
-	io_dma_controller_t *dmac,io_dma_channel_t *c
-) {
-	return dmac->implementation->stop_transfer(dmac,c);
-}
-
-bool io_dma_controller_nop (io_dma_controller_t*);
-bool io_dma_controller_transfer_nop (io_dma_controller_t*,io_dma_channel_t*);
-
-#define SPECIALISE_IO_DMA_CONTROLLER_IMPLEMENTATION(S) \
-	.specialisation_of = (S), \
-	.start_controller = io_dma_controller_nop,\
-	.stop_controller = io_dma_controller_nop,\
-	.start_transfer = io_dma_controller_transfer_nop,\
-	.stop_transfer = io_dma_controller_transfer_nop,\
-	/**/
-
-
-struct  PACK_STRUCTURE io_dma_channel_implementation {
-	io_dma_channel_implementation_t const *specialisation_of;
-	void (*initialise) (io_dma_channel_t*);
-	void (*transfer_from_peripheral) (io_dma_channel_t*,void*,uint32_t);
-	void (*transfer_to_peripheral) (io_dma_channel_t*,void const*,uint32_t);
-	void (*transfer_complete) (io_t*,io_dma_channel_t*);
-};
-
-extern io_dma_channel_t null_dma_channel;
-
-void io_dma_channel_initialise_nop (io_dma_channel_t*);
-void io_dma_channel_no_transfer_from_peripheral (io_dma_channel_t*,void*,uint32_t);
-void io_dma_channel_no_transfer_to_peripheral (io_dma_channel_t*,void const*,uint32_t);
-void io_dma_channel_transfer_complete_nop (io_t*,io_dma_channel_t*);
-
-#define SPECIALISE_IO_DMA_CHANNEL_IMPLEMENTATION(S) \
-	.specialisation_of = S, \
-	.initialise = io_dma_channel_initialise_nop,\
-	.transfer_from_peripheral = io_dma_channel_no_transfer_from_peripheral,\
-	.transfer_to_peripheral = io_dma_channel_no_transfer_to_peripheral,\
-	.transfer_complete = io_dma_channel_transfer_complete_nop,\
-	/**/
-
-#define IO_DMA_CHANNEL_STRUCT_MEMBERS	\
-	io_dma_channel_implementation_t const *implementation;\
-	io_event_t complete;	\
-	io_event_t error;	\
-	io_dma_channel_t *next_channel;\
-	/**/
-
-enum {
-	IO_DMA_TRANSFER_MEMORY_TO_MEMORY,
-	IO_DMA_TRANSFER_MEMORY_TO_PERIPHERAL,
-	IO_DMA_TRANSFER_PERIPHERAL_TO_MEMORY,
-};
-
-struct PACK_STRUCTURE io_dma_channel {
-	IO_DMA_CHANNEL_STRUCT_MEMBERS
-};
-
-extern EVENT_DATA io_dma_channel_implementation_t dma_channel_implementation;
-
-//
-// inline dma implementation
-//
-INLINE_FUNCTION void
-io_dma_transfer_from_peripheral (io_dma_channel_t *channel,void *dest,uint32_t size) {
-	channel->implementation->transfer_from_peripheral(channel,dest,size);
-}
-
-INLINE_FUNCTION void
-io_dma_transfer_to_peripheral (io_dma_channel_t *channel,void const *src,uint32_t size) {
-	channel->implementation->transfer_to_peripheral(channel,src,size);
-}
-
-INLINE_FUNCTION void
-io_dma_transfer_complete (io_t *io,io_dma_channel_t *channel) {
-	channel->implementation->transfer_complete (io,channel);
-}
 
 /*
  *
@@ -1761,14 +1632,7 @@ void io_log_startup_message (io_t*,io_log_level_t);
 int io_printf (io_t*,const char *fmt,...);
 void io_log (io_t*,io_log_level_t,const char *fmt,...);
 void flush_io_log (io_t*);
-
-INLINE_FUNCTION void
-initialise_io (io_t *io,io_implementation_t const *I) {
-	io->implementation = I;
-	io->events = &s_null_io_event;
-	io->alarms = &s_null_io_alarm;
-	io->log_level = IO_LOG_LEVEL_NO_LOGGING;
-}
+void initialise_io (io_t*,io_implementation_t const*);
 
 //
 // inline io implementation
@@ -1875,14 +1739,6 @@ io_do_next_task (io_t *io) {
 INLINE_FUNCTION void
 io_dequeue_event (io_t *io,io_event_t *ev) {
 	io->implementation->dequeue_event (io,ev);
-}
-
-INLINE_FUNCTION void
-io_enqueue_event (io_t *io,io_event_t *ev) {
-	if (io_event_is_valid (ev)) {
-		io->implementation->enqueue_event (io,ev);
-		io->implementation->signal_event_pending (io);
-	}
 }
 
 INLINE_FUNCTION void
@@ -2139,6 +1995,143 @@ void	pq_sort_recurse (void*[],int,int,quick_sort_compare_t);
 INLINE_FUNCTION void
 pq_sort (void** a,int n,quick_sort_compare_t compare) {
 	pq_sort_recurse (a,0,n-1,compare);
+}
+
+#include <io_event.h>
+
+
+INLINE_FUNCTION void
+io_enqueue_event (io_t *io,io_event_t *ev) {
+	if (io_event_is_valid (ev)) {
+		io->implementation->enqueue_event (io,ev);
+		io->implementation->signal_event_pending (io);
+	}
+}
+
+//
+// dma
+//
+typedef struct io_dma_channel io_dma_channel_t;
+typedef struct io_dma_channel_implementation io_dma_channel_implementation_t;
+typedef struct io_dma_controller io_dma_controller_t;
+typedef struct io_dma_controller_implementation io_dma_controller_implementation_t;
+
+
+
+struct io_dma_controller_implementation {
+	io_dma_controller_implementation_t const *specialisation_of;
+
+	bool (*start_controller) (io_dma_controller_t*);
+	bool (*stop_controller) (io_dma_controller_t*);
+
+	bool (*start_transfer) (io_dma_controller_t*,io_dma_channel_t*);
+	bool (*stop_transfer) (io_dma_controller_t*,io_dma_channel_t*);
+
+};
+
+#define IO_DMA_CONTROLLER_STRUCT_MEMBERS\
+	io_dma_controller_implementation_t const *implementation;\
+	io_t *io;\
+	/**/
+
+struct io_dma_controller {
+	IO_DMA_CONTROLLER_STRUCT_MEMBERS
+};
+
+INLINE_FUNCTION bool
+io_dma_controller_start_controller (io_dma_controller_t *dmac) {
+	return dmac->implementation->start_controller(dmac);
+}
+
+INLINE_FUNCTION bool
+io_dma_controller_stop_controller (io_dma_controller_t *dmac) {
+	return dmac->implementation->stop_controller(dmac);
+}
+
+INLINE_FUNCTION bool
+io_dma_controller_start_transfer (
+	io_dma_controller_t *dmac,io_dma_channel_t *c
+) {
+	return dmac->implementation->start_transfer(dmac,c);
+}
+
+INLINE_FUNCTION bool
+io_dma_controller_stop_transfer (
+	io_dma_controller_t *dmac,io_dma_channel_t *c
+) {
+	return dmac->implementation->stop_transfer(dmac,c);
+}
+
+bool io_dma_controller_nop (io_dma_controller_t*);
+bool io_dma_controller_transfer_nop (io_dma_controller_t*,io_dma_channel_t*);
+
+#define SPECIALISE_IO_DMA_CONTROLLER_IMPLEMENTATION(S) \
+	.specialisation_of = (S), \
+	.start_controller = io_dma_controller_nop,\
+	.stop_controller = io_dma_controller_nop,\
+	.start_transfer = io_dma_controller_transfer_nop,\
+	.stop_transfer = io_dma_controller_transfer_nop,\
+	/**/
+
+
+struct  PACK_STRUCTURE io_dma_channel_implementation {
+	io_dma_channel_implementation_t const *specialisation_of;
+	void (*initialise) (io_dma_channel_t*);
+	void (*transfer_from_peripheral) (io_dma_channel_t*,void*,uint32_t);
+	void (*transfer_to_peripheral) (io_dma_channel_t*,void const*,uint32_t);
+	void (*transfer_complete) (io_t*,io_dma_channel_t*);
+};
+
+extern io_dma_channel_t null_dma_channel;
+
+void io_dma_channel_initialise_nop (io_dma_channel_t*);
+void io_dma_channel_no_transfer_from_peripheral (io_dma_channel_t*,void*,uint32_t);
+void io_dma_channel_no_transfer_to_peripheral (io_dma_channel_t*,void const*,uint32_t);
+void io_dma_channel_transfer_complete_nop (io_t*,io_dma_channel_t*);
+
+#define SPECIALISE_IO_DMA_CHANNEL_IMPLEMENTATION(S) \
+	.specialisation_of = S, \
+	.initialise = io_dma_channel_initialise_nop,\
+	.transfer_from_peripheral = io_dma_channel_no_transfer_from_peripheral,\
+	.transfer_to_peripheral = io_dma_channel_no_transfer_to_peripheral,\
+	.transfer_complete = io_dma_channel_transfer_complete_nop,\
+	/**/
+
+#define IO_DMA_CHANNEL_STRUCT_MEMBERS	\
+	io_dma_channel_implementation_t const *implementation;\
+	io_event_t complete;	\
+	io_event_t error;	\
+	io_dma_channel_t *next_channel;\
+	/**/
+
+enum {
+	IO_DMA_TRANSFER_MEMORY_TO_MEMORY,
+	IO_DMA_TRANSFER_MEMORY_TO_PERIPHERAL,
+	IO_DMA_TRANSFER_PERIPHERAL_TO_MEMORY,
+};
+
+struct PACK_STRUCTURE io_dma_channel {
+	IO_DMA_CHANNEL_STRUCT_MEMBERS
+};
+
+extern EVENT_DATA io_dma_channel_implementation_t dma_channel_implementation;
+
+//
+// inline dma implementation
+//
+INLINE_FUNCTION void
+io_dma_transfer_from_peripheral (io_dma_channel_t *channel,void *dest,uint32_t size) {
+	channel->implementation->transfer_from_peripheral(channel,dest,size);
+}
+
+INLINE_FUNCTION void
+io_dma_transfer_to_peripheral (io_dma_channel_t *channel,void const *src,uint32_t size) {
+	channel->implementation->transfer_to_peripheral(channel,src,size);
+}
+
+INLINE_FUNCTION void
+io_dma_transfer_complete (io_t *io,io_dma_channel_t *channel) {
+	channel->implementation->transfer_complete (io,channel);
 }
 
 #include <io_value.h>
@@ -2651,124 +2644,6 @@ STBSP__PUBLICDEF void STB_SPRINTF_DECORATE(set_separators)(char comma, char peri
 //
 //-----------------------------------------------------------------------------
 
-void
-enqueue_io_event (io_t *io,io_event_t *ev) {
-	ENTER_CRITICAL_SECTION(io);
-	if (ev->next_event == NULL) {
-		ev->next_event = io->events;
-		io->events = ev;
-	}
-	EXIT_CRITICAL_SECTION(io);
-	signal_io_event_pending (io);
-}
-
-void
-dequeue_io_event (io_t *io,io_event_t *old) {
-	io_event_t **list;
-
-	ENTER_CRITICAL_SECTION(io);
-	list = &io->events;
-	if (
-			*list != &s_null_io_event
-		&&	old->next_event != NULL
-	) {
-		if (*list == old) {
-			*list = old->next_event;
-		} else {
-			io_event_t *ev = *list;
-			while (ev->next_event != &s_null_io_event) {
-				if (ev->next_event == old) {
-					ev->next_event = old->next_event;
-					break;
-				}
-				ev = ev->next_event;
-			}
-		}
-	}
-	EXIT_CRITICAL_SECTION(io);
-	old->next_event = NULL;
-}
-
-bool
-do_next_io_event (io_t *io) {
-	io_event_t **list = &io->events;
-	io_event_t *ev;
-	bool r = false;
-
-	ENTER_CRITICAL_SECTION(io);
-
-	ev = *list;
-	if (ev != &s_null_io_event) {
-		if (ev->next_event != &s_null_io_event) {
-			io_event_t *last;
-			while(ev->next_event->next_event != &s_null_io_event) {
-				ev = ev->next_event;
-			}
-			last = ev->next_event;
-			ev->next_event = &s_null_io_event;
-			ev = last;
-		} else {
-			*list = ev->next_event;
-		}
-	}
-	ev->next_event = NULL;
-	r = (*list != &s_null_io_event);
-
-	EXIT_CRITICAL_SECTION(io);
-
-	ev->event_handler(ev);
-
-	return r;
-}
-
-bool
-io_event_list_append (io_event_list_t *this,io_event_t *ev) {
-	if (io_event_list_contains (this,ev)) {
-		return true;
-	} else {
-		io_event_t **new_list = io_byte_memory_reallocate (
-			this->bm,this->list,(this->length + 1) * sizeof (io_event_t*)
-		);
-		if (new_list != NULL) {
-			new_list[this->length] = ev;
-			
-			io_t *io = io_byte_memory_io (this->bm);
-			ENTER_CRITICAL_SECTION(io);
-			this->list = new_list;
-			this->length += 1;
-			EXIT_CRITICAL_SECTION(io);
-
-			return true;
-		} else {
-			return false;
-		}
-	}
-}
-
-void
-io_event_list_remove (io_event_list_t *this,io_event_t *ev) {
-	if (io_event_list_contains (this,ev)) {
-		io_event_t **new_list = io_byte_memory_allocate (
-			this->bm,(this->length - 1) * sizeof (io_event_t*)
-		);
-		io_event_t **src = this->list;
-		io_event_t **dest = new_list;
-		io_event_t **end = src + this->length;
-		while (src < end) {
-			if (*src != ev) {
-				*dest++ = *src;
-			}
-			src++;
-		}
-		io_byte_memory_free (this->bm,this->list);
-		
-		io_t *io = io_byte_memory_io (this->bm);
-		ENTER_CRITICAL_SECTION(io);
-		this->list = new_list;
-		this->length -= 1;
-		EXIT_CRITICAL_SECTION(io);
-	}
-}
 
 //
 // alarms
@@ -2779,6 +2654,14 @@ io_alarm_t s_null_io_alarm = {
 	.when = {LLONG_MAX},
 	.next_alarm = NULL,
 };
+
+void
+initialise_io (io_t *io,io_implementation_t const *I) {
+	io->implementation = I;
+	io->events = &s_null_io_event;
+	io->alarms = &s_null_io_alarm;
+	io->log_level = IO_LOG_LEVEL_NO_LOGGING;
+}
 
 int
 io_printf (io_t *io,const char *fmt,...) {

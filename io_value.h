@@ -154,6 +154,20 @@ get_io_value_implementation (vref_t r_value) {
 //
 // modal value
 //
+//		v     v
+//    | ... |
+//    |     |
+//    `--+--'
+//       m
+//    .-----.
+//    |     |
+//    | ... |
+//    o     o
+//
+//
+// void (*link_receiver) (vref_t m,vref_t o);
+// void (*unlink_receiver) (vref_t m,vref_t o);
+//
 #define IO_MODAL_VALUE_IMPLEMENTATION_STRUCT_MEMBERS \
 	IO_VALUE_IMPLEMENTATION_STRUCT_MEMBERS \
 	io_value_mode_t const *modes; \
