@@ -109,6 +109,7 @@ typedef struct io_event_list {
 	uint32_t length;
 } io_event_list_t;
 
+#define io_event_list_array(l)	(l)->list
 #define io_event_list_length(l)	(l)->length
 
 io_event_list_t* mk_io_event_list (io_byte_memory_t*);
