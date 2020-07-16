@@ -116,7 +116,7 @@ io_event_list_t* initialise_io_event_list (io_event_list_t*,io_byte_memory_t*);
 void io_event_list_free (io_event_list_t*);
 void io_event_list_reset (io_event_list_t*);
 bool io_event_list_append (io_event_list_t*,io_event_t*);
-bool io_event_list_append_list (io_event_list_t*,io_event_t**);
+bool io_event_list_append_list (io_event_list_t*,io_event_t**,uint32_t);
 void io_event_list_remove (io_event_list_t*,io_event_t*);
 io_event_t* io_event_list_first_match (io_event_list_t*,io_event_implementation_t const*);
 
@@ -279,11 +279,14 @@ io_event_list_first_match (
 }
 
 bool
-io_event_list_append_list (io_event_list_t *this,io_event_t** list) {
+io_event_list_append_list (io_event_list_t *this,io_event_t** list,uint32_t length) {
+	io_event_t** end = list + length;
 	bool ok = true;
-	while (ok && *list != NULL) {
+
+	while (ok && list < end) {
 		ok &= io_event_list_append (this,*list++);
 	}
+
 	return ok;
 }
 

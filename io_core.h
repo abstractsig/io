@@ -85,6 +85,7 @@ typedef struct memory_info {
 } memory_info_t;
 
 #define UMM_BEST_FIT
+//#define UMM_FIRST_FIT
 #undef  UMM_FIRST_FIT
 #define UMM_CRITICAL_ENTRY(bm)	{\
 												bool __h = enter_io_critical_section(bm->io);
@@ -1418,7 +1419,7 @@ extern EVENT_DATA io_cpu_clock_implementation_t io_cpu_clock_function_implementa
 //
 #include <io_address.h>
 
-typedef struct io_address {
+typedef struct PACK_STRUCTURE io_address {
 	struct PACK_STRUCTURE {
 		uint32_t size:31;
 		uint32_t is_volatile:1;
@@ -4936,7 +4937,9 @@ mk_io_byte_memory (io_t *io,uint32_t size,uint32_t block_size) {
 	);
 	
 	if (this) {
-		this->number_of_blocks = (size / sizeof(umm_block_t)),
+		this->number_of_blocks = (size >> block_size);
+		size = this->number_of_blocks << block_size;
+
 		this->heap = io_byte_memory_allocate (
 			io_get_byte_memory (io),size
 		);
@@ -4963,9 +4966,13 @@ initialise_io_byte_memory (
 	io_t *io,io_byte_memory_t *mem,uint32_t block_size_bits
 ) {
   	// init heap pointer and size, and memset it to 0
-	io_memset (mem->heap,0x00,mem->number_of_blocks << io_byte_memory_block_size_bits(mem));
-	mem->io = io;
 	mem->block_size_n = block_size_bits;
+	io_memset (
+		mem->heap,
+		0x00,
+		mem->number_of_blocks << io_byte_memory_block_size_bits(mem)
+	);
+	mem->io = io;
   /* setup initial blank heap structure */
   {
     /* index of the 0th `umm_block_t` */
@@ -5117,16 +5124,17 @@ umm_split_block (
     unsigned short int blocks,
     unsigned short int new_freemask
 ) {
-  UMM_NBLOCK(mem,c+blocks) = (UMM_NBLOCK(mem,c) & UMM_BLOCKNO_MASK) | new_freemask;
-  UMM_PBLOCK(mem,c+blocks) = c;
+	UMM_NBLOCK(mem,c+blocks) = (UMM_NBLOCK(mem,c) & UMM_BLOCKNO_MASK) | new_freemask;
+   UMM_PBLOCK(mem,c+blocks) = c;
 
-  UMM_PBLOCK(mem,UMM_NBLOCK(mem,c) & UMM_BLOCKNO_MASK) = (c+blocks);
-  UMM_NBLOCK(mem,c) = (c+blocks);
+   UMM_PBLOCK(mem,UMM_NBLOCK(mem,c) & UMM_BLOCKNO_MASK) = (c+blocks);
+   UMM_NBLOCK(mem,c) = (c+blocks);
 }
 
 /* ------------------------------------------------------------------------ */
 
-static void umm_disconnect_from_free_list(io_byte_memory_t *mem,unsigned short int c ) {
+static void
+umm_disconnect_from_free_list (io_byte_memory_t *mem,unsigned short int c ) {
   /* Disconnect this block from the FREE list */
 
   UMM_NFREE(mem,UMM_PFREE(mem,c)) = UMM_NFREE(mem,c);
@@ -5142,34 +5150,39 @@ static void umm_disconnect_from_free_list(io_byte_memory_t *mem,unsigned short i
  * have the UMM_FREELIST_MASK bit set!
  */
 
-static void umm_assimilate_up(io_byte_memory_t *mem,unsigned short int c ) {
+static void
+umm_assimilate_up (io_byte_memory_t *mem,unsigned short int c ) {
+	uint16_t next = UMM_NBLOCK(mem,UMM_NBLOCK(mem,c));
+	if(next  & UMM_FREELIST_MASK ) {
+		/*
+		* The next block is a free block, so assimilate up and remove it from
+		* the free list
+		*/
 
-  if( UMM_NBLOCK(mem,UMM_NBLOCK(mem,c)) & UMM_FREELIST_MASK ) {
-    /*
-     * The next block is a free block, so assimilate up and remove it from
-     * the free list
-     */
+		UMM_DBGLOG_DEBUG( "Assimilate up to next block, which is FREE\n" );
 
-    UMM_DBGLOG_DEBUG( "Assimilate up to next block, which is FREE\n" );
+		/* Disconnect the next block from the FREE list */
 
-    /* Disconnect the next block from the FREE list */
+		umm_disconnect_from_free_list(mem, UMM_NBLOCK(mem,c) );
 
-    umm_disconnect_from_free_list(mem, UMM_NBLOCK(mem,c) );
+		/* Assimilate the next block with this one */
 
-    /* Assimilate the next block with this one */
-
-    UMM_PBLOCK(mem,UMM_NBLOCK(mem,UMM_NBLOCK(mem,c)) & UMM_BLOCKNO_MASK) = c;
-    UMM_NBLOCK(mem,c) = UMM_NBLOCK(mem,UMM_NBLOCK(mem,c)) & UMM_BLOCKNO_MASK;
-  }
+		UMM_PBLOCK(mem,UMM_NBLOCK(mem,UMM_NBLOCK(mem,c)) & UMM_BLOCKNO_MASK) = c;
+		UMM_NBLOCK(mem,c) = UMM_NBLOCK(mem,UMM_NBLOCK(mem,c)) & UMM_BLOCKNO_MASK;
+	}
 }
+
 
 /* ------------------------------------------------------------------------
  * The umm_assimilate_down() function assumes that UMM_NBLOCK(c) does NOT
  * have the UMM_FREELIST_MASK bit set!
  */
 
-static unsigned short int umm_assimilate_down(io_byte_memory_t *mem,unsigned short int c, unsigned short int freemask ) {
-
+static unsigned short int 
+umm_assimilate_down (
+	io_byte_memory_t *mem,unsigned short int c, unsigned short int freemask
+) {
+	
   UMM_NBLOCK(mem,UMM_PBLOCK(mem,c)) = UMM_NBLOCK(mem,c) | freemask;
   UMM_PBLOCK(mem,UMM_NBLOCK(mem,c)) = UMM_PBLOCK(mem,c);
 
@@ -5230,7 +5243,7 @@ umm_free_core(io_byte_memory_t *mem,void *ptr) {
 			UMM_PFREE(mem,c)            = 0;
 			UMM_NFREE(mem,0)            = c;
 
-			UMM_NBLOCK(mem,c)          |= UMM_FREELIST_MASK;
+			UMM_NBLOCK(mem,c) |= UMM_FREELIST_MASK;
 		}
 	}
   
@@ -5291,7 +5304,9 @@ static void *umm_malloc_core(io_byte_memory_t *mem,size_t size) {
   bestSize  = 0x7FFF;
 
   while( cf ) {
-    blockSize = (UMM_NBLOCK(mem,cf) & UMM_BLOCKNO_MASK) - cf;
+	  uint16_t *ptr = &UMM_NBLOCK(mem,cf);
+	  blockSize = (*ptr & UMM_BLOCKNO_MASK) - cf;
+//    blockSize = (UMM_NBLOCK(mem,cf) & UMM_BLOCKNO_MASK) - cf;
 
     DBGLOG_TRACE( "Looking at block %6i size %6i\n", cf, blockSize );
 

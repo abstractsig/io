@@ -289,11 +289,11 @@ TEST_BEGIN(test_io_adapter_socket_2) {
 	io_byte_memory_get_info (bm,&bmbegin);
 
 	const socket_builder_t net[] = {
-		{0,allocate_io_adapter_socket,def_io_u8_address(22),NULL,false,BINDINGS({0,1},END_OF_BINDINGS)},
-		{1,allocate_io_socket_binary_emulator,def_io_u8_address(11),&bus,false,BINDINGS({1,2},END_OF_BINDINGS)},
+		{0,allocate_io_adapter_socket,def_io_u8_address(22),NULL,false,BINDINGS({0,1})},
+		{1,allocate_io_socket_binary_emulator,def_io_u8_address(11),&bus,false,BINDINGS({1,2})},
 		{2,allocate_io_shared_media,io_invalid_address(),&bus,false,NULL},
-		{3,allocate_io_adapter_socket,def_io_u8_address(11),NULL,false,BINDINGS({3,4},END_OF_BINDINGS)},
-		{4,allocate_io_socket_binary_emulator,def_io_u8_address(22),&bus,false,BINDINGS({4,2},END_OF_BINDINGS)},
+		{3,allocate_io_adapter_socket,def_io_u8_address(11),NULL,false,BINDINGS({3,4})},
+		{4,allocate_io_socket_binary_emulator,def_io_u8_address(22),&bus,false,BINDINGS({4,2})},
 	};
 	io_socket_t* leaf[SIZEOF(net)];
 	
@@ -396,7 +396,7 @@ TEST_BEGIN(test_io_multiplex_socket_2) {
 
 	build_io_sockets(TEST_IO,mux,net,1);
 
-	VERIFY (io_socket_set_inner_binding (mux[0],a,list),NULL);
+	VERIFY (io_socket_set_inner_binding (mux[0],a,list,1),NULL);
 
 	VERIFY (
 		io_multiplex_socket_find_inner_binding (

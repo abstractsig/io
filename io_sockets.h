@@ -155,7 +155,7 @@ typedef struct PACK_STRUCTURE io_settings {
 	void (*close) (io_socket_t*);\
 	bool (*is_closed) (io_socket_t const*);\
 	bool (*bind_inner) (io_socket_t*,io_address_t,io_event_t*,io_event_t*);\
-	bool (*set_inner_binding) (io_socket_t*,io_address_t,io_event_t**);\
+	bool (*set_inner_binding) (io_socket_t*,io_address_t,io_event_t**,uint32_t);\
 	bool (*bind_inner_constructor) (io_socket_t*,io_address_t,io_socket_constructor_t,io_notify_event_t*);\
 	void (*unbind_inner) (io_socket_t*,io_address_t);\
 	bool (*bind_to_outer_socket) (io_socket_t*,io_socket_t*);\
@@ -281,9 +281,9 @@ io_socket_bind_inner (
 
 INLINE_FUNCTION bool
 io_socket_set_inner_binding (
-	io_socket_t *socket,io_address_t a,io_event_t ** events
+	io_socket_t *socket,io_address_t a,io_event_t ** events,uint32_t len
 ) {
-	return socket->implementation->set_inner_binding (socket,a,events);
+	return socket->implementation->set_inner_binding (socket,a,events,len);
 }
 
 INLINE_FUNCTION void
@@ -324,7 +324,7 @@ bool				io_virtual_socket_open (io_socket_t*,io_socket_open_flag_t);
 void				io_virtual_socket_close (io_socket_t*);
 bool				io_virtual_socket_is_closed (io_socket_t const*);
 bool				io_virtual_socket_bind_inner (io_socket_t*,io_address_t,io_event_t*,io_event_t*);
-bool				io_virtual_socket_bind_inner_2 (io_socket_t*,io_address_t,io_event_t**);
+bool				io_virtual_socket_bind_inner_2 (io_socket_t*,io_address_t,io_event_t**,uint32_t);
 bool				io_virtual_socket_bind_inner_constructor (io_socket_t*,io_address_t,io_socket_constructor_t,io_notify_event_t*);
 io_pipe_t*		io_virtual_socket_get_receive_pipe (io_socket_t*,io_address_t);
 void				io_virtual_socket_unbind_inner (io_socket_t*,io_address_t);
@@ -468,9 +468,10 @@ extern EVENT_DATA io_socket_implementation_t io_process_socket_implementation;
 //
 #define IO_ADAPTER_SOCKET_STRUCT_MEMBERS \
 	IO_COUNTED_SOCKET_STRUCT_MEMBERS \
-	io_event_t *transmit_available; \
+	io_event_t *inner_signal_transmit_available; \
 	io_event_t *receive_data_available; \
 	io_socket_t *outer_socket; \
+	uint32_t ____w;\
 	/**/
 
 typedef struct PACK_STRUCTURE io_adapter_socket {
@@ -484,6 +485,7 @@ bool io_adapter_socket_open (io_socket_t*,io_socket_open_flag_t);
 void io_adapter_socket_close (io_socket_t*);
 bool io_adapter_socket_is_closed (io_socket_t const*);
 bool io_adapter_socket_bind (io_socket_t*,io_address_t,io_event_t*,io_event_t*);
+bool io_adapter_socket_set_inner_binding (io_socket_t*,io_address_t,io_event_t**,uint32_t);
 void io_adapter_socket_unbind_inner (io_socket_t*,io_address_t);
 bool io_adapter_socket_bind_to_outer (io_socket_t*,io_socket_t*);
 io_encoding_t* io_adapter_socket_new_message (io_socket_t*);
@@ -499,6 +501,7 @@ size_t io_adapter_socket_mtu (io_socket_t const*);
 	.close = io_adapter_socket_close, \
 	.is_closed = io_adapter_socket_is_closed, \
 	.bind_inner = io_adapter_socket_bind, \
+	.set_inner_binding = io_adapter_socket_set_inner_binding, \
 	.unbind_inner = io_adapter_socket_unbind_inner, \
 	.bind_to_outer_socket = io_adapter_socket_bind_to_outer, \
 	.new_message = io_adapter_socket_new_message, \
@@ -611,7 +614,7 @@ io_socket_t* allocate_io_multiplex_socket (io_t*,io_address_t);
 io_socket_t* initialise_io_multiplex_socket (io_socket_t*,io_t*,io_settings_t const*);
 void io_multiplex_socket_free (io_socket_t*);
 bool io_multiplex_socket_bind_inner (io_socket_t*,io_address_t,io_event_t*,io_event_t*);
-bool io_multiplex_socket_set_inner_binding (io_socket_t*,io_address_t,io_event_t**);
+bool io_multiplex_socket_set_inner_binding (io_socket_t*,io_address_t,io_event_t**,uint32_t);
 bool io_multiplex_socket_bind_inner_constructor (io_socket_t*,io_address_t,io_socket_constructor_t,io_notify_event_t*);
 void io_multiplex_socket_unbind_inner (io_socket_t*,io_address_t);
 void io_multiplex_socket_round_robin_signal_transmit_available (io_multiplex_socket_t*);
@@ -1008,7 +1011,7 @@ io_virtual_socket_bind_inner (
 
 bool
 io_virtual_socket_bind_inner_2 (
-	io_socket_t *socket,io_address_t a,io_event_t** events
+	io_socket_t *socket,io_address_t a,io_event_t** events,uint32_t len
 ) {
 	return false;
 }
@@ -1386,12 +1389,12 @@ io_process_socket_add_inner_binding (
 
 bool
 io_process_socket_set_inner_binding (
-	io_socket_t *socket,io_address_t address,io_event_t* *events
+	io_socket_t *socket,io_address_t address,io_event_t* *events,uint32_t len
 ) {
 	io_process_socket_t *this = (io_process_socket_t*) socket;
 
 	io_event_list_reset (&this->event_subscriptions);
-	io_event_list_append_list (&this->event_subscriptions,events);
+	io_event_list_append_list (&this->event_subscriptions,events,len);
 
 	this->transmit_available = io_event_list_first_match_transmit_available (
 		&this->event_subscriptions
@@ -1409,14 +1412,13 @@ io_process_socket_bind_to_outer (io_socket_t *socket,io_socket_t *outer) {
 	io_event_t* ev[] = {
 		&this->outer_transmit_event,
 		&this->outer_receive_event,
-		&this->outer_exception_event,
-		NULL
+		&this->outer_exception_event
 	};
 
 	this->outer_socket = outer;
 
 	io_socket_set_inner_binding (
-		outer,io_socket_address (socket),ev
+		outer,io_socket_address (socket),ev,SIZEOF(ev)
 	);
 
 	return true;
@@ -1449,9 +1451,13 @@ io_adapter_socket_initialise (io_socket_t *socket,io_t *io,io_settings_t const *
 	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 
 	initialise_io_counted_socket ((io_counted_socket_t*) socket,io);
+//	initialise_io_event_list (
+//		&this->event_subscriptions,io_get_byte_memory (io)
+//	);
+
 	this->outer_socket = NULL;
 	
-	this->transmit_available = NULL;
+	this->inner_signal_transmit_available = NULL;
 	this->receive_data_available = NULL;
 	
 	return socket;
@@ -1471,8 +1477,12 @@ void
 io_adapter_socket_free (io_socket_t *socket) {
 	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 
-	if (this->transmit_available != NULL) {
-		io_dequeue_event (io_socket_io (socket),this->transmit_available);
+//	io_event_list_reset (&this->event_subscriptions);
+
+	if (this->inner_signal_transmit_available != NULL) {
+		io_dequeue_event (
+			io_socket_io (socket),this->inner_signal_transmit_available
+		);
 	}
 
 	if (this->receive_data_available != NULL) {
@@ -1519,20 +1529,27 @@ io_adapter_socket_bind (
 ) {
 	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 
-	this->transmit_available = tx;
+	this->inner_signal_transmit_available = tx;
 	this->receive_data_available = rx;
 
 	return io_socket_bind_to_outer_socket (socket,this->outer_socket);
+}
+
+bool 
+io_adapter_socket_set_inner_binding (
+	io_socket_t *socket,io_address_t address,io_event_t **events,uint32_t length
+) {
+	return false;
 }
 
 void
 io_adapter_socket_unbind_inner (io_socket_t *socket,io_address_t address) {
 	io_adapter_socket_t *this = (io_adapter_socket_t*) socket;
 
-	io_dequeue_event (io_socket_io (socket),this->transmit_available);
+	io_dequeue_event (io_socket_io (socket),this->inner_signal_transmit_available);
 	io_dequeue_event (io_socket_io (socket),this->receive_data_available);
 
-	this->transmit_available = NULL;
+	this->inner_signal_transmit_available = NULL;
 	this->receive_data_available = NULL;
 
 	if (this->outer_socket) {
@@ -1546,10 +1563,11 @@ io_adapter_socket_bind_to_outer (io_socket_t *socket,io_socket_t *outer) {
 
 	this->outer_socket = outer;
 
+//	io_socket_set_inner_binding (
 	io_socket_bind_inner (
 		outer,
 		io_socket_address (socket),
-		this->transmit_available,
+		this->inner_signal_transmit_available,
 		this->receive_data_available
 	);
 	
@@ -1606,7 +1624,8 @@ io_adapter_socket_mtu (io_socket_t const *socket) {
 	}
 }
 
-EVENT_DATA io_socket_implementation_t io_adapter_socket_implementation = {
+EVENT_DATA io_socket_implementation_t 
+io_adapter_socket_implementation = {
 	SPECIALISE_IO_ADAPTER_SOCKET_IMPLEMENTATION (
 		&io_counted_socket_implementation
 	)
@@ -1916,7 +1935,7 @@ io_multiplex_socket_bind_inner (
 
 bool
 io_multiplex_socket_set_inner_binding (
-	io_socket_t *socket,io_address_t address,io_event_t ** events
+	io_socket_t *socket,io_address_t address,io_event_t ** events,uint32_t length
 ) {
 	io_inner_binding_t *inner = io_multiplex_socket_get_inner_binding (
 		(io_multiplex_socket_t*) socket,address
@@ -1929,7 +1948,7 @@ io_multiplex_socket_set_inner_binding (
 		io_event_list_reset (&port->event_subscriptions);
 
 		io_event_list_append_list (
-			&port->event_subscriptions,events
+			&port->event_subscriptions,events,length
 		);
 
 		port->rx_available = io_event_list_first_match_data_available (

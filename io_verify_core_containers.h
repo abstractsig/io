@@ -625,7 +625,7 @@ TEST_BEGIN(test_io_memories_1) {
 
 	io_byte_memory_get_info (bm,&bm_begin);
 
-	mem = mk_io_byte_memory (TEST_IO,32,UMM_BLOCK_SIZE_1N);
+	mem = mk_io_byte_memory (TEST_IO,128,UMM_BLOCK_SIZE_1N);
 	if (VERIFY (mem != NULL,NULL)) {
 		memory_info_t begin,end;
 		void *data;
@@ -656,9 +656,11 @@ TEST_BEGIN(test_io_memories_2) {
 	io_byte_memory_get_info (bm,&bm_begin);
 		
 	io_value_memory_t *vm = mk_umm_io_value_memory (
-		TEST_IO,1024,INVALID_MEMORY_ID
+		TEST_IO,512,INVALID_MEMORY_ID
 	);
-	
+
+	io_byte_memory_get_info (bm,&bm_end);
+
 	if (VERIFY (vm != NULL,NULL)) {
 		memory_info_t begin,end;
 		vref_t r_value;
