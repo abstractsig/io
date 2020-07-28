@@ -39,6 +39,7 @@ struct PACK_STRUCTURE io_event {
 };
 
 #define def_io_event(FN,UV) {\
+		.implementation = &io_event_implementation, \
 		.event_handler = FN, \
 		.user_value = UV, \
 		.next_event = NULL, \
